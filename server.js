@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // Minimal zero-dependency bridge between a browser and `pi --mode rpc`.
 // Browser <--SSE-- POST--> Node <--stdin/stdout JSONL--> pi subprocess.
 // Run: node server.js   (optionally set PORT, PI_BIN, PI_ARGS, PI_CWD)
