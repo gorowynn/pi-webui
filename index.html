@@ -244,13 +244,148 @@
 
       .typing {
         margin: 0;
-        padding: 0 clamp(12px, 3vw, 40px);
+        padding: 4px clamp(12px, 3vw, 40px);
         color: var(--muted);
         font-size: 12px;
-        height: 16px;
+        height: 22px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
       }
-      .typing::after {
-        content: "working…";
+      .typing .spin {
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        border: 2px solid var(--muted);
+        border-top-color: transparent;
+        animation: spin 0.7s linear infinite;
+        flex: 0 0 11px;
+      }
+      .typing .wlabel {
+        color: var(--accent);
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* markdown inside assistant bubbles */
+      .bubble p {
+        margin: 0 0 10px;
+      }
+      .bubble p:last-child {
+        margin-bottom: 0;
+      }
+      .bubble h1,
+      .bubble h2,
+      .bubble h3,
+      .bubble h4,
+      .bubble h5,
+      .bubble h6 {
+        margin: 14px 0 6px;
+        line-height: 1.3;
+        color: var(--text);
+      }
+      .bubble h1 {
+        font-size: 1.5em;
+      }
+      .bubble h2 {
+        font-size: 1.3em;
+      }
+      .bubble h3 {
+        font-size: 1.15em;
+      }
+      .bubble h4,
+      .bubble h5,
+      .bubble h6 {
+        font-size: 1em;
+      }
+      .bubble ul,
+      .bubble ol {
+        margin: 0 0 10px;
+        padding-left: 22px;
+      }
+      .bubble li {
+        margin: 2px 0;
+      }
+      .bubble blockquote {
+        margin: 0 0 10px;
+        padding: 2px 12px;
+        border-left: 3px solid var(--border);
+        color: var(--muted);
+      }
+      .bubble hr {
+        border: none;
+        border-top: 1px solid var(--border);
+        margin: 12px 0;
+      }
+      .bubble a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      .bubble a:hover {
+        text-decoration: underline;
+      }
+      .bubble table {
+        border-collapse: collapse;
+        margin: 0 0 10px;
+        font-size: 13px;
+        display: block;
+        overflow-x: auto;
+      }
+      .bubble th,
+      .bubble td {
+        border: 1px solid var(--border);
+        padding: 4px 8px;
+        text-align: left;
+      }
+      .bubble th {
+        background: var(--panel2);
+      }
+
+      /* edit diff */
+      pre.diff {
+        margin: 4px 0;
+        padding: 6px 0;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      pre.diff .add,
+      pre.diff .del,
+      pre.diff .ctx {
+        display: block;
+        padding: 0 10px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      pre.diff .add {
+        background: #9ece6a22;
+        color: #b5e89a;
+      }
+      pre.diff .add::before {
+        content: "+ ";
+      }
+      pre.diff .del {
+        background: #f7768e22;
+        color: #f0a0b0;
+      }
+      pre.diff .del::before {
+        content: "- ";
+      }
+      pre.diff .ctx {
+        color: var(--muted);
+      }
+      .tool .dpath {
+        color: var(--muted);
+        padding: 2px 10px;
+        font-size: 11px;
+      }
+      .tool .dhunk {
+        color: var(--muted);
+        font-size: 10px;
+        text-transform: uppercase;
+        padding: 4px 10px 0;
       }
 
       footer {
@@ -268,6 +403,7 @@
         display: flex;
         gap: 14px;
         align-items: center;
+        justify-content: center;
         overflow-x: auto;
         white-space: nowrap;
         scrollbar-width: thin;
@@ -400,6 +536,42 @@
         white-space: pre-wrap;
         overflow-wrap: anywhere;
         max-height: 50vh;
+        overflow: auto;
+        color: var(--text);
+      }
+      #modal details.cmd {
+        padding: 0;
+        overflow: hidden;
+      }
+      #modal details.cmd > summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 8px 12px;
+        color: var(--muted);
+        font-size: 12px;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      #modal details.cmd > summary::-webkit-details-marker {
+        display: none;
+      }
+      #modal details.cmd > summary::before {
+        content: "▸";
+        font-size: 10px;
+        transition: transform 0.15s ease;
+      }
+      #modal details.cmd[open] > summary::before {
+        transform: rotate(90deg);
+      }
+      #modal details.cmd[open] > summary {
+        border-bottom: 1px solid var(--border);
+      }
+      #modal details.cmd > .cmdbody {
+        padding: 10px 12px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        max-height: 44vh;
         overflow: auto;
         color: var(--text);
       }
@@ -722,6 +894,11 @@
           body: JSON.stringify(obj),
         });
       }
+      // ponytail: pi sends ANSI-colored status strings (e.g. "LSP Inactive"); the
+      // browser can't render them, so strip the escapes at the status boundary.
+      const stripAnsi = (s) =>
+        String(s).replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
+
       function esc(s) {
         return String(s).replace(
           /[&<>"']/g,
@@ -736,24 +913,158 @@
         );
       }
 
-      // minimal markdown: fenced code blocks, inline code, bold, newlines outside pre
-      function md(text) {
-        const parts = String(text).split(/```/);
-        return parts
-          .map((p, i) => {
-            if (i % 2 === 1) {
-              const nl = p.indexOf("\n");
-              const lang = nl > 0 ? p.slice(0, nl).trim() : "";
-              const code = nl >= 0 ? p.slice(nl + 1) : p;
-              const cls = lang ? ` class="language-${esc(lang)}"` : "";
-              return `<pre><code${cls}>${esc(code.replace(/\n$/, ""))}</code></pre>`;
+      // ---- markdown: fenced code, headings, lists, tables, blockquotes, hr, links ----
+      // ponytail: zero-dep inline parser. Block-level split (code vs prose), then
+      // per-line block detection, then inline formatting with code-span protection
+      // (placeholders so ** / * never touch code contents).
+      function inlineMd(sEsc) {
+        const codes = [];
+        let s = sEsc.replace(
+          /`([^`]+)`/g,
+          (_, c) => (codes.push(c), `\u0000${codes.length - 1}\u0000`),
+        );
+        s = s
+          .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+          .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>")
+          .replace(/~~([^~]+)~~/g, "<del>$1</del>")
+          .replace(
+            /\[([^\]]+)\]\(([^)\s]+)(?: +"([^"]*)")?\)/g,
+            '<a href="$2" target="_blank" rel="noopener noreferrer" title="$4">$1</a>',
+          );
+        return s.replace(
+          /\u0000(\d+)\u0000/g,
+          (_, i) => "<code>" + codes[+i] + "</code>",
+        );
+      }
+      function splitRow(line) {
+        return line
+          .trim()
+          .replace(/^\|/, "")
+          .replace(/\|$/, "")
+          .split("|")
+          .map((c) => c.trim());
+      }
+      function mdProse(src) {
+        const lines = src.split("\n");
+        const out = [];
+        let i = 0;
+        while (i < lines.length) {
+          const line = lines[i];
+          if (!line.trim()) {
+            i++;
+            continue;
+          }
+          let m = /^(#{1,6})\s+(.*)$/.exec(line);
+          if (m) {
+            out.push(`<h${m[1].length}>${inlineMd(esc(m[2]))}</h${m[1].length}>`);
+            i++;
+            continue;
+          }
+          if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+            out.push("<hr>");
+            i++;
+            continue;
+          }
+          if (/^>\s?/.test(line)) {
+            const buf = [];
+            while (i < lines.length && /^>\s?/.test(lines[i])) {
+              buf.push(lines[i].replace(/^>\s?/, ""));
+              i++;
             }
-            let t = esc(p);
-            t = t.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-            t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-            return t.replace(/\n/g, "<br>");
-          })
-          .join("");
+            out.push(`<blockquote>${mdProse(buf.join("\n"))}</blockquote>`);
+            continue;
+          }
+          // table: header row + next line is a separator of |, -, :
+          if (
+            /\|/.test(line) &&
+            i + 1 < lines.length &&
+            /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]) &&
+            /\|/.test(lines[i + 1])
+          ) {
+            const header = splitRow(line);
+            i += 2;
+            const rows = [];
+            while (i < lines.length && /\|/.test(lines[i])) {
+              rows.push(splitRow(lines[i]));
+              i++;
+            }
+            const th = header
+              .map((h) => `<th>${inlineMd(esc(h))}</th>`)
+              .join("");
+            const trs = rows
+              .map(
+                (r) =>
+                  `<tr>${r.map((c) => `<td>${inlineMd(esc(c))}</td>`).join("")}</tr>`,
+              )
+              .join("");
+            out.push(`<table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`);
+            continue;
+          }
+          if (/^\s*[-*+]\s+/.test(line)) {
+            const items = [];
+            while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) {
+              items.push(lines[i].replace(/^\s*[-*+]\s+/, ""));
+              i++;
+            }
+            out.push(
+              "<ul>" +
+                items.map((it) => `<li>${inlineMd(esc(it))}</li>`).join("") +
+                "</ul>",
+            );
+            continue;
+          }
+          if (/^\s*\d+\.\s+/.test(line)) {
+            const items = [];
+            while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+              items.push(lines[i].replace(/^\s*\d+\.\s+/, ""));
+              i++;
+            }
+            out.push(
+              "<ol>" +
+                items.map((it) => `<li>${inlineMd(esc(it))}</li>`).join("") +
+                "</ol>",
+            );
+            continue;
+          }
+          // paragraph: gather until blank/special/pipe
+          const buf = [];
+          while (
+            i < lines.length &&
+            lines[i].trim() &&
+            !/^(#{1,6}\s|>\s?|\s*[-*+]\s|\s*\d+\.\s|\s*(-{3,}|\*{3,}|_{3,})\s*$)/.test(
+              lines[i],
+            ) &&
+            !/\|/.test(lines[i])
+          ) {
+            buf.push(lines[i]);
+            i++;
+          }
+          if (buf.length)
+            out.push(`<p>${inlineMd(esc(buf.join("\n"))).replace(/\n/g, "<br>")}</p>`);
+        }
+        return out.join("");
+      }
+      function md(text) {
+        const src = String(text == null ? "" : text);
+        if (!src) return "";
+        // split on fenced code blocks; odd segments are code.
+        const segs = src.split(/(```[\s\S]*?```)/g);
+        let html = "";
+        for (let k = 0; k < segs.length; k++) {
+          const seg = segs[k];
+          if (!seg) continue;
+          if (seg.startsWith("```")) {
+            const body = seg.slice(3);
+            const nl = body.indexOf("\n");
+            const lang = (nl >= 0 ? body.slice(0, nl) : "").trim();
+            const code = nl >= 0 ? body.slice(nl + 1) : "";
+            const cls = lang ? ` class="language-${esc(lang)}"` : "";
+            html += `<pre><code${cls}>${esc(code.replace(/\n$/, ""))}</code></pre>`;
+          } else {
+            html += mdProse(seg);
+          }
+        }
+        return html;
       }
 
       function nearBottom() {
@@ -767,6 +1078,14 @@
       function scrollDown() {
         transcript.scrollTop = transcript.scrollHeight;
       }
+      // ponytail: follow new output unless the user scrolled up to read.
+      let pinned = true;
+      transcript.addEventListener("scroll", () => {
+        pinned = nearBottom();
+      });
+      function autoscroll() {
+        if (pinned) scrollDown();
+      }
 
       function addUser(text) {
         const m = document.createElement("div");
@@ -777,6 +1096,7 @@
         span.innerHTML = md(text);
         b.appendChild(span);
         transcript.appendChild(m);
+        pinned = true;
         scrollDown();
       }
 
@@ -804,7 +1124,7 @@
       function renderText() {
         if (cur && cur.textPar) {
           cur.textPar.innerHTML = md(cur.textBuf);
-          if (nearBottom()) scrollDown();
+          autoscroll();
         }
       }
       function ensureThink() {
@@ -818,6 +1138,7 @@
       function renderThink() {
         if (cur && cur.thinkEl) {
           cur.thinkEl.textContent = cur.thinkBuf;
+          autoscroll();
         }
       }
 
@@ -834,8 +1155,9 @@
               }
             })()
           : "";
-        line.innerHTML = `<span style="color:var(--accent)">▸ ${esc(name)}</span> <code>${esc(a)}</code>`;
+        line.innerHTML = `<span style="color:var(--accent)">▸ ${esc(name || "tool")}</span> <code>${esc(a)}</code>`;
         cur.bubble.appendChild(line);
+        autoscroll();
       }
 
       function toolBlock(id, name, args, running) {
@@ -850,8 +1172,90 @@
           wrap = { el, out: el.querySelector(".out") };
           toolBlocks.set(id, wrap);
         }
-        if (nearBottom()) scrollDown();
+        autoscroll();
         return wrap;
+      }
+
+      // ---- edit diff: LCS line diff from oldText/newText args ----
+      // ponytail: O(n*m) Uint32Array DP table. Fine for typical edits; swap for
+      // Myers if huge files start lagging the UI.
+      function diffLines(a, b) {
+        const A = String(a).split("\n");
+        const B = String(b).split("\n");
+        const n = A.length,
+          m = B.length;
+        const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+        for (let i = n - 1; i >= 0; i--)
+          for (let j = m - 1; j >= 0; j--)
+            dp[i][j] =
+              A[i] === B[j]
+                ? dp[i + 1][j + 1] + 1
+                : Math.max(dp[i + 1][j], dp[i][j + 1]);
+        const res = [];
+        let i = 0,
+          j = 0;
+        while (i < n && j < m) {
+          if (A[i] === B[j]) {
+            res.push({ t: "ctx", s: A[i] });
+            i++;
+            j++;
+          } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+            res.push({ t: "del", s: A[i] });
+            i++;
+          } else {
+            res.push({ t: "add", s: B[j] });
+            j++;
+          }
+        }
+        while (i < n) {
+          res.push({ t: "del", s: A[i] });
+          i++;
+        }
+        while (j < m) {
+          res.push({ t: "add", s: B[j] });
+          j++;
+        }
+        return res;
+      }
+      function renderEditDiff(args) {
+        const path = args && args.path ? esc(args.path) : "";
+        const edits = (args && args.edits) || [];
+        let h = path ? `<div class="dpath">${path}</div>` : "";
+        edits.forEach((e, idx) => {
+          if (edits.length > 1)
+            h += `<div class="dhunk">edit ${idx + 1}/${edits.length}</div>`;
+          const d = diffLines(e.oldText || "", e.newText || "");
+          h +=
+            '<pre class="diff">' +
+            d.map((r) => `<span class="${r.t}">${esc(r.s)}</span>`).join("") +
+            "</pre>";
+        });
+        return h;
+      }
+
+      // ---- working indicator: spinner + current activity ----
+      function describeTool(name, args) {
+        if (!args) return name || "tool";
+        if (name === "edit" || name === "write")
+          return `${name} ${args.path || ""}`;
+        if (name === "read") return `reading ${args.path || ""}`;
+        if (name === "bash")
+          return `bash: ${String(args.command || "").slice(0, 60)}`;
+        if (name === "grep" || name === "find")
+          return `${name}: ${args.pattern || args.path || ""}`;
+        if (name === "todo") return `todo: ${args.action || ""}`;
+        if (name === "web_search" || name === "web_fetch")
+          return `${name}: ${String(args.query || args.url || "").slice(0, 60)}`;
+        return name || "tool";
+      }
+      function setWorking(text) {
+        if (!streaming) return;
+        typingEl.innerHTML =
+          `<span class="spin"></span><span class="wlabel">${esc(text || "working…")}</span>`;
+        typingEl.style.visibility = "visible";
+      }
+      function clearWorking() {
+        setWorking("thinking…");
       }
 
       function note(text, cls) {
@@ -891,8 +1295,30 @@
         tpCount = $("tp-count");
       let todos = []; // {id, subject, status}
       function parseTodo(text) {
+        if (!text) {
+          renderTodos();
+          return;
+        }
         let m;
-        // ponytail: two known result shapes cover create/update. Others (clear/delete) just won't match.
+        // Multi-line list output: [status] #id subject [(activeForm)] [⛓ deps].
+        // ponytail: list is the source of truth — rebuild fully when present.
+        const listLines = text
+          .split("\n")
+          .filter((l) => /^\[\w+\]\s*#\d+/.test(l));
+        if (listLines.length) {
+          todos = listLines
+            .map((l) => {
+              const lm = /^\[(\w+)\]\s*#(\d+)\s+(.*)$/.exec(l);
+              if (!lm) return null;
+              let subject = lm[3];
+              const depIdx = subject.indexOf("⛓");
+              if (depIdx !== -1) subject = subject.slice(0, depIdx);
+              return { id: +lm[2], subject: subject.trim(), status: lm[1] };
+            })
+            .filter(Boolean);
+          renderTodos();
+          return;
+        }
         if ((m = /^Created #(\d+):\s*(.*?)\s*\((\w+)\)/.exec(text))) {
           const ex = todos.find((t) => t.id === +m[1]);
           if (ex) {
@@ -904,7 +1330,9 @@
         } else if ((m = /^Updated #(\d+)\s*\(\w+\s*→\s*(\w+)\)/.exec(text))) {
           const ex = todos.find((t) => t.id === +m[1]);
           if (ex) ex.status = m[2];
-        } else if (/^Cleared \d+ todos?/.test(text)) {
+        } else if ((m = /^Deleted #(\d+):/.exec(text))) {
+          todos = todos.filter((t) => t.id !== +m[1]);
+        } else if (/^Cleared \d+ (todos?|tasks?)/.test(text)) {
           todos = [];
         }
         renderTodos();
@@ -933,18 +1361,18 @@
         });
       }
 
-      // ---- ask_user_question: rich modal, answer via steer/prompt ----
-      // ponytail: tool errors server-side (RPC custom() stub), so we render from the
-      // call args and deliver the answer as a follow-up message in the real tool's format.
-      function deliverMessage(text) {
-        const cmd = streaming
-          ? { type: "steer", message: text }
-          : { type: "prompt", message: text };
-        api(cmd).catch((e) => toast("send failed: " + e.message, "err"));
-      }
+      // ---- ask_user_question: rich modal, answer flows back as the tool result ----
+      // pi-webui extension shadows the npm tool (which auto-declines in RPC mode:
+      // ctx.ui.custom is a no-op stub). The extension blocks on ctx.ui.input(MARKER);
+      // tool_execution_start already shipped the full args (previews/multiselect) here,
+      // so we render the rich modal from args and reply with a JSON-encoded result.
+      const ASK_MARKER = "\u0000pi-webui:ask-user-question";
+      let pendingAsk = null; // {id, qs} — extension_ui_response target for the active questionnaire
       function askQuestion(args) {
         const qs = (args && args.questions) || [];
         if (!qs.length) return;
+        // Preserve a latch id if the input request already arrived; else set when it does.
+        pendingAsk = { id: pendingAsk?.id ?? null, qs };
         const answers = qs.map(() => null); // per-question: string or string[]
         card.innerHTML = '<div class="qform"></div>';
         const form = card.querySelector(".qform");
@@ -1030,34 +1458,88 @@
         const chat = document.createElement("button");
         chat.className = "qlink";
         chat.textContent = "Chat about this instead";
-        chat.onclick = hideModal;
+        chat.onclick = () => {
+          // ponytail: one chat-kind answer for q0 → envelope tells the model to continue.
+          if (pendingAsk && pendingAsk.id) {
+            const result = {
+              cancelled: false,
+              answers: [
+                {
+                  questionIndex: 0,
+                  question: qs[0].question,
+                  kind: "chat",
+                  answer: "Chat about this",
+                },
+              ],
+            };
+            api({
+              type: "extension_ui_response",
+              id: pendingAsk.id,
+              value: JSON.stringify(result),
+            });
+            pendingAsk = null;
+          }
+          hideModal();
+        };
         form.appendChild(chat);
         modal.style.display = "flex";
 
         function commit() {
-          const parts = qs.map((q, qi) => {
+          if (!pendingAsk || !pendingAsk.id) {
+            toast("answer target not ready — try again", "warn");
+            return;
+          }
+          // Build a QuestionnaireResult the extension's envelope builder understands.
+          const resultAnswers = qs.map((q, qi) => {
             const a = answers[qi];
-            const val = Array.isArray(a) ? a.join(", ") : a;
-            return `"${q.question}"="${val}"`;
+            if (Array.isArray(a)) {
+              return {
+                questionIndex: qi,
+                question: q.question,
+                kind: "multi",
+                answer: null,
+                selected: a,
+              };
+            }
+            const opt = (q.options || []).find(
+              (o) => (typeof o === "string" ? o : o.label) === a,
+            );
+            const isOption = !!opt;
+            return {
+              questionIndex: qi,
+              question: q.question,
+              kind: isOption ? "option" : "custom",
+              answer: a,
+              preview: isOption && opt && opt.preview ? opt.preview : undefined,
+            };
           });
-          deliverMessage(
-            "User has answered your questions: " +
-              parts.join(". ") +
-              ". You can now continue with the user's answers in mind.",
-          );
+          api({
+            type: "extension_ui_response",
+            id: pendingAsk.id,
+            value: JSON.stringify({ cancelled: false, answers: resultAnswers }),
+          });
+          pendingAsk = null;
           hideModal();
         }
       }
 
       function uiRequest(req) {
         const { id, method } = req;
+        // pi-webui ask_user_question latch: don't render an input box — the rich
+        // modal was already drawn from tool_execution_start.args. Just record where
+        // to send the JSON-encoded result.
+        if (method === "input" && req.title === ASK_MARKER) {
+          if (pendingAsk) pendingAsk.id = id;
+          return;
+        }
         if (method === "notify") {
           toast(req.message || "", req.notifyType);
           return;
         }
         if (method === "setStatus") {
-          statusText.textContent =
-            req.statusText || statusText.textContent.replace(/\s*•.*$/, "");
+          statusText.textContent = stripAnsi(
+            req.statusText || statusText.textContent.replace(/\s*•.*$/, ""),
+          );
           return;
         }
         if (method === "set_editor_text") {
@@ -1102,7 +1584,7 @@
           });
         } else if (method === "confirm") {
           showModal(
-            `<h3>${esc(req.title || "Confirm")}</h3><pre class="cmd">${esc(req.message || "")}</pre>`,
+            `<h3>${esc(req.title || "Confirm")}</h3><details class="cmd"><summary>show command</summary><div class="cmdbody">${esc(req.message || "")}</div></details>`,
           );
           const row = document.createElement("div");
           row.className = "row";
@@ -1295,10 +1777,7 @@
                 renderThink();
               }
             } else if (e.type === "toolcall_start") {
-              addToolCall(
-                e.toolCall && e.toolCall.name,
-                e.toolCall && e.toolCall.arguments,
-              );
+              addToolCall(e.toolName);
             } else if (e.type === "toolcall_end") {
               /* args already shown; could update */
             }
@@ -1330,10 +1809,13 @@
           }
           case "tool_execution_end": {
             const w = toolBlocks.get(payload.toolCallId);
+            // ponytail: hoist t out of the if(w) block — parseTodo(t) needs it in scope.
+            // (was block-scoped → ReferenceError → panel never updated.)
+            let t = "";
             if (w) {
               w.el.classList.remove("run");
               w.el.classList.add(payload.isError ? "err" : "done");
-              const t = ((payload.result && payload.result.content) || [])
+              t = ((payload.result && payload.result.content) || [])
                 .filter((b) => b.type === "text")
                 .map((b) => b.text)
                 .join("\n");
@@ -1341,7 +1823,7 @@
               if (t.length > 500) w.el.open = false;
             }
             if (payload.toolName === "todo") parseTodo(t);
-            if (nearBottom()) scrollDown();
+            autoscroll();
             break;
           }
 
@@ -1449,6 +1931,11 @@
                 sb.think.textContent = p.data.thinkingLevel;
               if (p.data.isStreaming != null && p.data.isStreaming)
                 setStreaming(true);
+              const mid = modelIdOf(p.data.model);
+              if (mid) {
+                currentModelId = mid;
+                applyCurrentModel();
+              }
             } else if (
               p.id === "init-msgs" &&
               p.data &&
@@ -1469,7 +1956,7 @@
               p.data &&
               Array.isArray(p.data.models)
             ) {
-              populateModels(p.data.models, p.data.currentId);
+              populateModels(p.data.models);
             } else if (p.id === "sb-stats" && p.data) {
               const t = p.data.tokens || {};
               sb.tok.textContent = `${fmt(t.input)}↓ ${fmt(t.output)}↑`;
@@ -1481,6 +1968,12 @@
                 cu && cu.percent != null
                   ? `${cu.percent.toFixed(0)}% (${fmt(cu.tokens)}/${fmt(cu.contextWindow)})`
                   : "—";
+            } else if (p.command === "set_model" && p.data) {
+              const mid = modelIdOf(p.data);
+              if (mid) {
+                currentModelId = mid;
+                localStorage.setItem("pi:model", mid);
+              }
             }
           } else if (p.type === "extension_ui_request") {
             uiRequest(p);
@@ -1506,7 +1999,32 @@
         statusText.textContent = "reconnecting…";
       };
 
-      function populateModels(models, currentId) {
+      // ponytail: get_available_models returns no current id, so reconcile from
+      // get_state.model (truth) + a localStorage hint for the very first load.
+      let currentModelId = null;
+      const savedModelId = localStorage.getItem("pi:model");
+      function modelIdOf(m) {
+        return m && m.provider && m.id ? m.provider + "/" + m.id : null;
+      }
+      function applyCurrentModel() {
+        const id = currentModelId || savedModelId;
+        if (!id) {
+          refreshSbModel();
+          return;
+        }
+        for (const opt of modelSel.options) {
+          try {
+            const v = JSON.parse(opt.value);
+            if (v && v.provider + "/" + v.modelId === id) {
+              opt.selected = true;
+              refreshSbModel();
+              return;
+            }
+          } catch {}
+        }
+        refreshSbModel();
+      }
+      function populateModels(models) {
         modelSel.innerHTML = "";
         if (!models.length) {
           const o = document.createElement("option");
@@ -1516,18 +2034,18 @@
         }
         models.forEach((m) => {
           const o = document.createElement("option");
-          const id = m.provider + "/" + m.id;
           o.value = JSON.stringify({ provider: m.provider, modelId: m.id });
           o.textContent = (m.name || m.id) + " · " + m.provider;
-          if (currentId && id === currentId) o.selected = true;
           modelSel.appendChild(o);
         });
-        refreshSbModel();
+        applyCurrentModel();
       }
       modelSel.onchange = () => {
         refreshSbModel();
         try {
           const v = JSON.parse(modelSel.value);
+          currentModelId = v.provider + "/" + v.modelId;
+          localStorage.setItem("pi:model", currentModelId);
           api({ type: "set_model", provider: v.provider, modelId: v.modelId });
         } catch {}
       };
