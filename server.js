@@ -5,7 +5,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { spawn } = require("child_process");
+const { spawn, execSync } = require("child_process");
 
 const PORT = parseInt(process.env.PORT || "4317", 10);
 const PI_BIN = process.env.PI_BIN || "pi";
@@ -78,6 +78,32 @@ function startPi() {
 }
 startPi();
 
+// ponytail: sync git probe with a 2s cache; status endpoint, blocking ~50ms is fine.
+let gitCache = { t: 0, data: null };
+function gitInfo() {
+	if (Date.now() - gitCache.t < 2000) return gitCache.data;
+	let data = null;
+	try {
+		const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+			cwd: PI_CWD,
+			stdio: ["ignore", "pipe", "ignore"],
+			encoding: "utf8",
+		}).trim();
+		const changes = execSync("git status --porcelain", {
+			cwd: PI_CWD,
+			stdio: ["ignore", "pipe", "ignore"],
+			encoding: "utf8",
+		})
+			.split("\n")
+			.filter(Boolean).length;
+		data = { branch, changes };
+	} catch {
+		data = null; // not a git repo
+	}
+	gitCache = { t: Date.now(), data };
+	return data;
+}
+
 function sendToPi(obj) {
 	if (!pi || !pi.stdin.writable) throw new Error("pi not running");
 	pi.stdin.write(JSON.stringify(obj) + "\n");
@@ -138,6 +164,7 @@ const server = http.createServer(async (req, res) => {
 				ok: true,
 				pi: PI_BIN + " " + ["--mode", "rpc", ...PI_ARGS].join(" "),
 				cwd: PI_CWD,
+				git: gitInfo(),
 			}),
 		);
 	}
