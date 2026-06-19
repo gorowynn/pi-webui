@@ -654,20 +654,16 @@
       }
 
       #todopanel {
-        position: fixed;
-        top: 52px;
-        right: 14px;
-        width: 250px;
-        background: var(--panel);
+        width: 100%;
+        margin: 0 0 8px;
+        background: var(--panel2);
         border: 1px solid var(--border);
         border-radius: 10px;
         padding: 0;
-        z-index: 40;
         font-size: 12px;
-        max-height: 72vh;
+        max-height: 40vh;
         overflow: hidden;
         display: none;
-        box-shadow: 0 6px 24px #0005;
       }
       #todopanel > summary {
         list-style: none;
@@ -692,7 +688,7 @@
       }
       #todopanel .tbody {
         padding: 6px 12px;
-        max-height: 60vh;
+        max-height: 32vh;
         overflow: auto;
       }
       #todopanel .ti {
@@ -824,6 +820,12 @@
     <div class="typing" id="typing" style="visibility: hidden"></div>
 
     <footer>
+      <details id="todopanel" open>
+        <summary>
+          <span>todos</span><span class="count" id="tp-count">0/0</span>
+        </summary>
+        <div class="tbody" id="tp-body"></div>
+      </details>
       <div class="composer">
         <div id="palette"></div>
         <div id="widget"></div>
@@ -859,13 +861,6 @@
         <span>$<code id="sb-cost">…</code></span>
       </div>
     </footer>
-
-    <details id="todopanel">
-      <summary>
-        <span>todos</span><span class="count" id="tp-count">0/0</span>
-      </summary>
-      <div class="tbody" id="tp-body"></div>
-    </details>
 
     <div id="modal"><div class="card" id="modal-card"></div></div>
 
@@ -956,7 +951,9 @@
           }
           let m = /^(#{1,6})\s+(.*)$/.exec(line);
           if (m) {
-            out.push(`<h${m[1].length}>${inlineMd(esc(m[2]))}</h${m[1].length}>`);
+            out.push(
+              `<h${m[1].length}>${inlineMd(esc(m[2]))}</h${m[1].length}>`,
+            );
             i++;
             continue;
           }
@@ -997,7 +994,9 @@
                   `<tr>${r.map((c) => `<td>${inlineMd(esc(c))}</td>`).join("")}</tr>`,
               )
               .join("");
-            out.push(`<table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`);
+            out.push(
+              `<table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`,
+            );
             continue;
           }
           if (/^\s*[-*+]\s+/.test(line)) {
@@ -1040,7 +1039,9 @@
             i++;
           }
           if (buf.length)
-            out.push(`<p>${inlineMd(esc(buf.join("\n"))).replace(/\n/g, "<br>")}</p>`);
+            out.push(
+              `<p>${inlineMd(esc(buf.join("\n"))).replace(/\n/g, "<br>")}</p>`,
+            );
         }
         return out.join("");
       }
@@ -1135,11 +1136,32 @@
         cur.bubble.appendChild(d);
         cur.thinkEl = d.querySelector(".tbody");
       }
-      function renderThink() {
-        if (cur && cur.thinkEl) {
-          cur.thinkEl.textContent = cur.thinkBuf;
-          autoscroll();
-        }
+      // ponytail: throttle thinking paints to ~3/s while streaming. A long
+      // reasoning trace can be tens of KB inside an open <details>; rewriting
+      // textContent every rAF forces a full layout+paint of a giant pre-wrap
+      // block each frame and freezes the tab. force=true bypasses the throttle
+      // for the immediate final paint on thinking_end.
+      let lastThinkPaint = 0;
+      function renderThink(force) {
+        if (!cur || !cur.thinkEl) return;
+        const now = performance.now();
+        if (!force && now - lastThinkPaint < 300) return;
+        lastThinkPaint = now;
+        cur.thinkEl.textContent = cur.thinkBuf;
+        autoscroll();
+      }
+      // ponytail: coalesce per-token paints to one rAF. md() parses the whole
+      // buffer each call, so per-token renderText is O(n²) and freezes long
+      // answers. Delta handlers schedule; _end/finalize paths still render
+      // directly for an immediate final paint.
+      let renderRaf = 0;
+      function scheduleRender() {
+        if (renderRaf) return;
+        renderRaf = requestAnimationFrame(() => {
+          renderRaf = 0;
+          renderText(); // both no-op unless their buffer/element exists
+          renderThink();
+        });
       }
 
       function addToolCall(name, args) {
@@ -1250,8 +1272,7 @@
       }
       function setWorking(text) {
         if (!streaming) return;
-        typingEl.innerHTML =
-          `<span class="spin"></span><span class="wlabel">${esc(text || "working…")}</span>`;
+        typingEl.innerHTML = `<span class="spin"></span><span class="wlabel">${esc(text || "working…")}</span>`;
         typingEl.style.visibility = "visible";
       }
       function clearWorking() {
@@ -1367,12 +1388,16 @@
       // tool_execution_start already shipped the full args (previews/multiselect) here,
       // so we render the rich modal from args and reply with a JSON-encoded result.
       const ASK_MARKER = "\u0000pi-webui:ask-user-question";
-      let pendingAsk = null; // {id, qs} — extension_ui_response target for the active questionnaire
+      // ponytail: rendezvous latch. tool_execution_start args and the extension's
+      // ctx.ui.input(MARKER) request arrive in indeterminate order; storing the id
+      // only on pendingAsk loses it when the input request lands before the modal
+      // is drawn. askId survives between the two regardless of arrival order.
+      let askId = null; // extension_ui_response id for the active questionnaire
+      let pendingAsk = null; // {qs} — modal state while a questionnaire is on screen
       function askQuestion(args) {
         const qs = (args && args.questions) || [];
         if (!qs.length) return;
-        // Preserve a latch id if the input request already arrived; else set when it does.
-        pendingAsk = { id: pendingAsk?.id ?? null, qs };
+        pendingAsk = { qs };
         const answers = qs.map(() => null); // per-question: string or string[]
         card.innerHTML = '<div class="qform"></div>';
         const form = card.querySelector(".qform");
@@ -1460,7 +1485,7 @@
         chat.textContent = "Chat about this instead";
         chat.onclick = () => {
           // ponytail: one chat-kind answer for q0 → envelope tells the model to continue.
-          if (pendingAsk && pendingAsk.id) {
+          if (askId) {
             const result = {
               cancelled: false,
               answers: [
@@ -1474,10 +1499,10 @@
             };
             api({
               type: "extension_ui_response",
-              id: pendingAsk.id,
+              id: askId,
               value: JSON.stringify(result),
             });
-            pendingAsk = null;
+            askId = null;
           }
           hideModal();
         };
@@ -1485,7 +1510,7 @@
         modal.style.display = "flex";
 
         function commit() {
-          if (!pendingAsk || !pendingAsk.id) {
+          if (!askId) {
             toast("answer target not ready — try again", "warn");
             return;
           }
@@ -1515,9 +1540,10 @@
           });
           api({
             type: "extension_ui_response",
-            id: pendingAsk.id,
+            id: askId,
             value: JSON.stringify({ cancelled: false, answers: resultAnswers }),
           });
+          askId = null;
           pendingAsk = null;
           hideModal();
         }
@@ -1529,7 +1555,7 @@
         // modal was already drawn from tool_execution_start.args. Just record where
         // to send the JSON-encoded result.
         if (method === "input" && req.title === ASK_MARKER) {
-          if (pendingAsk) pendingAsk.id = id;
+          askId = id;
           return;
         }
         if (method === "notify") {
@@ -1758,7 +1784,7 @@
             } else if (e.type === "text_delta") {
               ensureTextPar();
               cur.textBuf += e.delta || "";
-              renderText();
+              scheduleRender();
             } else if (e.type === "text_end") {
               ensureTextPar();
               if (e.content != null) cur.textBuf = e.content;
@@ -1769,12 +1795,12 @@
             } else if (e.type === "thinking_delta") {
               ensureThink();
               cur.thinkBuf += e.delta || "";
-              renderThink();
+              scheduleRender();
             } else if (e.type === "thinking_end") {
               if (e.content != null) {
                 ensureThink();
                 cur.thinkBuf = e.content;
-                renderThink();
+                renderThink(true);
               }
             } else if (e.type === "toolcall_start") {
               addToolCall(e.toolName);

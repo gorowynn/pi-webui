@@ -29,7 +29,12 @@ function broadcast(obj) {
 }
 
 function startPi() {
-	const args = ["--mode", "rpc", ...PI_ARGS];
+	// ponytail: --approve trusts project-local files (.pi/extensions) for the run.
+	// Without it, RPC mode can't resolve trust (no select-prompt handler) → the
+	// ask-user-webui plugin is skipped → stock npm ask_user_question runs and
+	// auto-declines (ctx.ui.custom is a no-op in RPC). PI_ARGS can override with
+	// --no-approve since it's appended after.
+	const args = ["--mode", "rpc", "--approve", ...PI_ARGS];
 	// Windows: npm-global bins (pi) are .cmd shims; spawn can't find them without a
 	// shell to resolve PATHEXT. Fold args into one command string (avoids the
 	// DEP0190 `shell + args` warning). Args are trusted operator flags only.
