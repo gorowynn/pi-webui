@@ -117,6 +117,17 @@ function sendToPi(obj) {
 	pi.stdin.write(JSON.stringify(obj) + "\n");
 }
 
+// ponytail: sandbox any browser-supplied path to PI_CWD so the webui can't
+// read/write outside the project (the manual-edit diff feature uses this).
+// Resolve, then require the result to be PI_CWD itself or live beneath it.
+function safePath(rel) {
+	const base = path.resolve(PI_CWD);
+	const full = path.resolve(base, rel || "");
+	if (full !== base && !full.startsWith(base + path.sep))
+		throw new Error("path escapes project root");
+	return full;
+}
+
 const server = http.createServer(async (req, res) => {
 	const url = new URL(req.url, "http://localhost");
 
@@ -175,6 +186,36 @@ const server = http.createServer(async (req, res) => {
 				git: gitInfo(),
 			}),
 		);
+	}
+
+	if (req.method === "GET" && url.pathname === "/api/file") {
+		// manual-edit feature: read a project file (sandboxed to PI_CWD).
+		try {
+			const full = safePath(url.searchParams.get("path") || "");
+			const content = fs.readFileSync(full, "utf8");
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true, content }));
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+
+	if (req.method === "POST" && url.pathname === "/api/write") {
+		// manual-edit feature: write a project file (sandboxed to PI_CWD).
+		let body = "";
+		for await (const c of req) body += c;
+		try {
+			const obj = JSON.parse(body || "{}");
+			const full = safePath(obj.path || "");
+			fs.mkdirSync(path.dirname(full), { recursive: true });
+			fs.writeFileSync(full, obj.content == null ? "" : obj.content, "utf8");
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end('{"ok":true}');
+		} catch (e) {
+			res.writeHead(500, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
 	}
 
 	res.writeHead(404);

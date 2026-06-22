@@ -433,6 +433,227 @@
       pre.diff .ctx {
         color: var(--muted);
       }
+
+      /* side-by-side edit diff (old | new, new pane editable) */
+      .tool.hasdiff > .out {
+        max-height: none;
+      }
+      .sx-host {
+        padding: 2px 0 6px;
+      }
+      .sxs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        overflow: hidden;
+        background: #00000030;
+      }
+      .sx-col {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .sx-col + .sx-col {
+        border-left: 1px solid var(--border);
+      }
+      .sx-hdr {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 4px 8px;
+        font-size: 11px;
+        background: var(--panel2);
+        border-bottom: 1px solid var(--border);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .sx-old .sx-hdr {
+        color: #f0a0b0;
+      }
+      .sx-new .sx-hdr {
+        color: #b5e89a;
+      }
+      /* shared scroll body: one per column. No wrapping (white-space: pre) so
+         line numbers stay aligned row-for-row; horizontal scroll instead. */
+      .sx-body {
+        margin: 0;
+        height: 300px;
+        overflow: auto;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        tab-size: 2;
+        background: #0b0c10;
+      }
+      .sx-line {
+        display: flex;
+        align-items: flex-start;
+        white-space: pre;
+      }
+      /* sticky gutter so line numbers stay visible on horizontal scroll; the
+         gutter inherits the line's bg so it masks the text sliding under it. */
+      .sx-line .sx-gnum {
+        position: sticky;
+        left: 0;
+        flex: 0 0 auto;
+        min-width: var(--sx-gutter, 2.5ch);
+        padding: 0 10px;
+        text-align: right;
+        color: var(--muted);
+        opacity: 0.5;
+        background: inherit;
+        user-select: none;
+      }
+      .sx-line .sx-ltxt {
+        padding: 0 12px 0 0;
+        white-space: pre;
+        color: var(--text);
+      }
+      .sx-line.ln-empty {
+        background: #ffffff08;
+      }
+      .sx-line.ln-empty .sx-ltxt {
+        color: var(--muted);
+        opacity: 0.35;
+      }
+      .sx-old .sx-line.ln-del,
+      .sx-new .sx-line.ln-add {
+        background: #f7768e1a;
+      }
+      .sx-new .sx-line.ln-add {
+        background: #9ece6a1a;
+      }
+      .sx-old .sx-line.ln-del .sx-ltxt {
+        color: #f0a0b0;
+      }
+      .sx-old .sx-line.ln-del .sx-gnum {
+        color: #f0a0b0;
+        opacity: 0.8;
+      }
+      .sx-new .sx-line.ln-add .sx-ltxt {
+        color: #b5e89a;
+      }
+      .sx-new .sx-line.ln-add .sx-gnum {
+        color: #b5e89a;
+        opacity: 0.8;
+      }
+      /* editable new pane: transparent textarea layered over a colored body.
+         Its left padding mirrors the gutter width so typed text lines up with
+         the highlight rows behind it (gutter shows through the transparency). */
+      .sx-edit {
+        position: relative;
+      }
+      .sx-hlbody {
+        position: absolute;
+        inset: 0;
+        overflow: auto;
+        pointer-events: none;
+        scrollbar-width: none;
+      }
+      .sx-hlbody::-webkit-scrollbar {
+        display: none;
+      }
+      .sx-ta {
+        position: relative;
+        z-index: 1;
+        width: 100%;
+        height: 300px;
+        margin: 0;
+        padding: 6px 12px 6px calc(var(--sx-gutter, 2.5ch) + 20px);
+        resize: vertical;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        tab-size: 2;
+        white-space: pre;
+        background: transparent;
+        color: transparent;
+        caret-color: var(--text);
+        border: 0;
+        outline: none;
+        overflow: auto;
+      }
+      .sx-apply {
+        font: inherit;
+        font-size: 11px;
+        padding: 1px 8px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        background: var(--panel2);
+        color: var(--accent);
+        cursor: pointer;
+      }
+      .sx-apply:hover:not(:disabled) {
+        background: var(--accent);
+        color: #0e0f13;
+      }
+      .sx-apply:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .sx-tag {
+        font-size: 10px;
+        color: var(--warn);
+        border: 1px solid var(--border);
+        padding: 0 4px;
+        border-radius: 3px;
+      }
+      .sx-restext {
+        color: var(--muted);
+        font-size: 11px;
+        padding: 6px 10px 0;
+        white-space: pre-wrap;
+      }
+      /* read-only diff preview inside the permission modal */
+      #modal .card.wide {
+        width: min(1500px, 96vw);
+        max-height: 92vh;
+      }
+      #modal .sxs .sx-body {
+        height: min(54vh, 460px);
+      }
+      #modal .sx-host {
+        margin-top: 4px;
+      }
+      /* tab strip when multiple edit hunks need reviewing */
+      .sx-tabs-wrap {
+        margin: 8px 0 4px;
+      }
+      .sx-tabs {
+        display: flex;
+        gap: 2px;
+        border-bottom: 1px solid var(--border);
+        overflow-x: auto;
+        scrollbar-width: thin;
+      }
+      .sx-tab {
+        font: inherit;
+        font-size: 12px;
+        padding: 6px 12px;
+        background: none;
+        color: var(--muted);
+        border: 0;
+        border-bottom: 2px solid transparent;
+        cursor: pointer;
+        white-space: nowrap;
+        max-width: 240px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .sx-tab:hover {
+        color: var(--text);
+      }
+      .sx-tab.active {
+        color: var(--accent);
+        border-bottom-color: var(--accent);
+      }
+      .sx-panel {
+        display: none;
+      }
+      .sx-panel.active {
+        display: block;
+      }
       .tool .dpath {
         color: var(--muted);
         padding: 2px 10px;
@@ -1134,6 +1355,9 @@
       let commands = []; // [{name, description, source}]
       const toolBlocks = new Map(); // toolCallId -> {head, out}
       let cur = null; // {bubble, textPar, textBuf, thinkEl, thinkBuf}
+      // edit/write tool calls streamed this turn but not yet executed — used to
+      // render a diff preview in the permission modal. Cleared on a new turn.
+      let pendingEditCalls = [];
 
       function api(obj) {
         return fetch("/api/cmd", {
@@ -1520,6 +1744,7 @@
           wrap = { el, out: el.querySelector(".out") };
           toolBlocks.set(id, wrap);
         }
+        if (args != null) wrap.args = args;
         autoscroll();
         return wrap;
       }
@@ -1528,8 +1753,8 @@
       // ponytail: O(n*m) Uint32Array DP table. Fine for typical edits; swap for
       // Myers if huge files start lagging the UI.
       function diffLines(a, b) {
-        const A = String(a).split("\n");
-        const B = String(b).split("\n");
+        const A = a == null || a === "" ? [] : String(a).split("\n");
+        const B = b == null || b === "" ? [] : String(b).split("\n");
         const n = A.length,
           m = B.length;
         const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
@@ -1565,20 +1790,202 @@
         }
         return res;
       }
-      function renderEditDiff(args) {
-        const path = args && args.path ? esc(args.path) : "";
-        const edits = (args && args.edits) || [];
-        let h = path ? `<div class="dpath">${path}</div>` : "";
-        edits.forEach((e, idx) => {
-          if (edits.length > 1)
-            h += `<div class="dhunk">edit ${idx + 1}/${edits.length}</div>`;
-          const d = diffLines(e.oldText || "", e.newText || "");
-          h +=
-            '<pre class="diff">' +
-            d.map((r) => `<span class="${r.t}">${esc(r.s)}</span>`).join("") +
-            "</pre>";
+      // ---- edit diff: side-by-side, new pane editable + live re-highlight ----
+      // diffRows: align the LCS token stream into paired left/right rows so
+      // both columns share exactly one row per line. A contiguous change run
+      // (dels then adds) is zipped into rows: matched del+add = 'mod' (shows
+      // old on the left, new on the right); a lone del/add leaves the opposite
+      // side null (rendered as an empty placeholder so the row still exists).
+      function diffRows(a, b) {
+        const toks = diffLines(a, b);
+        const rows = [];
+        let i = 0;
+        while (i < toks.length) {
+          if (toks[i].t === "ctx") {
+            rows.push({ kind: "ctx", left: toks[i].s, right: toks[i].s });
+            i++;
+          } else {
+            const dels = [],
+              adds = [];
+            while (i < toks.length && toks[i].t !== "ctx") {
+              if (toks[i].t === "del") dels.push(toks[i].s);
+              else adds.push(toks[i].s);
+              i++;
+            }
+            const n = Math.max(dels.length, adds.length);
+            for (let k = 0; k < n; k++) {
+              const d = dels[k],
+                a2 = adds[k];
+              rows.push({
+                kind:
+                  d != null && a2 != null ? "mod" : d != null ? "del" : "add",
+                left: d != null ? d : null,
+                right: a2 != null ? a2 : null,
+              });
+            }
+          }
+        }
+        return rows;
+      }
+      function rowsToSides(rows) {
+        const left = [],
+          right = [];
+        let on = 0, // old file line counter
+          nn = 0; // new file line counter
+        rows.forEach((r) => {
+          if (r.kind === "ctx") {
+            left.push({ s: r.left, cls: "ln-ctx", num: ++on });
+            right.push({ s: r.right, cls: "ln-ctx", num: ++nn });
+          } else if (r.kind === "del") {
+            left.push({ s: r.left, cls: "ln-del", num: ++on });
+            right.push({ s: null, cls: "ln-empty", num: null });
+          } else if (r.kind === "add") {
+            left.push({ s: null, cls: "ln-empty", num: null });
+            right.push({ s: r.right, cls: "ln-add", num: ++nn });
+          } else {
+            left.push({ s: r.left, cls: "ln-del", num: ++on });
+            right.push({ s: r.right, cls: "ln-add", num: ++nn });
+          }
         });
-        return h;
+        return { left, right, maxNum: Math.max(on, nn) };
+      }
+      function sideHtml(lines) {
+        return lines
+          .map((l) => {
+            const num = l.num == null ? "\u00a0" : String(l.num);
+            const txt = l.s == null || l.s === "" ? "\u00a0" : esc(l.s);
+            return `<span class="sx-line ${l.cls}"><span class="sx-gnum">${num}</span><span class="sx-ltxt">${txt}</span></span>`;
+          })
+          .join("");
+      }
+      function gutterCh(maxNum) {
+        const digits = String(Math.max(maxNum || 1, 1)).length;
+        return (digits < 2 ? 2 : digits) + "ch";
+      }
+      // mountSideBySide: builds old | new into `host`. opt.readOnly renders two
+      // read-only scroll-synced columns (for the permission modal); otherwise
+      // the new pane is an editable transparent textarea layered over a colored
+      // body, with live re-highlight and an Apply button. Scrolling is synced
+      // across every column (vertical + horizontal); gutters are sticky so line
+      // numbers stay pinned during horizontal scroll.
+      function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
+        const ro = !!(opt && opt.readOnly);
+        const baseOld = oldText == null ? "" : String(oldText);
+        const baseNew = newText == null ? "" : String(newText);
+        const compute = (o, n) => {
+          const sides = rowsToSides(diffRows(o, n));
+          return {
+            leftHtml: sideHtml(sides.left),
+            rightHtml: sideHtml(sides.right),
+            gutter: gutterCh(sides.maxNum),
+          };
+        };
+        const init = compute(baseOld, baseNew);
+        host.innerHTML =
+          `<div class="dpath">${esc(path || "(no path)")}${isWrite ? ' <span class="sx-tag">write</span>' : ""}</div>` +
+          `<div class="sxs" style="--sx-gutter:${init.gutter}">` +
+          `<div class="sx-col sx-old"><div class="sx-hdr">\u2212 original</div><div class="sx-body sx-left">${init.leftHtml}</div></div>` +
+          `<div class="sx-col sx-new"><div class="sx-hdr">+ edited${ro ? "" : ' <button class="sx-apply" type="button">Apply</button>'}</div>` +
+          (ro
+            ? `<div class="sx-body sx-right">${init.rightHtml}</div>`
+            : `<div class="sx-edit"><div class="sx-body sx-hlbody" aria-hidden="true">${init.rightHtml}</div><textarea class="sx-ta" spellcheck="false" wrap="off"></textarea></div>`) +
+          `</div></div>`;
+        const leftBody = host.querySelector(".sx-left");
+        const rightBody = host.querySelector(".sx-right, .sx-hlbody");
+        let ta = null; // set only in editable mode
+        // scroll sync: bidirectional, guarded against feedback loops
+        let syncing = false;
+        const syncFrom = (src) => {
+          if (syncing) return;
+          syncing = true;
+          for (const t of [leftBody, rightBody, ta]) {
+            if (t && t !== src) {
+              t.scrollTop = src.scrollTop;
+              t.scrollLeft = src.scrollLeft;
+            }
+          }
+          syncing = false;
+        };
+        leftBody.addEventListener("scroll", () => syncFrom(leftBody));
+        if (ro) {
+          rightBody.addEventListener("scroll", () => syncFrom(rightBody));
+          return;
+        }
+        // editable pane wiring
+        ta = host.querySelector(".sx-ta");
+        const applyBtn = host.querySelector(".sx-apply");
+        ta.value = baseNew;
+        ta.addEventListener("scroll", () => syncFrom(ta));
+        let pend = false;
+        const repaint = () => {
+          const c = compute(baseOld, ta.value);
+          host.querySelector(".sxs").style.setProperty("--sx-gutter", c.gutter);
+          rightBody.innerHTML = c.rightHtml;
+          leftBody.innerHTML = c.leftHtml;
+        };
+        ta.addEventListener("input", () => {
+          if (pend) return;
+          pend = true;
+          requestAnimationFrame(() => {
+            pend = false;
+            repaint();
+          });
+        });
+        let baselineNew = baseNew;
+        applyBtn.addEventListener("click", () =>
+          applyEdit(path, baselineNew, ta.value, isWrite, applyBtn, () => {
+            baselineNew = ta.value;
+          }),
+        );
+      }
+      // applyEdit: read current file, splice the edited hunk in (edit tool) or
+      // replace it wholesale (write tool), then POST to /api/write. For edits we
+      // anchor on baselineNew (the agent's newText now sitting on disk) and
+      // replace its first occurrence; if it can't be found the file moved under
+      // us and we bail instead of clobbering.
+      async function applyEdit(path, baselineNew, edited, isWrite, btn, onOk) {
+        if (!path) {
+          toast("no path to apply", "err");
+          return;
+        }
+        if (!isWrite && edited === baselineNew) {
+          toast("no changes to apply", "warn");
+          return;
+        }
+        const prev = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "Applying…";
+        try {
+          let next;
+          if (isWrite) {
+            next = edited;
+          } else {
+            const r = await fetch("/api/file?path=" + encodeURIComponent(path));
+            const j = await r.json();
+            if (!j.ok) throw new Error(j.error || "read failed");
+            if (!j.content.includes(baselineNew))
+              throw new Error("original hunk no longer present in file");
+            next = j.content.replace(baselineNew, edited);
+          }
+          const w = await fetch("/api/write", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path, content: next }),
+          });
+          const wj = await w.json();
+          if (!wj.ok) throw new Error(wj.error || "write failed");
+          toast("applied \u2192 " + path, "ok");
+          btn.textContent = "Applied \u2713";
+          if (onOk) onOk();
+          setTimeout(() => {
+            btn.disabled = false;
+            btn.textContent = prev;
+          }, 1500);
+        } catch (e) {
+          toast("apply failed: " + e.message, "err");
+          btn.disabled = false;
+          btn.textContent = prev;
+        }
       }
 
       // ---- working indicator: spinner + current activity ----
@@ -1634,6 +2041,8 @@
       const modal = $("modal"),
         card = $("modal-card");
       function showModal(html) {
+        // reset any per-modal modifier (e.g. .wide) so it can't leak across opens
+        card.className = "card";
         card.innerHTML = html;
         modal.style.display = "flex";
       }
@@ -2262,6 +2671,118 @@
         }
         return { html: h, maxSev: a.maxSev };
       }
+      // renderEditDiffPreviews: mount read-only side-by-side diffs for every
+      // edit/write tool call streamed this turn into `container`. Used in the
+      // permission modal so you can see exactly what you're approving. (For
+      // write tools the 'original' side is empty — we don't fetch disk.)
+      // renderEditDiffPreviews: mount read-only side-by-side diffs for every
+      // edit/write hunk streamed this turn into `container`. Used in the
+      // permission modal so you can see exactly what you're approving. One hunk
+      // renders inline; multiple hunks become a tab strip so each can be
+      // reviewed separately. (For write tools the 'original' side is empty — we
+      // don't fetch disk.)
+      //
+      // Note on approval granularity: the RPC permission protocol carries ONE
+      // allow/deny response per prompt, so the browser can't approve individual
+      // hunks independently — the tabs are for *review*, the buttons below
+      // decide the whole prompt.
+      function renderEditDiffPreviews(container, calls) {
+        const list = calls == null ? pendingEditCalls : calls;
+        // consume once: a permission modal shows only the edits streamed for THIS
+        // prompt, then discards them. Without this the list persists until the
+        // next agent_start and leaks onto every later confirm/choose modal
+        // (e.g. a bash confirmation showing the previous edit's diff).
+        if (calls == null) pendingEditCalls = [];
+        if (!list.length || !container) return null;
+        // Flatten into per-hunk review items so an edit with N hunks yields N
+        // tabs (each independently diffable), and a write yields one.
+        const items = [];
+        list.forEach((c) => {
+          const inp = c.input || {};
+          const base = (inp.path || "(no path)").split(/[\\/]/).pop();
+          if (
+            c.toolName === "edit" &&
+            Array.isArray(inp.edits) &&
+            inp.edits.length
+          ) {
+            inp.edits.forEach((e, ei) => {
+              items.push({
+                label:
+                  inp.edits.length > 1
+                    ? base + " \u00b7 edit " + (ei + 1) + "/" + inp.edits.length
+                    : base,
+                build: (host) =>
+                  mountSideBySide(
+                    host,
+                    inp.path || "",
+                    e.oldText || "",
+                    e.newText || "",
+                    false,
+                    { readOnly: true },
+                  ),
+              });
+            });
+          } else if (c.toolName === "write") {
+            items.push({
+              label: base + " \u00b7 write",
+              build: (host) =>
+                mountSideBySide(
+                  host,
+                  inp.path || "",
+                  null,
+                  inp.content || "",
+                  true,
+                  { readOnly: true },
+                ),
+            });
+          }
+        });
+        if (!items.length) return null;
+
+        // single hunk: no tab chrome, just the diff
+        if (items.length === 1) {
+          const host = document.createElement("div");
+          host.className = "sx-host";
+          container.appendChild(host);
+          items[0].build(host);
+          return host;
+        }
+
+        // multiple: tab strip (one per hunk) + stacked panels
+        const wrap = document.createElement("div");
+        wrap.className = "sx-tabs-wrap";
+        const strip = document.createElement("div");
+        strip.className = "sx-tabs";
+        wrap.appendChild(strip);
+        container.appendChild(wrap);
+        const panels = [];
+        items.forEach((it, i) => {
+          const tab = document.createElement("button");
+          tab.type = "button";
+          tab.className = "sx-tab" + (i === 0 ? " active" : "");
+          tab.textContent = it.label;
+          tab.title = it.label;
+          tab.onclick = () => {
+            strip
+              .querySelectorAll(".sx-tab")
+              .forEach((t) => t.classList.remove("active"));
+            tab.classList.add("active");
+            panels.forEach((p, j) => p.classList.toggle("active", i === j));
+          };
+          strip.appendChild(tab);
+        });
+        items.forEach((it, i) => {
+          const panel = document.createElement("div");
+          panel.className = "sx-panel" + (i === 0 ? " active" : "");
+          const host = document.createElement("div");
+          host.className = "sx-host";
+          panel.appendChild(host);
+          wrap.appendChild(panel);
+          panels.push(panel);
+          it.build(host);
+        });
+        return wrap;
+      }
       function uiRequest(req) {
         const { id, method } = req;
         // pi-webui ask_user_question latch: don't render an input box — the rich
@@ -2335,6 +2856,11 @@
           showModal(
             `<h3>${esc(req.title || "Choose")}</h3>${bodyHtml}<div class='opts'></div>`,
           );
+          const stack = renderEditDiffPreviews(card);
+          if (stack) {
+            card.classList.add("wide");
+            card.querySelector(".opts").before(stack);
+          }
           const list = card.querySelector(".opts");
           opts.forEach((o) => {
             const b = document.createElement("button");
@@ -2359,6 +2885,8 @@
         } else if (method === "confirm") {
           const body = buildPermissionBody(req.title, req.message);
           showModal(`<h3>${esc(req.title || "Confirm")}</h3>${body.html}`);
+          const stack = renderEditDiffPreviews(card);
+          if (stack) card.classList.add("wide");
           const row = document.createElement("div");
           row.className = "row";
           const no = document.createElement("button");
@@ -2508,6 +3036,7 @@
           case "agent_start":
             setStreaming(true);
             setActivity("thinking…", true);
+            pendingEditCalls = [];
             break;
           case "agent_end":
             setStreaming(false);
@@ -2573,7 +3102,24 @@
             } else if (e.type === "toolcall_start") {
               addToolCall(e.toolName);
             } else if (e.type === "toolcall_end") {
-              /* args already shown; could update */
+              // toolcall_end carries the parsed ToolCall (name + arguments) and
+              // fires during streaming — BEFORE execution and before any
+              // permission prompt. Stash edit/write args so the permission modal
+              // can render a diff preview. (The old code listened for a "tool_call"
+              // member of AssistantMessageEvent with an .input field; that member
+              // does not exist — tool_call is an extension hook event that
+              // server.js never forwards, so pendingEditCalls stayed empty.)
+              const tc = e.toolCall;
+              if (
+                tc &&
+                (tc.name === "edit" || tc.name === "write") &&
+                tc.arguments
+              ) {
+                pendingEditCalls.push({
+                  toolName: tc.name,
+                  input: tc.arguments,
+                });
+              }
             }
             break;
           }
@@ -2616,8 +3162,61 @@
                 .filter((b) => b.type === "text")
                 .map((b) => b.text)
                 .join("\n");
-              w.out.textContent = t;
-              if (t.length > 500) w.el.open = false;
+              if (
+                (payload.toolName === "edit" || payload.toolName === "write") &&
+                w.args &&
+                !payload.isError
+              ) {
+                // rich side-by-side diff; the new pane is editable + applyable
+                w.el.classList.add("hasdiff");
+                w.el.open = true;
+                w.out.innerHTML = "";
+                const ea = w.args;
+                if (
+                  payload.toolName === "edit" &&
+                  Array.isArray(ea.edits) &&
+                  ea.edits.length
+                ) {
+                  ea.edits.forEach((e, idx) => {
+                    if (ea.edits.length > 1) {
+                      const dh = document.createElement("div");
+                      dh.className = "dhunk";
+                      dh.textContent = `edit ${idx + 1}/${ea.edits.length}`;
+                      w.out.appendChild(dh);
+                    }
+                    const host = document.createElement("div");
+                    host.className = "sx-host";
+                    w.out.appendChild(host);
+                    mountSideBySide(
+                      host,
+                      ea.path || "",
+                      e.oldText || "",
+                      e.newText || "",
+                      false,
+                    );
+                  });
+                } else if (payload.toolName === "write") {
+                  const host = document.createElement("div");
+                  host.className = "sx-host";
+                  w.out.appendChild(host);
+                  mountSideBySide(
+                    host,
+                    ea.path || "",
+                    null,
+                    ea.content || "",
+                    true,
+                  );
+                }
+                if (t) {
+                  const rt = document.createElement("div");
+                  rt.className = "sx-restext";
+                  rt.textContent = t;
+                  w.out.appendChild(rt);
+                }
+              } else {
+                w.out.textContent = t;
+                if (t.length > 500) w.el.open = false;
+              }
             }
             if (payload.toolName === "todo") parseTodo(t);
             setActivity("thinking…", true);
