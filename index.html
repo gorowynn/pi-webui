@@ -162,25 +162,55 @@
         user-select: none;
         display: flex;
         align-items: center;
-        gap: 6px;
+        gap: 7px;
       }
       .think > summary::-webkit-details-marker {
         display: none;
       }
-      .think > summary::before {
-        content: "▸";
+      /* status indicator: spinner while streaming, caret when done. Two
+         elements toggled by .thinking so we never animate a hidden node. */
+      .think .tspin,
+      .think .tcaret {
+        width: 11px;
+        flex: 0 0 11px;
+        display: none;
+      }
+      .think .tspin {
+        height: 11px;
+        border-radius: 50%;
+        border: 2px solid #b9aed0;
+        border-top-color: transparent;
+        animation: spin 0.7s linear infinite;
+      }
+      .think.thinking .tspin {
+        display: block;
+      }
+      .think .tcaret {
         font-size: 10px;
+        line-height: 1;
+        color: var(--muted);
         transition: transform 0.15s ease;
       }
-      .think[open] > summary::before {
+      .think:not(.thinking) .tcaret {
+        display: inline-block;
+      }
+      .think[open]:not(.thinking) .tcaret {
         transform: rotate(90deg);
       }
+      .think .tlabel {
+        color: #c8bfd8;
+      }
+      .think .tcount {
+        color: var(--muted);
+        font-size: 10px;
+        letter-spacing: 0.4px;
+        opacity: 0.85;
+      }
       .think .tbody {
-        padding: 6px 14px 10px;
-        color: #a89fc0;
+        padding: 8px 14px 12px;
+        color: #d4cbe2;
         font-size: 13px;
-        font-style: italic;
-        line-height: 1.55;
+        line-height: 1.6;
         white-space: pre-wrap;
         border-top: 1px solid #ffffff14;
       }
@@ -242,26 +272,53 @@
         overflow: auto;
       }
 
-      .typing {
+      .activity {
+        flex: 0 0 auto;
         margin: 0;
-        padding: 4px clamp(12px, 3vw, 40px);
+        padding: 5px clamp(12px, 3vw, 40px);
         color: var(--muted);
         font-size: 12px;
-        height: 22px;
+        height: 26px;
         display: flex;
         gap: 8px;
         align-items: center;
+        border-top: 1px solid var(--border);
+        background: var(--bg);
       }
-      .typing .spin {
+      .activity .spin {
         width: 11px;
         height: 11px;
         border-radius: 50%;
-        border: 2px solid var(--muted);
+        border: 2px solid var(--accent);
         border-top-color: transparent;
         animation: spin 0.7s linear infinite;
         flex: 0 0 11px;
+        display: none;
       }
-      .typing .wlabel {
+      .activity .idle-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--ok);
+        flex: 0 0 7px;
+        opacity: 0.55;
+        display: none;
+      }
+      .activity.working .spin {
+        display: block;
+      }
+      .activity.idle .idle-dot {
+        display: block;
+      }
+      .activity .alabel {
+        color: var(--muted);
+        flex: 1 1 auto;
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .activity.working .alabel {
         color: var(--accent);
       }
       @keyframes spin {
@@ -804,6 +861,79 @@
       #modal .qlink:hover {
         color: var(--text);
       }
+
+      /* multistep questionnaire: step indicator + side-by-side preview */
+      #modal .qprog {
+        margin-bottom: 12px;
+      }
+      #modal .qsteps {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--muted);
+        margin-bottom: 5px;
+      }
+      #modal .qbar {
+        height: 4px;
+        background: var(--panel2);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      #modal .qbar > i {
+        display: block;
+        height: 100%;
+        background: var(--accent);
+        transition: width 0.18s ease;
+      }
+      #modal .qbody.split {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        align-items: stretch;
+      }
+      #modal .qbody.split .qopts {
+        flex: 1 1 58%;
+        min-width: 220px;
+      }
+      #modal .qbody.split .qprev {
+        flex: 1 1 38%;
+        min-width: 180px;
+      }
+      #modal .qprev {
+        background: var(--panel2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 10px;
+        overflow: auto;
+        max-height: 46vh;
+      }
+      #modal .qprev-h {
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-size: 10px;
+        margin-bottom: 6px;
+      }
+      #modal .qprev-b {
+        margin: 0;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        color: var(--text);
+      }
+      #modal .qsubmit {
+        border-color: var(--accent);
+      }
+      #modal .qfoot {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        margin-top: 10px;
+      }
     </style>
   </head>
   <body>
@@ -817,7 +947,10 @@
     </header>
 
     <main id="transcript"></main>
-    <div class="typing" id="typing" style="visibility: hidden"></div>
+    <div class="activity idle" id="activity">
+      <span class="spin"></span><span class="idle-dot"></span
+      ><span class="alabel" id="act-label">connecting…</span>
+    </div>
 
     <footer>
       <details id="todopanel" open>
@@ -875,7 +1008,8 @@
       const modelSel = $("model");
       const dot = $("dot");
       const statusText = $("status-text");
-      const typingEl = $("typing");
+      const activityEl = $("activity");
+      const actLabel = $("act-label");
 
       let streaming = false;
       let commands = []; // [{name, description, source}]
@@ -1038,10 +1172,19 @@
             buf.push(lines[i]);
             i++;
           }
-          if (buf.length)
+          if (buf.length) {
             out.push(
               `<p>${inlineMd(esc(buf.join("\n"))).replace(/\n/g, "<br>")}</p>`,
             );
+          } else {
+            // ponytail: unhandled single line (e.g. a stray `|` that isn't a
+            // table row, since the table branch above already consumed valid
+            // tables). Render it as its own paragraph so i always advances —
+            // without this the outer while spins forever on a pipe line and
+            // freezes the tab.
+            out.push(`<p>${inlineMd(esc(lines[i]))}</p>`);
+            i++;
+          }
         }
         return out.join("");
       }
@@ -1111,6 +1254,9 @@
           textPar: null,
           textBuf: "",
           thinkEl: null,
+          thinkDetails: null,
+          thinkLabel: null,
+          thinkCount: null,
           thinkBuf: "",
         };
         return cur;
@@ -1128,27 +1274,72 @@
           autoscroll();
         }
       }
-      function ensureThink() {
+      // ponytail: thinking-block lifecycle. The <details> carries its own
+      // state: the .thinking class swaps the summary indicator from caret to
+      // spinner and drives a small live character count (so a collapsed trace
+      // still shows it's alive). The body is painted ONLY when the block is
+      // open or being finalized — rewriting a tens-of-KB pre-wrap node the
+      // user can't see is pure layout thrash and freezes the tab on long
+      // reasoning traces. The latest buffer is mirrored onto the element
+      // (d.__buf) so the toggle handler can paint lazily on open even after
+      // cur has moved on.
+      function ensureThink(active) {
         if (!cur || cur.thinkEl) return;
         const d = document.createElement("details");
-        d.className = "think";
-        d.innerHTML = `<summary>thinking</summary><div class="tbody"></div>`;
+        d.className = "think" + (active ? " thinking" : "");
+        d.innerHTML =
+          `<summary><span class="tspin"></span><span class="tcaret">▸</span>` +
+          `<span class="tlabel">${active ? "thinking" : "thoughts"}</span>` +
+          `<span class="tcount"></span></summary><div class="tbody"></div>`;
+        const body = d.querySelector(".tbody");
         cur.bubble.appendChild(d);
-        cur.thinkEl = d.querySelector(".tbody");
+        cur.thinkEl = body;
+        cur.thinkDetails = d;
+        cur.thinkLabel = d.querySelector(".tlabel");
+        cur.thinkCount = d.querySelector(".tcount");
+        // opened a collapsed trace — paint whatever we have right now (the
+        // streaming path skips body paints while closed).
+        d.addEventListener("toggle", () => {
+          if (d.open) body.textContent = d.__buf || body.textContent || "";
+        });
+      }
+      function finalizeThink() {
+        if (!cur || !cur.thinkDetails) return;
+        cur.thinkDetails.classList.remove("thinking");
+        if (cur.thinkLabel) cur.thinkLabel.textContent = "thoughts";
+        if (cur.thinkCount) cur.thinkCount.textContent = "";
       }
       // ponytail: throttle thinking paints to ~3/s while streaming. A long
-      // reasoning trace can be tens of KB inside an open <details>; rewriting
-      // textContent every rAF forces a full layout+paint of a giant pre-wrap
-      // block each frame and freezes the tab. force=true bypasses the throttle
-      // for the immediate final paint on thinking_end.
+      // reasoning trace can be tens of KB; rewriting textContent every rAF
+      // forces a full layout+paint of a giant pre-wrap block each frame and
+      // freezes the tab. force=true bypasses the throttle for the immediate
+      // final paint on thinking_end / message_end.
       let lastThinkPaint = 0;
       function renderThink(force) {
-        if (!cur || !cur.thinkEl) return;
+        if (!cur || !cur.thinkEl || !cur.thinkDetails) return;
         const now = performance.now();
-        if (!force && now - lastThinkPaint < 300) return;
+        const throttled = !force && now - lastThinkPaint < 300;
+        const buf = cur.thinkBuf;
+        // always remember the buffer on the node so opening a collapsed trace
+        // (live or historical) can paint without cur still being valid.
+        cur.thinkDetails.__buf = buf;
+        // cheap progress tick on the summary — only while streaming
+        if (
+          !throttled &&
+          cur.thinkCount &&
+          cur.thinkDetails.classList.contains("thinking")
+        ) {
+          cur.thinkCount.textContent = buf.length
+            ? `${(buf.length / 1000).toFixed(1)}k`
+            : "";
+        }
+        if (throttled) return;
         lastThinkPaint = now;
-        cur.thinkEl.textContent = cur.thinkBuf;
-        autoscroll();
+        // expensive body paint only when visible or finalizing
+        if (force || cur.thinkDetails.open) {
+          cur.thinkEl.textContent = buf;
+          autoscroll();
+        }
       }
       // ponytail: coalesce per-token paints to one rAF. md() parses the whole
       // buffer each call, so per-token renderText is O(n²) and freezes long
@@ -1270,13 +1461,18 @@
           return `${name}: ${String(args.query || args.url || "").slice(0, 60)}`;
         return name || "tool";
       }
-      function setWorking(text) {
-        if (!streaming) return;
-        typingEl.innerHTML = `<span class="spin"></span><span class="wlabel">${esc(text || "working…")}</span>`;
-        typingEl.style.visibility = "visible";
-      }
-      function clearWorking() {
-        setWorking("thinking…");
+      // ---- activity bar: one line above the chatbox that reports what the
+      // session is doing right now — "thinking…", "running bash: npm test",
+      // "waiting for your input…", or "ready" when idle and waiting for you.
+      // `working` swaps the spinner in and tints the label accent; `idle`
+      // shows a dim dot so it's obvious the turn is yours.
+      let lastActivity = "";
+      function setActivity(label, working) {
+        const key = (working ? "1:" : "0:") + label;
+        if (key === lastActivity) return;
+        lastActivity = key;
+        activityEl.className = "activity " + (working ? "working" : "idle");
+        actLabel.textContent = label;
       }
 
       function note(text, cls) {
@@ -1398,93 +1594,24 @@
         const qs = (args && args.questions) || [];
         if (!qs.length) return;
         pendingAsk = { qs };
-        const answers = qs.map(() => null); // per-question: string or string[]
-        card.innerHTML = '<div class="qform"></div>';
-        const form = card.querySelector(".qform");
-        qs.forEach((q, qi) => {
-          const blk = document.createElement("div");
-          blk.className = "qblk";
-          blk.innerHTML =
-            (q.header ? `<span class="qchip">${esc(q.header)}</span>` : "") +
-            `<p class="qq">${esc(q.question)}</p>`;
-          const multi = !!q.multiSelect;
-          const opts = q.options || [];
-          if (multi) {
-            const chosen = new Set();
-            opts.forEach((o) => {
-              const lbl = typeof o === "string" ? o : o.label;
-              const b = document.createElement("button");
-              b.className = "qopt";
-              b.innerHTML =
-                `<span class="qlbl">☐ ${esc(lbl)}</span>` +
-                (o.description
-                  ? `<span class="qdesc">${esc(o.description)}</span>`
-                  : "");
-              b.onclick = () => {
-                if (chosen.has(lbl)) {
-                  chosen.delete(lbl);
-                  b.classList.remove("sel");
-                  b.querySelector(".qlbl").innerHTML = "☐ " + esc(lbl);
-                } else {
-                  chosen.add(lbl);
-                  b.classList.add("sel");
-                  b.querySelector(".qlbl").innerHTML = "☑ " + esc(lbl);
-                }
-              };
-              blk.appendChild(b);
-            });
-            const submit = document.createElement("button");
-            submit.className = "qopt";
-            submit.style.borderColor = "var(--accent)";
-            submit.innerHTML = `<span class="qlbl">Submit ${chosen.size ? "(" + chosen.size + ")" : ""}</span>`;
-            submit.onclick = () => {
-              answers[qi] = [...chosen];
-              blk.querySelectorAll(".qopt").forEach((x) => (x.disabled = true));
-              if (answers.every(Boolean)) commit();
-            };
-            blk.appendChild(submit);
+        const answers = qs.map(() => null); // per-question: string | string[]
+        let step = 0; // current question index (one-at-a-time multistep)
+        const total = qs.length;
+        modal.style.display = "flex";
+
+        // advance to the next question, or commit once the last is answered
+        function choose(qi, value) {
+          answers[qi] = value;
+          if (qi + 1 < total) {
+            step = qi + 1;
+            renderStep();
           } else {
-            opts.forEach((o) => {
-              const lbl = typeof o === "string" ? o : o.label;
-              const b = document.createElement("button");
-              b.className = "qopt";
-              b.innerHTML =
-                `<span class="qlbl">${esc(lbl)}</span>` +
-                (o.description
-                  ? `<span class="qdesc">${esc(o.description)}</span>`
-                  : "");
-              b.onclick = () => {
-                answers[qi] = lbl;
-                blk
-                  .querySelectorAll(".qopt")
-                  .forEach((x) => (x.disabled = true));
-                if (answers.every(Boolean)) commit();
-              };
-              blk.appendChild(b);
-            });
-            const row = document.createElement("div");
-            row.className = "qrow";
-            const inp = document.createElement("input");
-            inp.type = "text";
-            inp.placeholder = "Type something…";
-            const ok = document.createElement("button");
-            ok.textContent = "Send";
-            ok.onclick = () => {
-              if (!inp.value.trim()) return;
-              answers[qi] = inp.value.trim();
-              blk.querySelectorAll(".qopt").forEach((x) => (x.disabled = true));
-              if (answers.every(Boolean)) commit();
-            };
-            row.append(inp, ok);
-            blk.appendChild(row);
+            commit();
           }
-          form.appendChild(blk);
-        });
-        const chat = document.createElement("button");
-        chat.className = "qlink";
-        chat.textContent = "Chat about this instead";
-        chat.onclick = () => {
-          // ponytail: one chat-kind answer for q0 → envelope tells the model to continue.
+        }
+
+        // ponytail: one chat-kind answer for q0 → envelope tells the model to continue.
+        function goChat() {
           if (askId) {
             const result = {
               cancelled: false,
@@ -1504,10 +1631,164 @@
             });
             askId = null;
           }
+          setActivity("thinking…", true);
           hideModal();
-        };
-        form.appendChild(chat);
-        modal.style.display = "flex";
+        }
+
+        function renderStep() {
+          const qi = step;
+          const q = qs[qi];
+          const multi = !!q.multiSelect;
+          const opts = (q.options || []).map((o) =>
+            typeof o === "string" ? { label: o } : o,
+          );
+          // previews switch single-select to a side-by-side layout and suppress
+          // the "Type something." custom row (no room in the split).
+          const hasPreview =
+            !multi && opts.some((o) => o.preview && o.preview.length);
+
+          card.innerHTML = "";
+          const form = document.createElement("div");
+          form.className = "qform";
+
+          // step indicator + progress bar (only meaningful with >1 question)
+          if (total > 1) {
+            const prog = document.createElement("div");
+            prog.className = "qprog";
+            prog.innerHTML =
+              `<div class="qsteps">Step ${qi + 1} of ${total}</div>` +
+              `<div class="qbar"><i style="width:${((qi + 1) / total) * 100}%"></i></div>`;
+            form.appendChild(prog);
+          }
+
+          const blk = document.createElement("div");
+          blk.className = "qblk";
+          blk.innerHTML =
+            (q.header ? `<span class="qchip">${esc(q.header)}</span>` : "") +
+            `<p class="qq">${esc(q.question)}</p>`;
+
+          const body = document.createElement("div");
+          body.className = "qbody" + (hasPreview ? " split" : "");
+          const list = document.createElement("div");
+          list.className = "qopts";
+
+          const optBtn = (o, lbl) => {
+            const b = document.createElement("button");
+            b.className = "qopt";
+            b.innerHTML =
+              `<span class="qlbl">${esc(lbl)}</span>` +
+              (o.description
+                ? `<span class="qdesc">${esc(o.description)}</span>`
+                : "");
+            return b;
+          };
+
+          if (multi) {
+            const chosen = new Set(
+              Array.isArray(answers[qi]) ? answers[qi] : [],
+            );
+            opts.forEach((o) => {
+              const lbl = o.label;
+              const b = optBtn(o, lbl);
+              const sync = () => {
+                b.classList.toggle("sel", chosen.has(lbl));
+                b.querySelector(".qlbl").textContent =
+                  (chosen.has(lbl) ? "☑ " : "☐ ") + lbl;
+              };
+              sync();
+              b.onclick = () => {
+                if (chosen.has(lbl)) chosen.delete(lbl);
+                else chosen.add(lbl);
+                sync();
+                submit.querySelector(".qlbl").textContent =
+                  `Submit${chosen.size ? " (" + chosen.size + ")" : ""}`;
+              };
+              list.appendChild(b);
+            });
+            const submit = document.createElement("button");
+            submit.className = "qopt qsubmit";
+            submit.innerHTML = `<span class="qlbl">Submit${chosen.size ? " (" + chosen.size + ")" : ""}</span>`;
+            submit.onclick = () => choose(qi, [...chosen]);
+            list.appendChild(submit);
+          } else {
+            opts.forEach((o) => {
+              const lbl = o.label;
+              const b = optBtn(o, lbl);
+              b.onclick = () => choose(qi, lbl);
+              list.appendChild(b);
+            });
+            if (!hasPreview) {
+              const row = document.createElement("div");
+              row.className = "qrow";
+              const inp = document.createElement("input");
+              inp.type = "text";
+              inp.placeholder = "Type something…";
+              const prev = answers[qi];
+              if (
+                typeof prev === "string" &&
+                !opts.some((o) => o.label === prev)
+              )
+                inp.value = prev;
+              const ok = document.createElement("button");
+              ok.textContent = "Send";
+              ok.onclick = () => {
+                if (!inp.value.trim()) return;
+                choose(qi, inp.value.trim());
+              };
+              row.append(inp, ok);
+              list.appendChild(row);
+            }
+          }
+          body.appendChild(list);
+
+          // side-by-side preview pane (single-select + any preview). Updates on
+          // hover/focus; defaults to the first option that carries a preview.
+          if (hasPreview) {
+            const pane = document.createElement("div");
+            pane.className = "qprev";
+            const show = (o) => {
+              pane.innerHTML =
+                `<div class="qprev-h">preview</div>` +
+                `<pre class="qprev-b">${esc((o && o.preview) || "")}</pre>`;
+            };
+            show(opts.find((o) => o.preview && o.preview.length) || opts[0]);
+            list.querySelectorAll(".qopt").forEach((b, i) => {
+              const o = opts[i];
+              if (o && o.preview) {
+                b.addEventListener("mouseenter", () => show(o));
+                b.addEventListener("focus", () => show(o));
+              }
+            });
+            body.appendChild(pane);
+          }
+
+          blk.appendChild(body);
+          form.appendChild(blk);
+
+          const foot = document.createElement("div");
+          foot.className = "qfoot";
+          if (qi > 0) {
+            const back = document.createElement("button");
+            back.className = "qlink";
+            back.textContent = "← Back";
+            back.onclick = () => {
+              step = qi - 1;
+              renderStep();
+            };
+            foot.appendChild(back);
+          }
+          const chat = document.createElement("button");
+          chat.className = "qlink";
+          chat.textContent = "Chat about this instead";
+          chat.onclick = goChat;
+          foot.appendChild(chat);
+          form.appendChild(foot);
+
+          card.appendChild(form);
+          card.scrollTop = 0;
+        }
+
+        renderStep();
 
         function commit() {
           if (!askId) {
@@ -1545,6 +1826,7 @@
           });
           askId = null;
           pendingAsk = null;
+          setActivity("thinking…", true);
           hideModal();
         }
       }
@@ -1700,8 +1982,11 @@
               cur.textBuf = "";
             } else if (b.type === "thinking") {
               cur.thinkBuf = b.thinking || "";
-              ensureThink();
-              renderThink();
+              ensureThink(false);
+              renderThink(true);
+              cur.thinkDetails = null;
+              cur.thinkLabel = null;
+              cur.thinkCount = null;
               cur.thinkEl = null;
               cur.thinkBuf = "";
             } else if (b.type === "toolCall") {
@@ -1735,7 +2020,6 @@
       function setStreaming(on) {
         streaming = on;
         dot.classList.toggle("live", on);
-        typingEl.style.visibility = on ? "visible" : "hidden";
         stopBtn.disabled = !on;
         if (!on) cur = null;
       }
@@ -1745,9 +2029,11 @@
         switch (payload.type) {
           case "agent_start":
             setStreaming(true);
+            setActivity("thinking…", true);
             break;
           case "agent_end":
             setStreaming(false);
+            setActivity("ready", false);
             break;
 
           case "message_start":
@@ -1761,7 +2047,8 @@
             // finalize current text/think buffers
             if (cur) {
               renderText();
-              renderThink();
+              renderThink(true);
+              finalizeThink();
             }
             cur = null;
             break;
@@ -1781,6 +2068,7 @@
             if (e.type === "text_start") {
               ensureTextPar();
               cur.textBuf = "";
+              setActivity("writing…", true);
             } else if (e.type === "text_delta") {
               ensureTextPar();
               cur.textBuf += e.delta || "";
@@ -1790,18 +2078,20 @@
               if (e.content != null) cur.textBuf = e.content;
               renderText();
             } else if (e.type === "thinking_start") {
-              ensureThink();
+              ensureThink(true);
               cur.thinkBuf = "";
+              setActivity("thinking…", true);
             } else if (e.type === "thinking_delta") {
-              ensureThink();
+              ensureThink(true);
               cur.thinkBuf += e.delta || "";
               scheduleRender();
             } else if (e.type === "thinking_end") {
               if (e.content != null) {
-                ensureThink();
+                ensureThink(true);
                 cur.thinkBuf = e.content;
-                renderThink(true);
               }
+              renderThink(true);
+              finalizeThink();
             } else if (e.type === "toolcall_start") {
               addToolCall(e.toolName);
             } else if (e.type === "toolcall_end") {
@@ -1811,15 +2101,18 @@
           }
 
           case "tool_execution_start": {
-            if (payload.toolName === "ask_user_question" && payload.args) {
-              askQuestion(payload.args);
-            }
             const w = toolBlock(
               payload.toolCallId,
               payload.toolName,
               payload.args,
               true,
             );
+            if (payload.toolName === "ask_user_question" && payload.args) {
+              askQuestion(payload.args);
+              setActivity("waiting for your input…", false);
+            } else {
+              setActivity(describeTool(payload.toolName, payload.args), true);
+            }
             break;
           }
           case "tool_execution_update": {
@@ -1849,6 +2142,7 @@
               if (t.length > 500) w.el.open = false;
             }
             if (payload.toolName === "todo") parseTodo(t);
+            setActivity("thinking…", true);
             autoscroll();
             break;
           }
@@ -1932,6 +2226,7 @@
       const es = new EventSource("/api/events");
       es.onopen = () => {
         statusText.textContent = "ready";
+        setActivity("ready", false);
         refreshHealth();
         refreshStats();
         api({ type: "get_state", id: "init-state" });
@@ -1955,8 +2250,10 @@
             if (p.id === "init-state" && p.data) {
               if (p.data.thinkingLevel != null)
                 sb.think.textContent = p.data.thinkingLevel;
-              if (p.data.isStreaming != null && p.data.isStreaming)
+              if (p.data.isStreaming != null && p.data.isStreaming) {
                 setStreaming(true);
+                setActivity("working…", true);
+              }
               const mid = modelIdOf(p.data.model);
               if (mid) {
                 currentModelId = mid;
@@ -2023,6 +2320,7 @@
       };
       es.onerror = () => {
         statusText.textContent = "reconnecting…";
+        setActivity("reconnecting…", false);
       };
 
       // ponytail: get_available_models returns no current id, so reconcile from
