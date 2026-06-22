@@ -200,14 +200,34 @@ function mdProse(src) {
 function md(text) {
 	const src = String(text == null ? "" : text);
 	if (!src) return "";
-	// split on fenced code blocks; odd segments are code.
+	// split on CLOSED fenced code blocks; matched ```...``` pairs are captured
+	// by the regex. Any other ``` surviving into a prose segment is an
+	// UNCLOSED fence from a still-streaming message -- handled below so the
+	// live render matches the final post-reload render instead of flashing
+	// raw fence markers + code-as-prose until the closer arrives.
 	const segs = src.split(/(```[\s\S]*?```)/g);
 	let html = "";
 	for (let k = 0; k < segs.length; k++) {
 		const seg = segs[k];
 		if (!seg) continue;
-		if (seg.startsWith("```")) {
-			const body = seg.slice(3);
+		if (seg.startsWith("```") && seg.endsWith("```")) {
+			// closed fence: slice off both ``` delimiters (slice(3, -3)). The
+			// old slice(3) + replace(/\n$/) left the closing ``` inside the
+			// code block as a stray trailing line.
+			const body = seg.slice(3, -3);
+			const nl = body.indexOf("\n");
+			const lang = (nl >= 0 ? body.slice(0, nl) : "").trim();
+			const code = nl >= 0 ? body.slice(nl + 1) : "";
+			const cls = lang ? ` class="language-${esc(lang)}"` : "";
+			html += `<pre><code${cls}>${esc(code.replace(/\n$/, ""))}</code></pre>`;
+			continue;
+		}
+		const open = seg.indexOf("```");
+		if (open >= 0) {
+			// unclosed fence (streaming): render prose before it, then the
+			// partial code as an open <pre> identical to its closed form.
+			html += mdProse(seg.slice(0, open));
+			const body = seg.slice(open + 3);
 			const nl = body.indexOf("\n");
 			const lang = (nl >= 0 ? body.slice(0, nl) : "").trim();
 			const code = nl >= 0 ? body.slice(nl + 1) : "";
@@ -525,6 +545,29 @@ function gutterCh(maxNum) {
 	const digits = String(Math.max(maxNum || 1, 1)).length;
 	return (digits < 2 ? 2 : digits) + "ch";
 }
+// ponytail: recover the hunk's real line offset from the file on disk so the
+// gutter shows actual file line numbers instead of restarting at 1 per hunk.
+// Pre-apply (permission modal) the file still has oldText; post-apply
+// (transcript) it has newText -- try oldText then newText. Best-effort: any
+// miss (file gone, hunk shifted, giant plainSide fallback) silently keeps the
+// 1-based default. One local read per hunk; cache it only if this shows up
+// in a profile.
+function findStartLine(path, oldText, newText) {
+	if (!path) return Promise.resolve(null);
+	return fetch("/api/file?path=" + encodeURIComponent(path))
+		.then((r) => r.json())
+		.then((j) => {
+			if (!j || !j.ok || j.content == null) return null;
+			const c = j.content;
+			for (const needle of [oldText, newText]) {
+				if (!needle) continue;
+				const idx = c.indexOf(needle);
+				if (idx >= 0) return c.slice(0, idx).split("\n").length;
+			}
+			return null;
+		})
+		.catch(() => null);
+}
 // mountSideBySide: builds old | new into `host`. opt.readOnly renders two
 // read-only scroll-synced columns (for the permission modal); otherwise
 // the new pane is an editable transparent textarea layered over a colored
@@ -576,6 +619,38 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 	const leftBody = host.querySelector(".sx-left");
 	const rightBody = host.querySelector(".sx-right, .sx-hlbody");
 	let ta = null; // set only in editable mode
+	// ponytail: gutters render 1-based immediately, then snap to the hunk's
+	// real file line numbers once findStartLine resolves. Only the .sx-gnum
+	// text + the --sx-gutter width change -- diff rows, content, and the
+	// editable textarea are untouched, so scroll/selection/Apply survive.
+	let lineStart = 1;
+	const patchGutters = (start) => {
+		let maxNum = start - 1;
+		for (const body of [leftBody, rightBody]) {
+			let n = start - 1;
+			body.querySelectorAll(".sx-line").forEach((line) => {
+				const gnum = line.querySelector(".sx-gnum");
+				if (line.classList.contains("ln-empty")) {
+					if (gnum) gnum.innerHTML = "\u00a0";
+				} else {
+					n++;
+					if (gnum) gnum.textContent = String(n);
+					if (n > maxNum) maxNum = n;
+				}
+			});
+		}
+		host
+			.querySelector(".sxs")
+			.style.setProperty("--sx-gutter", gutterCh(maxNum));
+	};
+	if (!isWrite && baseOld) {
+		findStartLine(path, baseOld, baseNew).then((start) => {
+			if (start) {
+				lineStart = start;
+				patchGutters(start);
+			}
+		});
+	}
 	// scroll sync: bidirectional, guarded against feedback loops
 	let syncing = false;
 	const syncFrom = (src) => {
@@ -605,6 +680,7 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 		host.querySelector(".sxs").style.setProperty("--sx-gutter", c.gutter);
 		rightBody.innerHTML = c.rightHtml;
 		leftBody.innerHTML = c.leftHtml;
+		if (lineStart > 1) patchGutters(lineStart);
 	};
 	ta.addEventListener("input", () => {
 		if (pend) return;
@@ -1109,12 +1185,11 @@ function askQuestion(args) {
 	}
 }
 
-// ---- permission-prompt analysis (pure heuristic, no model) ----
+// ---- permission-prompt risk classification (pure heuristic, no model) ----
 // ponytail: confirm/select permission prompts can carry a huge raw command
-// in req.message. We classify it, render a one-line plain-english summary,
-// and scan for destructive patterns. Intentionally a static rule table --
-// instant, offline, deterministic, and immune to an LLM's phrasing. A
-// model-summary slot is reserved in the card so /api/summarize can drop in.
+// in req.message. We classify it and scan for destructive patterns.
+// Intentionally a static rule table -- instant, offline, deterministic,
+// and immune to LLM phrasing. (Plain-english summary removed; replacement planned.)
 const SHELL_VERBS =
 	/^(sudo\s+)?(npm|pnpm|yarn|npx|git|rm|rmdir|cp|mv|mkdir|touch|cat|ls|curl|wget|ssh|scp|rsync|tar|zip|unzip|chmod|chown|kill|killall|docker|kubectl|helm|terraform|ansible|make|gcc|python|python3|pip|pip3|node|ruby|go|cargo|rustc|java|mvn|gradle|bash|sh|zsh|powershell|cmd|echo|cd|export|source|systemctl|service|brew|apt|apt-get|yum|dnf|pacman|choco|winget|del|copy|move|ren|format|taskkill|netstat|ping)\b/i;
 // [regex, severity(1-3), tag, why]. Tag dedupes so a generic match (sev 2)
@@ -1206,7 +1281,7 @@ const RISK_RULES = [
 function shellLooks(t) {
 	// ponytail: tolerate a leading terminal prompt ($, >) — pasted blocks
 	// like "$ npm test" would otherwise miss the ^-anchored verb match and
-	// fall through to the prose summary path.
+	// fall through to the prose-detail path.
 	const stripped = t.trim().replace(/^[$>]\s+/, "");
 	if (SHELL_VERBS.test(stripped)) return true;
 	if (/&&|\|\||;|>>|\$\(|\|/.test(t)) return true;
@@ -1216,118 +1291,19 @@ function shellLooks(t) {
 	}
 	return false;
 }
-function truncate(s, n) {
-	return s.length <= n ? s : s.slice(0, n - 1).replace(/\s+\S*$/, "") + "…";
-}
-function capitalize(s) {
-	return s ? s[0].toUpperCase() + s.slice(1) : s;
-}
-// one human phrase for a single shell segment, e.g. npm run build -> run the build script
-function phraseSegment(seg) {
-	const s = seg.trim();
-	if (!s) return null;
-	const m = s.match(/^((?:sudo\s+)?)(\S+)\s*(.*)$/);
-	if (!m) return s;
-	const verb = m[2].toLowerCase();
-	const rest = m[3] || "";
-	const tokz = rest.split(/\s+/).filter((t) => t && !t.startsWith("-"));
-	const obj = tokz[0] || "";
-	const V = verb;
-	if (/^(npm|pnpm|yarn|npx)$/.test(V)) {
-		if (/^(test|t)$/.test(obj)) return "run the test suite";
-		if (/^(run|run-s|run-p)$/.test(obj) && tokz[1])
-			return `run the \`${tokz[1]}\` script`;
-		if (/^(install|ci|add|i|up|upgrade)$/.test(obj))
-			return "install dependencies";
-		if (obj === "publish") return "publish to npm";
-		if (/^(uninstall|remove|rm)$/.test(obj)) return "remove a package";
-		return obj ? `${V} ${obj}` : `run ${V}`;
-	}
-	if (V === "git") {
-		if (obj === "push") return "push commits to the remote";
-		if (obj === "pull") return "pull from the remote";
-		if (obj === "commit") return "create a commit";
-		if (obj === "add") return "stage changes";
-		if (obj === "checkout" || obj === "switch")
-			return `switch branch${tokz[1] ? " → " + tokz[1] : ""}`;
-		if (obj === "merge") return "merge branches";
-		if (obj === "rebase") return "rebase commits";
-		if (obj === "clone") return "clone a repository";
-		if (obj === "stash") return "stash changes";
-		return obj ? `git ${obj}` : "run git";
-	}
-	if (V === "rm") return `delete ${obj || "files"}`;
-	if (V === "rmdir" || V === "rd") return "delete directories";
-	if (V === "mv") return `move/rename ${obj || "files"}`;
-	if (V === "cp" || V === "copy") return `copy ${obj || "files"}`;
-	if (V === "mkdir") return `create ${obj || "directories"}`;
-	if (V === "touch") return "create empty files";
-	if (V === "cat") return "print file contents";
-	if (V === "ls" || V === "dir") return "list files";
-	if (V === "curl" || V === "wget") return `download from ${obj}`;
-	if (V === "chmod") return `change permissions${obj ? " on " + obj : ""}`;
-	if (V === "chown") return `change ownership${obj ? " of " + obj : ""}`;
-	if (V === "kill" || V === "killall" || V === "taskkill")
-		return "stop a process";
-	if (V === "docker") return obj ? `docker: ${obj}` : "run docker";
-	if (V === "kubectl") return obj ? `kubernetes: ${obj}` : "run kubectl";
-	if (V === "terraform") return obj ? `terraform ${obj}` : "run terraform";
-	if (V === "make")
-		return obj && obj !== "install"
-			? `run make target \`${obj}\``
-			: "build the project";
-	if (/^(python|python3|node|ruby|go)$/.test(V)) return `run a ${V} script`;
-	if (V === "pip" || V === "pip3") return "install python packages";
-	if (V === "cargo")
-		return obj === "build" ? "build the rust project" : `cargo ${obj}`;
-	if (V === "sudo") return rest ? phraseSegment(rest) : "run with sudo";
-	if (V === "echo") return "print text";
-	if (V === "cd") return `change directory${obj ? " → " + obj : ""}`;
-	return `${V}${obj ? " " + obj : ""}`;
-}
+
 function analyzePermission(title, message) {
 	const raw = (message || title || "").trim();
 	// ponytail: strip markdown code fences (```bash ... ```) and join
 	// backslash line-continuations. pi often wraps the command in a fenced
-	// block; the fence markers would otherwise pollute the summary, inflate
-	// the line count, and leak into the step list as phony commands.
+	// block; the fence markers would otherwise inflate the line count and
+	// leak into the detail viewer as a phony command line.
 	const cleaned = raw
 		.replace(/^\s*```[a-zA-Z0-9_-]*\s*$/gm, "")
 		.replace(/\\\n\s*/g, " ")
 		.trim();
 	const isShell = shellLooks(cleaned);
 	const cmd = cleaned;
-	// decompose into steps: split on newlines AND shell operators so a
-	// multi-line script and a one-liner chained with && both yield the same
-	// step list. Drop comments, blanks, terminal prompt chars ($, >), and
-	// prose intro lines that don't lead with a shell verb. The detail viewer
-	// still shows the full cleaned script regardless of this filtering.
-	const segs = isShell
-		? cleaned
-				.split(/(?:&&|\|\||;|\n)/)
-				.map((s) => s.trim().replace(/^[$>]\s+/, ""))
-				.filter(
-					(s) =>
-						s &&
-						!s.startsWith("#") &&
-						!s.startsWith("//") &&
-						(SHELL_VERBS.test(s) || /\|/.test(s)),
-				)
-		: [];
-	const steps = segs.map(phraseSegment).filter(Boolean);
-	let summary;
-	if (isShell) {
-		if (steps.length <= 1) {
-			summary = capitalize(steps[0] || "run a shell command") + ".";
-		} else {
-			const shown = steps.slice(0, 4).map((s) => s.toLowerCase());
-			const more = steps.length - 4;
-			summary = `${steps.length} steps: ${shown.join(" → ")}${more > 0 ? ` (+${more} more)` : ""}`;
-		}
-	} else {
-		const first = (raw.split(/\n/)[0] || "").replace(/\s+/g, " ").trim();
-		summary = truncate(first, 140) || "Confirm this action.";
-	}
 	// scan whole raw text -- regexes are word-boundary based, so they fire
 	// inside prose ('Allow rm -rf?') AND anywhere in a multi-line script or
 	// fenced block, no matter which line the dangerous token sits on. Keep
@@ -1347,15 +1323,13 @@ function analyzePermission(title, message) {
 	return {
 		isShell,
 		cmd,
-		summary,
-		steps: steps.length,
 		risks,
 		maxSev,
 		big,
 		lineCount,
 	};
 }
-// shared card body (risk banner + summary + command) for confirm & select
+// shared card body (risk banner + command) for confirm & select
 function buildPermissionBody(title, message) {
 	const a = analyzePermission(title, message);
 	let h = "";
@@ -1370,11 +1344,6 @@ function buildPermissionBody(title, message) {
 		const icon = lvl === "high" ? "⚠" : lvl === "med" ? "▲" : "ℹ";
 		h += `<div class='crisk ${lvl}'><span class='cicon'>${icon}</span><div><div class='chead'>${esc(head)}</div><ul>${a.risks.map((r) => `<li>${esc(r.why)}</li>`).join("")}</ul></div></div>`;
 	}
-	const stepTxt =
-		a.isShell && a.steps > 1
-			? `<span class='csteps'>${a.steps} steps</span>`
-			: "";
-	h += `<div class='csummary'><span class='clabel'>what it does</span><span class='ctext'>${esc(a.summary)}</span>${stepTxt}</div>`;
 	const showDetail = a.isShell || a.big || a.risks.length;
 	if (showDetail) {
 		const meta = a.isShell
@@ -1540,7 +1509,7 @@ function uiRequest(req) {
 			typeof o === "string" ? { label: o } : o,
 		);
 		// detect a permission-style prompt (Allow/Block, Yes/No) so we can show
-		// the risk banner + plain-english summary for the command in question.
+		// the risk banner for the command in question.
 		const labels = opts.map((o) => (o.label || "").toLowerCase());
 		const isPermission =
 			labels.some((l) =>
