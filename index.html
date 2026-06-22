@@ -1977,8 +1977,17 @@
         [/\b(?:curl|wget)\b/i, 1, 'fetch', 'makes a network request'],
       ];
       function shellLooks(t) {
-        if (SHELL_VERBS.test(t.trim())) return true;
-        return /&&|\|\||;|>>|\$\(|\|/.test(t);
+        // ponytail: tolerate a leading terminal prompt ($, >) — pasted blocks
+        // like "$ npm test" would otherwise miss the ^-anchored verb match and
+        // fall through to the prose summary path.
+        const stripped = t.trim().replace(/^[$>]\s+/, '');
+        if (SHELL_VERBS.test(stripped)) return true;
+        if (/&&|\|\||;|>>|\$\(|\|/.test(t)) return true;
+        for (const l of t.split(/\r?\n/)) {
+          const lt = l.trim().replace(/^[$>]\s+/, '');
+          if (lt && SHELL_VERBS.test(lt)) return true;
+        }
+        return false;
       }
       function truncate(s, n) {
         return s.length <= n ? s : s.slice(0, n - 1).replace(/\s+\S*$/, '') + '…';
@@ -2043,22 +2052,32 @@
       }
       function analyzePermission(title, message) {
         const raw = (message || title || '').trim();
-        const isShell = shellLooks(raw);
-        let cmd = raw;
-        if (isShell && raw.includes('\n')) {
-          // multi-line: pick the line with the strongest shell signal as the command
-          let best = raw, bestScore = -1;
-          for (const l of raw.split(/\r?\n/)) {
-            const lt = l.trim();
-            if (!lt) continue;
-            let sc = SHELL_VERBS.test(lt) ? 3 : 0;
-            sc += (lt.match(/&&|\|\||;|\|/g) || []).length;
-            if (sc > bestScore) { bestScore = sc; best = lt; }
-          }
-          cmd = best;
-        }
+        // ponytail: strip markdown code fences (```bash ... ```) and join
+        // backslash line-continuations. pi often wraps the command in a fenced
+        // block; the fence markers would otherwise pollute the summary, inflate
+        // the line count, and leak into the step list as phony commands.
+        const cleaned = raw
+          .replace(/^\s*```[a-zA-Z0-9_-]*\s*$/gm, '')
+          .replace(/\\\n\s*/g, ' ')
+          .trim();
+        const isShell = shellLooks(cleaned);
+        const cmd = cleaned;
+        // decompose into steps: split on newlines AND shell operators so a
+        // multi-line script and a one-liner chained with && both yield the same
+        // step list. Drop comments, blanks, terminal prompt chars ($, >), and
+        // prose intro lines that don't lead with a shell verb. The detail viewer
+        // still shows the full cleaned script regardless of this filtering.
         const segs = isShell
-          ? cmd.split(/(?:&&|\|\||;)\s*/).map((s) => s.trim()).filter(Boolean)
+          ? cleaned
+              .split(/(?:&&|\|\||;|\n)/)
+              .map((s) => s.trim().replace(/^[$>]\s+/, ''))
+              .filter(
+                (s) =>
+                  s &&
+                  !s.startsWith('#') &&
+                  !s.startsWith('//') &&
+                  (SHELL_VERBS.test(s) || /\|/.test(s)),
+              )
           : [];
         const steps = segs.map(phraseSegment).filter(Boolean);
         let summary;
@@ -2075,7 +2094,9 @@
           summary = truncate(first, 140) || 'Confirm this action.';
         }
         // scan whole raw text -- regexes are word-boundary based, so they fire
-        // inside prose like 'Allow rm -rf?' too. Keep highest sev per tag.
+        // inside prose ('Allow rm -rf?') AND anywhere in a multi-line script or
+        // fenced block, no matter which line the dangerous token sits on. Keep
+        // highest sev per tag so rm -rf (sev 3) wins over plain rm (sev 2).
         const byTag = new Map();
         for (const rule of RISK_RULES) {
           if (rule[0].test(raw)) {
