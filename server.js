@@ -6,12 +6,34 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { spawn, execSync } = require("child_process");
+const { StringDecoder } = require("string_decoder");
 
 const PORT = parseInt(process.env.PORT || "4317", 10);
 const PI_BIN = process.env.PI_BIN || "pi";
 const PI_ARGS = (process.env.PI_ARGS || "").split(/\s+/).filter(Boolean); // e.g. "--no-session"
 const PI_CWD = process.env.PI_CWD || process.cwd();
 const HTML_PATH = path.join(__dirname, "index.html");
+// ponytail: static assets split out of index.html. Whitelist (not a full static
+// dir) keeps the surface to known files — no path traversal, no MIME guessing.
+const STATIC = {
+	"/style.css": { file: "style.css", type: "text/css; charset=utf-8" },
+	"/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
+};
+
+// ponytail: single source of truth for the ask_user_question rendezvous marker.
+// Both the browser (injected below) and the pi_minimal_webui extension (reads
+// process.env.PI_WEBUI_ASK_MARKER) take this value, so the literal can't drift.
+const ASK_MARKER = "\u0000pi-webui:ask-user-question";
+process.env.PI_WEBUI_ASK_MARKER = ASK_MARKER;
+// Inject the marker into the page before app.js loads; cache once at startup.
+const HTML = fs
+	.readFileSync(HTML_PATH, "utf8")
+	.replace(
+		'<script src="app.js"></script>',
+		"<script>window.__PI_ASK_MARKER=" +
+			JSON.stringify(ASK_MARKER) +
+			';</script>\n    <script src="app.js"></script>',
+	);
 
 // ponytail: one shared agent process for all tabs. Multi-session is a later concern.
 let pi = null;
@@ -25,19 +47,53 @@ const clients = new Set(); // open SSE responses
 function broadcast(obj) {
 	const line = "data: " + JSON.stringify(obj) + "\n\n";
 	for (const res of clients) {
+		// ponytail: per-client queue. write()==false is backpressure (socket
+		// saturated / main-thread stall), NOT a dead socket — buffer the line in
+		// _piQ and flush on 'drain' instead of dropping it. Dropping was the old
+		// bug: a saturated client skipped both text deltas AND the text_end heal
+		// event, so words vanished until a full SSE reconnect/resync. A client
+		// stuck >20s (backgrounded/slept tab) is still cut loose to reconnect.
 		try {
-			// ponytail: backpressure. A backgrounded/throttled tab can't drain;
-			// without this Node buffers every line in memory per client forever.
-			// Kernel buffer full -> cut the slow client loose (onclose cleans up).
-			if (!res.write(line)) {
-				clients.delete(res);
-				res.end();
+			if (res._piPaused) {
+				(res._piQ ||= []).push(line);
+			} else if (!res.write(line)) {
+				pause(res);
 			}
 		} catch {
 			clients.delete(res);
 			/* drop, onclose cleans up */
 		}
 	}
+}
+
+// ponytail: buffer _piQ until the socket drains, then flush; re-pause if it
+// saturates again mid-flush. Recurses safely — once('drain') fires per saturation.
+function pause(res) {
+	res._piPaused = true;
+	res._piQ = res._piQ || [];
+	const deadline = setTimeout(() => {
+		clients.delete(res);
+		try {
+			res.end();
+		} catch {}
+	}, 20000);
+	res.once("drain", () => {
+		res._piPaused = false;
+		clearTimeout(deadline);
+		const q = res._piQ;
+		res._piQ = [];
+		for (const l of q) {
+			try {
+				if (!res.write(l)) {
+					pause(res);
+					return;
+				}
+			} catch {
+				clients.delete(res);
+				return;
+			}
+		}
+	});
 }
 
 // exponential backoff for the crash-loop guard: 1s, 2s, 4s, ... capped at 30s.
@@ -66,9 +122,14 @@ function startPi() {
 		: spawn(PI_BIN, args, { cwd: PI_CWD, env: process.env, windowsHide: true });
 
 	// Strict JSONL reader: split on \n only, strip trailing \r. (readline is non-compliant.)
+	// ponytail: StringDecoder buffers incomplete UTF-8 tails across chunks so a
+	// multibyte char (—, “”, emoji) split on a stdout seam decodes correctly
+	// instead of becoming U+FFFD. chunk.toString("utf8") decoded each chunk in
+	// isolation — the source of intermittent garbled characters in assistant text.
 	let buf = "";
+	const dec = new StringDecoder("utf8");
 	pi.stdout.on("data", (chunk) => {
-		buf += chunk.toString("utf8");
+		buf += dec.write(chunk);
 		let i;
 		while ((i = buf.indexOf("\n")) !== -1) {
 			let line = buf.slice(0, i);
@@ -143,12 +204,47 @@ function sendToPi(obj) {
 // ponytail: sandbox any browser-supplied path to PI_CWD so the webui can't
 // read/write outside the project (the manual-edit diff feature uses this).
 // Resolve, then require the result to be PI_CWD itself or live beneath it.
+// ponytail: path.resolve does NOT follow symlinks — a link inside PI_CWD aimed at
+// ~/.ssh would pass. realpathSync does, so compare resolved-real paths. It throws
+// on a not-yet-existing target (manual-edit writes new files), so in that case
+// resolve the existing parent and re-append the basename.
 function safePath(rel) {
-	const base = path.resolve(PI_CWD);
+	const base = fs.realpathSync(PI_CWD);
 	const full = path.resolve(base, rel || "");
-	if (full !== base && !full.startsWith(base + path.sep))
+	let real;
+	try {
+		real = fs.realpathSync(full);
+	} catch {
+		real = path.join(fs.realpathSync(path.dirname(full)), path.basename(full));
+	}
+	if (real !== base && !real.startsWith(base + path.sep))
 		throw new Error("path escapes project root");
-	return full;
+	return real;
+}
+
+// ponytail: cap POST bodies (~1MB) so a runaway client can't OOM the bridge.
+// Enforces both Content-Length up front and accumulated bytes on the wire.
+const MAX_BODY = 1_000_000;
+function readBody(req) {
+	const clen = parseInt(req.headers["content-length"] || "0", 10);
+	if (clen > MAX_BODY) throw new Error("body too large");
+	return new Promise((resolve, reject) => {
+		let body = "",
+			n = 0,
+			aborted = false;
+		req.on("data", (c) => {
+			n += c.length;
+			if (n > MAX_BODY) {
+				aborted = true;
+				reject(new Error("body too large"));
+				req.destroy();
+				return;
+			}
+			body += c;
+		});
+		req.on("end", () => aborted || resolve(body));
+		req.on("error", reject);
+	});
 }
 
 // ponytail: CSRF + DNS-rebinding gate. The bridge is bound to 127.0.0.1, but any
@@ -183,9 +279,19 @@ const server = http.createServer(async (req, res) => {
 		req.method === "GET" &&
 		(url.pathname === "/" || url.pathname === "/index.html")
 	) {
-		const body = fs.readFileSync(HTML_PATH);
 		res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-		return res.end(body);
+		return res.end(HTML);
+	}
+
+	if (req.method === "GET" && STATIC[url.pathname]) {
+		const a = STATIC[url.pathname];
+		try {
+			res.writeHead(200, { "Content-Type": a.type });
+			return res.end(fs.readFileSync(path.join(__dirname, a.file)));
+		} catch {
+			res.writeHead(404);
+			return res.end("not found");
+		}
 	}
 
 	if (req.method === "GET" && url.pathname === "/api/events") {
@@ -210,9 +316,9 @@ const server = http.createServer(async (req, res) => {
 	}
 
 	if (req.method === "POST" && url.pathname === "/api/cmd") {
-		let body = "";
-		for await (const c of req) body += c;
+		let body;
 		try {
+			body = await readBody(req);
 			const obj = JSON.parse(body || "{}");
 			sendToPi(obj);
 			res.writeHead(200, { "Content-Type": "application/json" });
@@ -251,9 +357,9 @@ const server = http.createServer(async (req, res) => {
 
 	if (req.method === "POST" && url.pathname === "/api/write") {
 		// manual-edit feature: write a project file (sandboxed to PI_CWD).
-		let body = "";
-		for await (const c of req) body += c;
+		let body;
 		try {
+			body = await readBody(req);
 			const obj = JSON.parse(body || "{}");
 			const full = safePath(obj.path || "");
 			fs.mkdirSync(path.dirname(full), { recursive: true });
