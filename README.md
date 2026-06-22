@@ -57,6 +57,7 @@ This starts the bundled `server.js` in the background, opens your browser at
 - **Streaming chat** — text deltas, thinking blocks, tool calls + results render live.
 - **Skills & commands** — type `/` for a palette of skills, prompt-templates, and extension commands (sourced live from `get_commands`).
 - **Permission prompts & questions** — pi's extension-UI dialogs (`select`, `confirm`, `input`, `editor`) surface as modal dialogs and are answered over the bridge. `notify`/`setStatus`/`set_editor_text` are handled too.
+- **Editable diffs** — every `edit`/`write` tool call renders as a side-by-side (old | new) diff. The new pane is editable with an **Apply** button that writes the result to disk (sandboxed to the project root via `safePath`). Permission prompts for edits also show a read-only preview of the hunk before you approve.
 - **Model picker**, **Stop** (abort), **New session**, and mid-stream delivery modes (`auto`→steer / `steer` / `follow-up`).
 - Session is **persistent on the pi side** by default — refresh the page and history reloads via `get_messages`.
 
@@ -83,6 +84,19 @@ node server.js                 # http://127.0.0.1:4317
 ```
 
 Config (env vars): `PORT`, `PI_BIN`, `PI_ARGS`, `PI_CWD`.
+
+## Manual test
+
+Quick sanity checks for the diff UX:
+
+- **Editable transcript diff** — ask the agent to make a small edit. Open the `edit`
+  tool block; edit the right-hand pane, click **Apply** → the file on disk updates
+  and the button briefly reads `Applied ✓`.
+- **Permission-modal preview** — trigger an edit/write that requires approval
+  (e.g. a `select`/`confirm` prompt). The modal should render a read-only old|new
+  diff of the hunk you're approving. If no diff appears, `pendingEditCalls` is not
+  being populated — confirm `toolcall_end` events carry `toolCall.arguments`
+  (see `index.html`, `message_update` handler).
 
 ## Notes / limits
 
