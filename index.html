@@ -1087,6 +1087,7 @@
             <option value="steer">steer</option>
             <option value="followUp">follow-up</option>
           </select>
+          <button id="compact" title="compact context (summarize to free space)">⇲ Compact</button>
           <button id="new" title="new session">＋ New</button>
           <span class="hint">Enter = send</span>
         </div>
@@ -1116,6 +1117,7 @@
       const inputEl = $("input");
       const sendBtn = $("send");
       const stopBtn = $("stop");
+      const compactBtn = $("compact");
       const modeSel = $("mode");
       const modelSel = $("model");
       const dot = $("dot");
@@ -2463,6 +2465,14 @@
         stopBtn.disabled = !on;
         if (!on) cur = null;
       }
+      // ponytail: compaction state -- disables the Compact button and drives the
+      // activity bar while the context is being summarized, whether the trigger
+      // was the button, a /compact, or auto-compaction at the threshold.
+      let compacting = false;
+      function setCompacting(on) {
+        compacting = on;
+        compactBtn.disabled = on;
+      }
 
       // ---- event dispatch ----
       function handle(payload) {
@@ -2605,11 +2615,41 @@
             );
             break;
           case "compaction_start":
+            setCompacting(true);
+            setActivity("compacting context…", true);
             note("compacting context…", "warn");
             break;
-          case "compaction_end":
-            note("compacted.", "ok");
+          case "compaction_end": {
+            // ponytail: result carries tokensBefore/estimatedTokensAfter so we
+            // can show the payoff in the note. Aborted (result null + aborted)
+            // and failed (result null + errorMessage) are distinct cases.
+            setCompacting(false);
+            setActivity(streaming ? "working…" : "ready", !!streaming);
+            const r = payload;
+            if (r.aborted) {
+              note("compaction aborted", "warn");
+            } else if (r.errorMessage) {
+              note(`compaction failed: ${r.errorMessage}`, "err");
+            } else if (
+              r.result &&
+              r.result.tokensBefore != null &&
+              r.result.estimatedTokensAfter != null &&
+              r.result.tokensBefore > 0
+            ) {
+              const pct = Math.round(
+                (1 - r.result.estimatedTokensAfter / r.result.tokensBefore) *
+                  100,
+              );
+              note(
+                `compacted: ${fmt(r.result.tokensBefore)} → ${fmt(r.result.estimatedTokensAfter)} tokens (−${pct}%${r.reason === "overflow" ? ", retrying" : ""})`,
+                "ok",
+              );
+            } else {
+              note("compacted.", "ok");
+            }
+            refreshStats();
             break;
+          }
 
           case "response":
             // rpc command ack; surface failures
@@ -2693,6 +2733,10 @@
               if (p.data.isStreaming != null && p.data.isStreaming) {
                 setStreaming(true);
                 setActivity("working…", true);
+              }
+              if (p.data.isCompacting) {
+                setCompacting(true);
+                setActivity("compacting context…", true);
               }
               const mid = modelIdOf(p.data.model);
               if (mid) {
@@ -2855,6 +2899,7 @@
       }
       sendBtn.onclick = send;
       stopBtn.onclick = () => api({ type: "abort" });
+      compactBtn.onclick = () => api({ type: "compact" });
       $("new").onclick = () => {
         if (
           confirm(
