@@ -1949,48 +1949,126 @@
       // and scan for destructive patterns. Intentionally a static rule table --
       // instant, offline, deterministic, and immune to an LLM's phrasing. A
       // model-summary slot is reserved in the card so /api/summarize can drop in.
-      const SHELL_VERBS = /^(sudo\s+)?(npm|pnpm|yarn|npx|git|rm|rmdir|cp|mv|mkdir|touch|cat|ls|curl|wget|ssh|scp|rsync|tar|zip|unzip|chmod|chown|kill|killall|docker|kubectl|helm|terraform|ansible|make|gcc|python|python3|pip|pip3|node|ruby|go|cargo|rustc|java|mvn|gradle|bash|sh|zsh|powershell|cmd|echo|cd|export|source|systemctl|service|brew|apt|apt-get|yum|dnf|pacman|choco|winget|del|copy|move|ren|format|taskkill|netstat|ping)\b/i;
+      const SHELL_VERBS =
+        /^(sudo\s+)?(npm|pnpm|yarn|npx|git|rm|rmdir|cp|mv|mkdir|touch|cat|ls|curl|wget|ssh|scp|rsync|tar|zip|unzip|chmod|chown|kill|killall|docker|kubectl|helm|terraform|ansible|make|gcc|python|python3|pip|pip3|node|ruby|go|cargo|rustc|java|mvn|gradle|bash|sh|zsh|powershell|cmd|echo|cd|export|source|systemctl|service|brew|apt|apt-get|yum|dnf|pacman|choco|winget|del|copy|move|ren|format|taskkill|netstat|ping)\b/i;
       // [regex, severity(1-3), tag, why]. Tag dedupes so a generic match (sev 2)
       // yields to a specific one (sev 3) instead of stacking reasons.
       const RISK_RULES = [
-        [/\brm\b[^|&;\n]*(?:-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r|-r\b[^|&;\n]*-f\b|-f\b[^|&;\n]*-r\b|--no-preserve-root)/i, 3, 'rm', 'recursively force-deletes files -- irreversible'],
-        [/\brm\b/i, 2, 'rm', 'deletes files'],
-        [/\bgit\s+push\b[^|&;\n]*(?:--force|-f\b)/i, 3, 'gitpush', 'force-pushes -- overwrites remote history'],
-        [/\bgit\s+push\b/i, 2, 'gitpush', 'publishes commits to the remote'],
-        [/\bgit\s+reset\s+(?:--hard|--keep)/i, 3, 'gitreset', 'resets the branch -- discards changes'],
-        [/\bgit\s+clean\b[^|&;\n]*-[a-z]*d/i, 3, 'gitclean', 'permanently deletes untracked files'],
-        [/\b(?:drop|truncate)\s+/i, 3, 'sql', 'destroys database data (DROP/TRUNCATE)'],
-        [/\bmkfs(?:\.\w+)?\b/i, 3, 'mkfs', 'formats a filesystem -- erases the disk'],
-        [/\bdd\b[^|&;\n]*\bof=\/dev\//i, 3, 'dd', 'raw-writes to a block device'],
-        [/\b(?:shutdown|reboot|halt|poweroff|init\s+0)\b/i, 3, 'power', 'stops or restarts the machine'],
-        [/\bformat\b\s+[a-z]:/i, 3, 'format', 'formats a drive'],
-        [/(?:curl|wget)\b[^|&;\n]*\|\s*(?:sh|bash|zsh|sudo|python)/i, 3, 'pipeshell', 'pipes a download into a shell -- runs arbitrary code'],
-        [/\bsudo\b/i, 2, 'sudo', 'runs with elevated (root) privileges'],
-        [/\bgit\s+commit\b/i, 2, 'gitcommit', 'creates a git commit'],
-        [/\b(?:chmod|chown)\b[^|&;\n]*-r/i, 2, 'chmod', 'recursively changes permissions/ownership'],
-        [/\bkill\s+-9\b|\btaskkill\b[^|&;\n]*\/[fF]/i, 2, 'kill', 'force-kills a process'],
-        [/\bdocker\s+(?:rm|rmi|prune|system\s+prune|volume\s+rm)\b/i, 2, 'docker', 'removes docker resources'],
-        [/\bkubectl\s+delete\b/i, 2, 'k8s', 'deletes a kubernetes resource'],
-        [/\bterraform\s+(?:apply|destroy)\b/i, 2, 'tf', 'changes infrastructure state'],
-        [/\bnpm\s+publish\b/i, 2, 'publish', 'publishes a package to the registry'],
-        [/\b(?:npm|pnpm|yarn)\s+(?:install|ci|add|i|up|upgrade)\b|\bpip3?\s+install\b|\bcargo\s+add\b|\bgo\s+get\b/i, 1, 'install', 'installs packages (runs install scripts)'],
-        [/\b(?:curl|wget)\b/i, 1, 'fetch', 'makes a network request'],
+        [
+          /\brm\b[^|&;\n]*(?:-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r|-r\b[^|&;\n]*-f\b|-f\b[^|&;\n]*-r\b|--no-preserve-root)/i,
+          3,
+          "rm",
+          "recursively force-deletes files -- irreversible",
+        ],
+        [/\brm\b/i, 2, "rm", "deletes files"],
+        [
+          /\bgit\s+push\b[^|&;\n]*(?:--force|-f\b)/i,
+          3,
+          "gitpush",
+          "force-pushes -- overwrites remote history",
+        ],
+        [/\bgit\s+push\b/i, 2, "gitpush", "publishes commits to the remote"],
+        [
+          /\bgit\s+reset\s+(?:--hard|--keep)/i,
+          3,
+          "gitreset",
+          "resets the branch -- discards changes",
+        ],
+        [
+          /\bgit\s+clean\b[^|&;\n]*-[a-z]*d/i,
+          3,
+          "gitclean",
+          "permanently deletes untracked files",
+        ],
+        [
+          /\b(?:drop|truncate)\s+/i,
+          3,
+          "sql",
+          "destroys database data (DROP/TRUNCATE)",
+        ],
+        [
+          /\bmkfs(?:\.\w+)?\b/i,
+          3,
+          "mkfs",
+          "formats a filesystem -- erases the disk",
+        ],
+        [
+          /\bdd\b[^|&;\n]*\bof=\/dev\//i,
+          3,
+          "dd",
+          "raw-writes to a block device",
+        ],
+        [
+          /\b(?:shutdown|reboot|halt|poweroff|init\s+0)\b/i,
+          3,
+          "power",
+          "stops or restarts the machine",
+        ],
+        [/\bformat\b\s+[a-z]:/i, 3, "format", "formats a drive"],
+        [
+          /(?:curl|wget)\b[^|&;\n]*\|\s*(?:sh|bash|zsh|sudo|python)/i,
+          3,
+          "pipeshell",
+          "pipes a download into a shell -- runs arbitrary code",
+        ],
+        [/\bsudo\b/i, 2, "sudo", "runs with elevated (root) privileges"],
+        [/\bgit\s+commit\b/i, 2, "gitcommit", "creates a git commit"],
+        [
+          /\b(?:chmod|chown)\b[^|&;\n]*-r/i,
+          2,
+          "chmod",
+          "recursively changes permissions/ownership",
+        ],
+        [
+          /\bkill\s+-9\b|\btaskkill\b[^|&;\n]*\/[fF]/i,
+          2,
+          "kill",
+          "force-kills a process",
+        ],
+        [
+          /\bdocker\s+(?:rm|rmi|prune|system\s+prune|volume\s+rm)\b/i,
+          2,
+          "docker",
+          "removes docker resources",
+        ],
+        [/\bkubectl\s+delete\b/i, 2, "k8s", "deletes a kubernetes resource"],
+        [
+          /\bterraform\s+(?:apply|destroy)\b/i,
+          2,
+          "tf",
+          "changes infrastructure state",
+        ],
+        [
+          /\bnpm\s+publish\b/i,
+          2,
+          "publish",
+          "publishes a package to the registry",
+        ],
+        [
+          /\b(?:npm|pnpm|yarn)\s+(?:install|ci|add|i|up|upgrade)\b|\bpip3?\s+install\b|\bcargo\s+add\b|\bgo\s+get\b/i,
+          1,
+          "install",
+          "installs packages (runs install scripts)",
+        ],
+        [/\b(?:curl|wget)\b/i, 1, "fetch", "makes a network request"],
       ];
       function shellLooks(t) {
         // ponytail: tolerate a leading terminal prompt ($, >) — pasted blocks
         // like "$ npm test" would otherwise miss the ^-anchored verb match and
         // fall through to the prose summary path.
-        const stripped = t.trim().replace(/^[$>]\s+/, '');
+        const stripped = t.trim().replace(/^[$>]\s+/, "");
         if (SHELL_VERBS.test(stripped)) return true;
         if (/&&|\|\||;|>>|\$\(|\|/.test(t)) return true;
         for (const l of t.split(/\r?\n/)) {
-          const lt = l.trim().replace(/^[$>]\s+/, '');
+          const lt = l.trim().replace(/^[$>]\s+/, "");
           if (lt && SHELL_VERBS.test(lt)) return true;
         }
         return false;
       }
       function truncate(s, n) {
-        return s.length <= n ? s : s.slice(0, n - 1).replace(/\s+\S*$/, '') + '…';
+        return s.length <= n
+          ? s
+          : s.slice(0, n - 1).replace(/\s+\S*$/, "") + "…";
       }
       function capitalize(s) {
         return s ? s[0].toUpperCase() + s.slice(1) : s;
@@ -2002,63 +2080,74 @@
         const m = s.match(/^((?:sudo\s+)?)(\S+)\s*(.*)$/);
         if (!m) return s;
         const verb = m[2].toLowerCase();
-        const rest = m[3] || '';
-        const tokz = rest.split(/\s+/).filter((t) => t && !t.startsWith('-'));
-        const obj = tokz[0] || '';
+        const rest = m[3] || "";
+        const tokz = rest.split(/\s+/).filter((t) => t && !t.startsWith("-"));
+        const obj = tokz[0] || "";
         const V = verb;
         if (/^(npm|pnpm|yarn|npx)$/.test(V)) {
-          if (/^(test|t)$/.test(obj)) return 'run the test suite';
-          if (/^(run|run-s|run-p)$/.test(obj) && tokz[1]) return `run the \`${tokz[1]}\` script`;
-          if (/^(install|ci|add|i|up|upgrade)$/.test(obj)) return 'install dependencies';
-          if (obj === 'publish') return 'publish to npm';
-          if (/^(uninstall|remove|rm)$/.test(obj)) return 'remove a package';
+          if (/^(test|t)$/.test(obj)) return "run the test suite";
+          if (/^(run|run-s|run-p)$/.test(obj) && tokz[1])
+            return `run the \`${tokz[1]}\` script`;
+          if (/^(install|ci|add|i|up|upgrade)$/.test(obj))
+            return "install dependencies";
+          if (obj === "publish") return "publish to npm";
+          if (/^(uninstall|remove|rm)$/.test(obj)) return "remove a package";
           return obj ? `${V} ${obj}` : `run ${V}`;
         }
-        if (V === 'git') {
-          if (obj === 'push') return 'push commits to the remote';
-          if (obj === 'pull') return 'pull from the remote';
-          if (obj === 'commit') return 'create a commit';
-          if (obj === 'add') return 'stage changes';
-          if (obj === 'checkout' || obj === 'switch') return `switch branch${tokz[1] ? ' → ' + tokz[1] : ''}`;
-          if (obj === 'merge') return 'merge branches';
-          if (obj === 'rebase') return 'rebase commits';
-          if (obj === 'clone') return 'clone a repository';
-          if (obj === 'stash') return 'stash changes';
-          return obj ? `git ${obj}` : 'run git';
+        if (V === "git") {
+          if (obj === "push") return "push commits to the remote";
+          if (obj === "pull") return "pull from the remote";
+          if (obj === "commit") return "create a commit";
+          if (obj === "add") return "stage changes";
+          if (obj === "checkout" || obj === "switch")
+            return `switch branch${tokz[1] ? " → " + tokz[1] : ""}`;
+          if (obj === "merge") return "merge branches";
+          if (obj === "rebase") return "rebase commits";
+          if (obj === "clone") return "clone a repository";
+          if (obj === "stash") return "stash changes";
+          return obj ? `git ${obj}` : "run git";
         }
-        if (V === 'rm') return `delete ${obj || 'files'}`;
-        if (V === 'rmdir' || V === 'rd') return 'delete directories';
-        if (V === 'mv') return `move/rename ${obj || 'files'}`;
-        if (V === 'cp' || V === 'copy') return `copy ${obj || 'files'}`;
-        if (V === 'mkdir') return `create ${obj || 'directories'}`;
-        if (V === 'touch') return 'create empty files';
-        if (V === 'cat') return 'print file contents';
-        if (V === 'ls' || V === 'dir') return 'list files';
-        if (V === 'curl' || V === 'wget') return `download from ${obj}`;
-        if (V === 'chmod') return `change permissions${obj ? ' on ' + obj : ''}`;
-        if (V === 'chown') return `change ownership${obj ? ' of ' + obj : ''}`;
-        if (V === 'kill' || V === 'killall' || V === 'taskkill') return 'stop a process';
-        if (V === 'docker') return obj ? `docker: ${obj}` : 'run docker';
-        if (V === 'kubectl') return obj ? `kubernetes: ${obj}` : 'run kubectl';
-        if (V === 'terraform') return obj ? `terraform ${obj}` : 'run terraform';
-        if (V === 'make') return obj && obj !== 'install' ? `run make target \`${obj}\`` : 'build the project';
-        if (/^(python|python3|node|ruby|go)$/.test(V)) return `run a ${V} script`;
-        if (V === 'pip' || V === 'pip3') return 'install python packages';
-        if (V === 'cargo') return obj === 'build' ? 'build the rust project' : `cargo ${obj}`;
-        if (V === 'sudo') return rest ? phraseSegment(rest) : 'run with sudo';
-        if (V === 'echo') return 'print text';
-        if (V === 'cd') return `change directory${obj ? ' → ' + obj : ''}`;
-        return `${V}${obj ? ' ' + obj : ''}`;
+        if (V === "rm") return `delete ${obj || "files"}`;
+        if (V === "rmdir" || V === "rd") return "delete directories";
+        if (V === "mv") return `move/rename ${obj || "files"}`;
+        if (V === "cp" || V === "copy") return `copy ${obj || "files"}`;
+        if (V === "mkdir") return `create ${obj || "directories"}`;
+        if (V === "touch") return "create empty files";
+        if (V === "cat") return "print file contents";
+        if (V === "ls" || V === "dir") return "list files";
+        if (V === "curl" || V === "wget") return `download from ${obj}`;
+        if (V === "chmod")
+          return `change permissions${obj ? " on " + obj : ""}`;
+        if (V === "chown") return `change ownership${obj ? " of " + obj : ""}`;
+        if (V === "kill" || V === "killall" || V === "taskkill")
+          return "stop a process";
+        if (V === "docker") return obj ? `docker: ${obj}` : "run docker";
+        if (V === "kubectl") return obj ? `kubernetes: ${obj}` : "run kubectl";
+        if (V === "terraform")
+          return obj ? `terraform ${obj}` : "run terraform";
+        if (V === "make")
+          return obj && obj !== "install"
+            ? `run make target \`${obj}\``
+            : "build the project";
+        if (/^(python|python3|node|ruby|go)$/.test(V))
+          return `run a ${V} script`;
+        if (V === "pip" || V === "pip3") return "install python packages";
+        if (V === "cargo")
+          return obj === "build" ? "build the rust project" : `cargo ${obj}`;
+        if (V === "sudo") return rest ? phraseSegment(rest) : "run with sudo";
+        if (V === "echo") return "print text";
+        if (V === "cd") return `change directory${obj ? " → " + obj : ""}`;
+        return `${V}${obj ? " " + obj : ""}`;
       }
       function analyzePermission(title, message) {
-        const raw = (message || title || '').trim();
+        const raw = (message || title || "").trim();
         // ponytail: strip markdown code fences (```bash ... ```) and join
         // backslash line-continuations. pi often wraps the command in a fenced
         // block; the fence markers would otherwise pollute the summary, inflate
         // the line count, and leak into the step list as phony commands.
         const cleaned = raw
-          .replace(/^\s*```[a-zA-Z0-9_-]*\s*$/gm, '')
-          .replace(/\\\n\s*/g, ' ')
+          .replace(/^\s*```[a-zA-Z0-9_-]*\s*$/gm, "")
+          .replace(/\\\n\s*/g, " ")
           .trim();
         const isShell = shellLooks(cleaned);
         const cmd = cleaned;
@@ -2070,12 +2159,12 @@
         const segs = isShell
           ? cleaned
               .split(/(?:&&|\|\||;|\n)/)
-              .map((s) => s.trim().replace(/^[$>]\s+/, ''))
+              .map((s) => s.trim().replace(/^[$>]\s+/, ""))
               .filter(
                 (s) =>
                   s &&
-                  !s.startsWith('#') &&
-                  !s.startsWith('//') &&
+                  !s.startsWith("#") &&
+                  !s.startsWith("//") &&
                   (SHELL_VERBS.test(s) || /\|/.test(s)),
               )
           : [];
@@ -2083,15 +2172,15 @@
         let summary;
         if (isShell) {
           if (steps.length <= 1) {
-            summary = capitalize(steps[0] || 'run a shell command') + '.';
+            summary = capitalize(steps[0] || "run a shell command") + ".";
           } else {
             const shown = steps.slice(0, 4).map((s) => s.toLowerCase());
             const more = steps.length - 4;
-            summary = `${steps.length} steps: ${shown.join(' → ')}${more > 0 ? ` (+${more} more)` : ''}`;
+            summary = `${steps.length} steps: ${shown.join(" → ")}${more > 0 ? ` (+${more} more)` : ""}`;
           }
         } else {
-          const first = (raw.split(/\n/)[0] || '').replace(/\s+/g, ' ').trim();
-          summary = truncate(first, 140) || 'Confirm this action.';
+          const first = (raw.split(/\n/)[0] || "").replace(/\s+/g, " ").trim();
+          summary = truncate(first, 140) || "Confirm this action.";
         }
         // scan whole raw text -- regexes are word-boundary based, so they fire
         // inside prose ('Allow rm -rf?') AND anywhere in a multi-line script or
@@ -2101,32 +2190,52 @@
         for (const rule of RISK_RULES) {
           if (rule[0].test(raw)) {
             const ex = byTag.get(rule[2]);
-            if (!ex || rule[1] > ex.sev) byTag.set(rule[2], { sev: rule[1], why: rule[3] });
+            if (!ex || rule[1] > ex.sev)
+              byTag.set(rule[2], { sev: rule[1], why: rule[3] });
           }
         }
         const risks = [...byTag.values()].sort((a, b) => b.sev - a.sev);
         const maxSev = risks.length ? risks[0].sev : 0;
         const lineCount = cmd.split(/\r?\n/).length;
         const big = cmd.length > 300 || lineCount > 6;
-        return { isShell, cmd, summary, steps: steps.length, risks, maxSev, big, lineCount };
+        return {
+          isShell,
+          cmd,
+          summary,
+          steps: steps.length,
+          risks,
+          maxSev,
+          big,
+          lineCount,
+        };
       }
       // shared card body (risk banner + summary + command) for confirm & select
       function buildPermissionBody(title, message) {
         const a = analyzePermission(title, message);
-        let h = '';
+        let h = "";
         if (a.risks.length) {
-          const lvl = a.maxSev >= 3 ? 'high' : a.maxSev === 2 ? 'med' : 'low';
-          const head = lvl === 'high' ? 'Potentially destructive -- review carefully' : lvl === 'med' ? 'Heads up -- notable side effects' : 'Note';
-          const icon = lvl === 'high' ? '⚠' : lvl === 'med' ? '▲' : 'ℹ';
-          h += `<div class='crisk ${lvl}'><span class='cicon'>${icon}</span><div><div class='chead'>${esc(head)}</div><ul>${a.risks.map((r) => `<li>${esc(r.why)}</li>`).join('')}</ul></div></div>`;
+          const lvl = a.maxSev >= 3 ? "high" : a.maxSev === 2 ? "med" : "low";
+          const head =
+            lvl === "high"
+              ? "Potentially destructive -- review carefully"
+              : lvl === "med"
+                ? "Heads up -- notable side effects"
+                : "Note";
+          const icon = lvl === "high" ? "⚠" : lvl === "med" ? "▲" : "ℹ";
+          h += `<div class='crisk ${lvl}'><span class='cicon'>${icon}</span><div><div class='chead'>${esc(head)}</div><ul>${a.risks.map((r) => `<li>${esc(r.why)}</li>`).join("")}</ul></div></div>`;
         }
-        const stepTxt = a.isShell && a.steps > 1 ? `<span class='csteps'>${a.steps} steps</span>` : '';
+        const stepTxt =
+          a.isShell && a.steps > 1
+            ? `<span class='csteps'>${a.steps} steps</span>`
+            : "";
         h += `<div class='csummary'><span class='clabel'>what it does</span><span class='ctext'>${esc(a.summary)}</span>${stepTxt}</div>`;
         const showDetail = a.isShell || a.big || a.risks.length;
         if (showDetail) {
-          const meta = a.isShell ? `${a.lineCount} line${a.lineCount === 1 ? '' : 's'} · ${a.cmd.length} chars` : `${a.cmd.length} chars`;
-          const vlabel = a.isShell ? 'command' : 'detail';
-          h += `<details class='cmd'${a.big ? '' : ' open'}><summary><span class='sverb'>${vlabel}</span><span class='cmdmeta'>${meta}</span></summary><div class='cmdbody'>${esc(a.cmd)}</div></details>`;
+          const meta = a.isShell
+            ? `${a.lineCount} line${a.lineCount === 1 ? "" : "s"} · ${a.cmd.length} chars`
+            : `${a.cmd.length} chars`;
+          const vlabel = a.isShell ? "command" : "detail";
+          h += `<details class='cmd'${a.big ? "" : " open"}><summary><span class='sverb'>${vlabel}</span><span class='cmdmeta'>${meta}</span></summary><div class='cmdbody'>${esc(a.cmd)}</div></details>`;
         }
         return { html: h, maxSev: a.maxSev };
       }
@@ -2170,17 +2279,23 @@
         }
 
         // dialog methods
-        if (method === 'select') {
+        if (method === "select") {
           const opts = (req.options || []).map((o) =>
-            typeof o === 'string' ? { label: o } : o,
+            typeof o === "string" ? { label: o } : o,
           );
           // detect a permission-style prompt (Allow/Block, Yes/No) so we can show
           // the risk banner + plain-english summary for the command in question.
-          const labels = opts.map((o) => (o.label || '').toLowerCase());
+          const labels = opts.map((o) => (o.label || "").toLowerCase());
           const isPermission =
-            labels.some((l) => /\b(allow|permit|approve|yes|run|execute|trust|continue)\b/.test(l)) &&
-            labels.some((l) => /\b(block|deny|cancel|no|stop|reject|skip|abort)\b/.test(l));
-          let bodyHtml = '';
+            labels.some((l) =>
+              /\b(allow|permit|approve|yes|run|execute|trust|continue)\b/.test(
+                l,
+              ),
+            ) &&
+            labels.some((l) =>
+              /\b(block|deny|cancel|no|stop|reject|skip|abort)\b/.test(l),
+            );
+          let bodyHtml = "";
           let maxSev = 0;
           if (isPermission) {
             const body = buildPermissionBody(req.title, req.message);
@@ -2188,51 +2303,54 @@
             maxSev = body.maxSev;
           }
           showModal(
-            `<h3>${esc(req.title || 'Choose')}</h3>${bodyHtml}<div class='opts'></div>`,
+            `<h3>${esc(req.title || "Choose")}</h3>${bodyHtml}<div class='opts'></div>`,
           );
-          const list = card.querySelector('.opts');
+          const list = card.querySelector(".opts");
           opts.forEach((o) => {
-            const b = document.createElement('button');
+            const b = document.createElement("button");
             const val = o.label;
             const desc = o.description;
             b.innerHTML =
-              esc(val) + (desc ? `<span class='desc'>${esc(desc)}</span>` : '');
+              esc(val) + (desc ? `<span class='desc'>${esc(desc)}</span>` : "");
             // tint the approve option red on high-risk prompts
-            if (maxSev >= 3 && /\b(allow|permit|approve|yes|run|execute|continue)\b/.test((val || '').toLowerCase()))
-              b.className = 'danger';
+            if (
+              maxSev >= 3 &&
+              /\b(allow|permit|approve|yes|run|execute|continue)\b/.test(
+                (val || "").toLowerCase(),
+              )
+            )
+              b.className = "danger";
             b.onclick = () => {
               hideModal();
-              api({ type: 'extension_ui_response', id, value: val });
+              api({ type: "extension_ui_response", id, value: val });
             };
             list.appendChild(b);
           });
-        } else if (method === 'confirm') {
+        } else if (method === "confirm") {
           const body = buildPermissionBody(req.title, req.message);
-          showModal(
-            `<h3>${esc(req.title || 'Confirm')}</h3>${body.html}`,
-          );
-          const row = document.createElement('div');
-          row.className = 'row';
-          const no = document.createElement('button');
-          no.textContent = 'No';
+          showModal(`<h3>${esc(req.title || "Confirm")}</h3>${body.html}`);
+          const row = document.createElement("div");
+          row.className = "row";
+          const no = document.createElement("button");
+          no.textContent = "No";
           no.onclick = () => {
             hideModal();
-            api({ type: 'extension_ui_response', id, confirmed: false });
+            api({ type: "extension_ui_response", id, confirmed: false });
           };
-          const yes = document.createElement('button');
+          const yes = document.createElement("button");
           if (body.maxSev >= 3) {
-            yes.className = 'danger';
-            yes.textContent = 'Yes, allow';
+            yes.className = "danger";
+            yes.textContent = "Yes, allow";
           } else {
-            yes.textContent = 'Yes';
+            yes.textContent = "Yes";
           }
           yes.onclick = () => {
             hideModal();
-            api({ type: 'extension_ui_response', id, confirmed: true });
+            api({ type: "extension_ui_response", id, confirmed: true });
           };
           row.append(no, yes);
           card.appendChild(row);
-        } else if (method === 'input') {
+        } else if (method === "input") {
           showModal(`<h3>${esc(req.title || "Input")}</h3>`);
           const inp = document.createElement("input");
           inp.type = "text";
