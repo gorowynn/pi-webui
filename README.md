@@ -19,8 +19,7 @@ Requires `pi` on your PATH and Node 18+.
 pi install npm:pi-webui
 ```
 
-That registers the package with pi. The bundled extension (which bridges
-`ask_user_question` and the rest of the UI-dialog surface over RPC) auto-loads
+That registers the package with pi. The bundled extension auto-loads
 in every pi session, including the one `/webui` spawns.
 
 ## Run

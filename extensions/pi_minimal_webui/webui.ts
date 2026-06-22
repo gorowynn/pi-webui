@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const baseDir = dirname(fileURLToPath(import.meta.url));
-const serverScript = join(baseDir, "..", "server.js"); // extensions/ → package root
+const serverScript = join(baseDir, "..", "..", "server.js"); // extensions/pi_minimal_webui/ → package root
 const DEFAULT_PORT = 4317;
 
 let webui: ChildProcess | null = null;

@@ -59,9 +59,21 @@ interface ExtensionAPI {
 	registerTool(def: ToolDefinition): void;
 }
 
-// Both sides agree on this exact string. Null-prefixed so it can't collide with a
-// human-authored title and renders as nothing if it ever leaks to the screen.
-export const ASK_MARKER = "\u0000pi-webui:ask-user-question";
+// ponytail: server.js is the single source — it sets process.env.PI_WEBUI_ASK_MARKER
+// before spawning pi and injects the same value into the browser (window.__PI_ASK_MARKER).
+// Reading it here means the literal can't drift between extension and browser.
+// Fallback keeps the extension loadable standalone (e.g. outside the webui).
+// ponytail: pi loads a subdir extension via index.ts only (see collectAutoExtensionEntries
+// in pi's package-manager). webui.ts and safeguard.ts are sibling factories with their own
+// `export default`; nothing else calls them, so wire them here or their commands never register.
+import webui from "./webui.js";
+import safeguard from "./safeguard.js";
+
+export const ASK_MARKER =
+	(typeof process !== "undefined" &&
+		process.env &&
+		process.env.PI_WEBUI_ASK_MARKER) ||
+	"\u0000pi-webui:ask-user-question";
 
 const ERROR_NO_UI = "Error: UI not available (running in non-interactive mode)";
 const DECLINE_MESSAGE = "User declined to answer questions";
@@ -251,6 +263,8 @@ const PROMPT_GUIDELINES = [
 ];
 
 export default function (pi: ExtensionAPI) {
+	webui(pi);
+	safeguard(pi);
 	pi.registerTool({
 		name: "ask_user_question",
 		label: "Ask User Question",
