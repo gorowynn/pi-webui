@@ -1087,7 +1087,12 @@
             <option value="steer">steer</option>
             <option value="followUp">follow-up</option>
           </select>
-          <button id="compact" title="compact context (summarize to free space)">⇲ Compact</button>
+          <button
+            id="compact"
+            title="compact context (summarize to free space)"
+          >
+            ⇲ Compact
+          </button>
           <button id="new" title="new session">＋ New</button>
           <span class="hint">Enter = send</span>
         </div>
@@ -1355,6 +1360,22 @@
         b.appendChild(span);
         transcript.appendChild(m);
         pinned = true;
+        scrollDown();
+      }
+      // ponytail: render an extension `notify` payload as a real assistant
+      // message in the transcript (markdown-formatted). Used for substantial /
+      // multi-line notify content -- e.g. the ctx-stats skill dumps a full
+      // markdown table via notify, which a 4-second corner toast can't hold.
+      // Built standalone: it does NOT touch the global `cur`, so it's safe to
+      // call mid-stream without hijacking the in-progress assistant bubble.
+      function addAssistantText(text) {
+        const m = document.createElement("div");
+        m.className = "msg";
+        m.innerHTML = `<div class="bubble"><div class="role">assistant</div></div>`;
+        const p = document.createElement("div");
+        p.innerHTML = md(text);
+        m.querySelector(".bubble").appendChild(p);
+        transcript.appendChild(m);
         scrollDown();
       }
 
@@ -2251,7 +2272,14 @@
           return;
         }
         if (method === "notify") {
-          toast(req.message || "", req.notifyType);
+          const msg = req.message || "";
+          // Short status pings ("Done!", "Extension loaded!", "Compaction
+          // completed") stay as transient toasts. Substantial / multi-line
+          // content (ctx-stats tables, anything worth reading and keeping) is
+          // real output -- render it as an assistant message in the transcript
+          // instead of a 4s corner popup that vanishes.
+          if (msg.includes("\n") || msg.length > 200) addAssistantText(msg);
+          else toast(msg, req.notifyType);
           return;
         }
         if (method === "setStatus") {
