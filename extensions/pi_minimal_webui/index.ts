@@ -1,5 +1,9 @@
 /**
- * pi-webui — Ask User Question (RPC bridge).
+ * pi_minimal_webui — Ask User Question (RPC bridge).
+ *
+ * Extension name: pi_minimal_webui. The tool it registers is still called
+ * `ask_user_question` (it shadows the stock npm tool by that name — that name
+ * is the wire contract with the LLM and must not change).
  *
  * Problem: the stock @juicesharp/rpiv-ask-user-question tool renders its UI via
  * `ctx.ui.custom(factory)`, which is a no-op stub in `pi --mode rpc` (returns

@@ -1,7 +1,7 @@
 # pi-webui
 
 A minimal, **zero-dependency** web UI for [pi](https://github.com/earendil-works/pi-coding-agent).
-No npm install. No build step. No React, no Express, no `ws`.
+No build step. No React, no Express, no `ws`.
 
 Just Node's built-in `http` + `child_process`, native browser SSE + `fetch`,
 and pi's built-in **RPC mode** (`pi --mode rpc`) over stdin/stdout JSON.
@@ -11,14 +11,37 @@ browser ──SSE──▶ Node (server.js) ──stdin──▶ pi --mode rpc
         ◀─POST─                  ◀─stdout─
 ```
 
-## Run
+## Install
+
+Requires `pi` on your PATH and Node 18+.
 
 ```bash
-node server.js
-# open http://127.0.0.1:4317
+pi install npm:pi-webui
 ```
 
-That's it. Requires `pi` on your PATH and Node 18+.
+That registers the package with pi. The bundled extension (which bridges
+`ask_user_question` and the rest of the UI-dialog surface over RPC) auto-loads
+in every pi session, including the one `/webui` spawns.
+
+## Run
+
+Inside pi, type:
+
+```
+/webui
+```
+
+This starts the bundled `server.js` in the background, opens your browser at
+`http://127.0.0.1:4317`, and leaves your TUI usable. Optional port: `/webui 8080`.
+
+```
+/webui-stop   # stop the running server
+```
+
+> The webui is a **separate** pi session in the same working directory — not the
+> TUI session you ran `/webui` from. RPC mode is fixed at process start, so the
+> bridge owns its own `pi --mode rpc`. It is torn down automatically on
+> `session_shutdown` (quit, reload, new/resume/fork), or via `/webui-stop`.
 
 ### Configuration (env vars)
 
@@ -48,6 +71,18 @@ That's it. Requires `pi` on your PATH and Node 18+.
 - `GET /api/events` — SSE stream; every JSONL line from pi is forwarded as an event
 - `POST /api/cmd` — body is a JSON RPC command; written verbatim to pi's stdin
 - `GET /api/health` — sanity check
+
+## Development / standalone
+
+You can run the bridge directly without installing as a pi package — handy for
+hacking on `server.js` / `index.html`:
+
+```bash
+git clone https://github.com/gorowynn/pi-webui
+node server.js                 # http://127.0.0.1:4317
+```
+
+Config (env vars): `PORT`, `PI_BIN`, `PI_ARGS`, `PI_CWD`.
 
 ## Notes / limits
 

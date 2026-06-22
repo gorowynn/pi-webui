@@ -31,7 +31,7 @@ function broadcast(obj) {
 function startPi() {
 	// ponytail: --approve trusts project-local files (.pi/extensions) for the run.
 	// Without it, RPC mode can't resolve trust (no select-prompt handler) → the
-	// ask-user-webui plugin is skipped → stock npm ask_user_question runs and
+	// pi_minimal_webui plugin is skipped → stock npm ask_user_question runs and
 	// auto-declines (ctx.ui.custom is a no-op in RPC). PI_ARGS can override with
 	// --no-approve since it's appended after.
 	const args = ["--mode", "rpc", "--approve", ...PI_ARGS];
@@ -44,8 +44,9 @@ function startPi() {
 				cwd: PI_CWD,
 				env: process.env,
 				shell: true,
+				windowsHide: true, // no cmd window when launched headless (e.g. by /webui)
 			})
-		: spawn(PI_BIN, args, { cwd: PI_CWD, env: process.env });
+		: spawn(PI_BIN, args, { cwd: PI_CWD, env: process.env, windowsHide: true });
 
 	// Strict JSONL reader: split on \n only, strip trailing \r. (readline is non-compliant.)
 	let buf = "";
@@ -93,11 +94,13 @@ function gitInfo() {
 			cwd: PI_CWD,
 			stdio: ["ignore", "pipe", "ignore"],
 			encoding: "utf8",
+			windowsHide: true, // health endpoint is polled every 2s — must never pop a window
 		}).trim();
 		const changes = execSync("git status --porcelain", {
 			cwd: PI_CWD,
 			stdio: ["ignore", "pipe", "ignore"],
 			encoding: "utf8",
+			windowsHide: true,
 		})
 			.split("\n")
 			.filter(Boolean).length;
