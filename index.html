@@ -1401,7 +1401,12 @@
           .replace(/~~([^~]+)~~/g, "<del>$1</del>")
           .replace(
             /\[([^\]]+)\]\(([^)\s]+)(?: +"([^"]*)")?\)/g,
-            '<a href="$2" target="_blank" rel="noopener noreferrer" title="$4">$1</a>',
+            // ponytail: allow only http(s)/mailto/relative refs — assistant
+            // output is semi-trusted; block javascript:/data: link schemes.
+            (m, t, url, title) =>
+              /^(https?:|mailto:|#|\/|\?)/.test(url)
+                ? `<a href="${url}" target="_blank" rel="noopener noreferrer"${title ? ` title="${title}"` : ""}>${t}</a>`
+                : t,
           );
         return s.replace(
           /\u0000(\d+)\u0000/g,
@@ -1872,7 +1877,27 @@
         const ro = !!(opt && opt.readOnly);
         const baseOld = oldText == null ? "" : String(oldText);
         const baseNew = newText == null ? "" : String(newText);
+        // ponytail: diffLines is O(n*m) with a full Uint32Array — a 10k×10k edit
+        // is ~400MB and a frozen tab. Above this product skip the LCS and render
+        // plain old|new text (same DOM shape, neutral coloring, still usable).
+        const DIFF_CELL_LIMIT = 4_000_000;
+        const plainSide = (txt) =>
+          (txt ? txt.split("\n") : [""])
+            .map(
+              (s, i) =>
+                `<span class="sx-line ln-ctx"><span class="sx-gnum">${i + 1}</span><span class="sx-ltxt">${esc(s === "" ? "\u00a0" : s)}</span></span>`,
+            )
+            .join("");
         const compute = (o, n) => {
+          const on = o ? o.split("\n").length : 0;
+          const nn = n ? n.split("\n").length : 0;
+          if (on * nn > DIFF_CELL_LIMIT) {
+            return {
+              leftHtml: plainSide(o || ""),
+              rightHtml: plainSide(n || ""),
+              gutter: gutterCh(Math.max(on, nn)),
+            };
+          }
           const sides = rowsToSides(diffRows(o, n));
           return {
             leftHtml: sideHtml(sides.left),
@@ -1963,8 +1988,18 @@
             const r = await fetch("/api/file?path=" + encodeURIComponent(path));
             const j = await r.json();
             if (!j.ok) throw new Error(j.error || "read failed");
-            if (!j.content.includes(baselineNew))
+            const hits = j.content.split(baselineNew).length - 1;
+            if (hits === 0)
               throw new Error("original hunk no longer present in file");
+            // ponytail: String.replace hits only the FIRST match. If the agent's
+            // newText is non-unique (common in refactors) we'd silently edit the
+            // wrong occurrence — bail and tell the user instead of clobbering.
+            if (hits > 1)
+              throw new Error(
+                "original hunk appears " +
+                  hits +
+                  " times in the file — open and edit it manually",
+              );
             next = j.content.replace(baselineNew, edited);
           }
           const w = await fetch("/api/write", {

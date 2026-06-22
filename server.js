@@ -15,20 +15,37 @@ const HTML_PATH = path.join(__dirname, "index.html");
 
 // ponytail: one shared agent process for all tabs. Multi-session is a later concern.
 let pi = null;
+// ponytail: crash-loop guard. An unconditional 1s restart loops forever if
+// pi can't start (bad binary, broken install). Count consecutive fast exits and
+// back off exponentially up to 30s; reset once a process lives >5s.
+let restartAttempts = 0;
+let startStamp = 0;
 const clients = new Set(); // open SSE responses
 
 function broadcast(obj) {
 	const line = "data: " + JSON.stringify(obj) + "\n\n";
 	for (const res of clients) {
 		try {
-			res.write(line);
+			// ponytail: backpressure. A backgrounded/throttled tab can't drain;
+			// without this Node buffers every line in memory per client forever.
+			// Kernel buffer full -> cut the slow client loose (onclose cleans up).
+			if (!res.write(line)) {
+				clients.delete(res);
+				res.end();
+			}
 		} catch {
+			clients.delete(res);
 			/* drop, onclose cleans up */
 		}
 	}
 }
 
+// exponential backoff for the crash-loop guard: 1s, 2s, 4s, ... capped at 30s.
+function backoffDelay() {
+	return Math.min(1000 * 2 ** restartAttempts++, 30000);
+}
 function startPi() {
+	startStamp = Date.now();
 	// ponytail: --approve trusts project-local files (.pi/extensions) for the run.
 	// Without it, RPC mode can't resolve trust (no select-prompt handler) → the
 	// pi_minimal_webui plugin is skipped → stock npm ask_user_question runs and
@@ -73,13 +90,19 @@ function startPi() {
 	);
 	pi.on("error", (e) => {
 		broadcast({ source: "pi_exit", payload: { error: e.message } });
-		console.error(`[pi] spawn error: ${e.message}; retrying in 1s`);
-		setTimeout(startPi, 1000);
+		const delay = backoffDelay();
+		console.error(`[pi] spawn error: ${e.message}; retrying in ${delay}ms`);
+		setTimeout(startPi, delay);
 	});
 	pi.on("exit", (code, sig) => {
 		broadcast({ source: "pi_exit", payload: { code, sig } });
-		console.error(`[pi] exited code=${code} sig=${sig}; restarting in 1s`);
-		setTimeout(startPi, 1000); // survive a crashed agent
+		// survived >5s -> healthy run, reset the crash counter.
+		if (Date.now() - startStamp > 5000) restartAttempts = 0;
+		const delay = backoffDelay();
+		console.error(
+			`[pi] exited code=${code} sig=${sig}; restarting in ${delay}ms`,
+		);
+		setTimeout(startPi, delay); // survive a crashed agent
 	});
 }
 startPi();
@@ -128,8 +151,33 @@ function safePath(rel) {
 	return full;
 }
 
+// ponytail: CSRF + DNS-rebinding gate. The bridge is bound to 127.0.0.1, but any
+// website in your browser can still POST to 127.0.0.1:PORT. For state-changing
+// methods require Origin (when sent) to be localhost; always require Host to be
+// localhost. Kills drive-by /api/cmd and /api/write POSTs and rebinding attacks.
+const isLocalHost = (h) =>
+	typeof h === "string" && /^(127\.0\.0\.1|localhost)(:\d+)?$/.test(h);
+function isAllowed(req) {
+	if (!isLocalHost(req.headers.host)) return false;
+	if (req.method === "GET" || req.method === "HEAD") return true;
+	const origin = req.headers.origin;
+	if (!origin) return true; // non-browser clients (curl, pi) send no Origin
+	let host;
+	try {
+		host = new URL(origin).host;
+	} catch {
+		return false; // malformed Origin -> reject
+	}
+	return isLocalHost(host);
+}
+
 const server = http.createServer(async (req, res) => {
 	const url = new URL(req.url, "http://localhost");
+
+	if (!isAllowed(req)) {
+		res.writeHead(403, { "Content-Type": "text/plain" });
+		return res.end("forbidden");
+	}
 
 	if (
 		req.method === "GET" &&
