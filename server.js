@@ -17,6 +17,7 @@ const HTML_PATH = path.join(__dirname, "index.html");
 // dir) keeps the surface to known files — no path traversal, no MIME guessing.
 const STATIC = {
 	"/style.css": { file: "style.css", type: "text/css; charset=utf-8" },
+	"/md.js": { file: "md.js", type: "text/javascript; charset=utf-8" },
 	"/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
 };
 

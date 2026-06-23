@@ -228,8 +228,9 @@ code {
 	cursor: pointer;
 	padding: 6px 10px;
 	display: flex;
-	gap: 6px;
-	align-items: baseline;
+	flex-direction: column;
+	gap: 2px;
+	align-items: stretch;
 	overflow-wrap: anywhere;
 }
 .tool > summary::-webkit-details-marker {
@@ -239,8 +240,21 @@ code {
 	color: var(--muted);
 	flex: 1;
 }
+/* two-line head: line 1 = caret + tool name, line 2 = the call args */
+.tool .trow {
+	display: flex;
+	gap: 6px;
+	align-items: baseline;
+}
 .tool .head .name {
 	color: var(--accent);
+}
+.tool .head code {
+	display: block;
+	color: var(--muted);
+	white-space: pre-wrap;
+	font-family: inherit;
+	padding-left: 16px;
 }
 .tool .caret {
 	color: var(--muted);
@@ -1014,11 +1028,12 @@ textarea:focus {
 }
 
 #todopanel {
+	flex: 0 0 auto;
 	width: 100%;
-	margin: 0 0 8px;
+	margin: 0;
 	background: var(--panel2);
-	border: 1px solid var(--border);
-	border-radius: var(--r);
+	border-top: 1px solid var(--border);
+	border-radius: 0;
 	padding: 0;
 	font-size: 12px;
 	max-height: 40vh;
@@ -1028,7 +1043,7 @@ textarea:focus {
 #todopanel > summary {
 	list-style: none;
 	cursor: pointer;
-	padding: 8px 12px;
+	padding: 8px clamp(12px, 3vw, 40px);
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
@@ -1047,7 +1062,7 @@ textarea:focus {
 	font-weight: 700;
 }
 #todopanel .tbody {
-	padding: 6px 12px;
+	padding: 6px clamp(12px, 3vw, 40px);
 	max-height: 32vh;
 	overflow: auto;
 }

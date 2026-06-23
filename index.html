@@ -17,18 +17,18 @@
     </header>
 
     <main id="transcript"></main>
+    <details id="todopanel" open>
+      <summary>
+        <span>todos</span><span class="count" id="tp-count">0/0</span>
+      </summary>
+      <div class="tbody" id="tp-body"></div>
+    </details>
     <div class="activity idle" id="activity">
       <span class="spin"></span><span class="idle-dot"></span
       ><span class="alabel" id="act-label">connecting…</span>
     </div>
 
     <footer>
-      <details id="todopanel" open>
-        <summary>
-          <span>todos</span><span class="count" id="tp-count">0/0</span>
-        </summary>
-        <div class="tbody" id="tp-body"></div>
-      </details>
       <div class="composer">
         <div id="palette"></div>
         <div id="widget"></div>
@@ -75,6 +75,7 @@
       <div class="card" id="modal-card"></div>
     </div>
 
+    <script src="md.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
