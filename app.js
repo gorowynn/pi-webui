@@ -15,9 +15,14 @@ let streaming = false;
 let commands = []; // [{name, description, source}]
 const toolBlocks = new Map(); // toolCallId -> {head, out}
 let cur = null; // {bubble, textPar, textBuf, thinkEl, thinkBuf}
-// edit/write tool calls streamed this turn but not yet executed — used to
-// render a diff preview in the permission modal. Cleared on a new turn.
-let pendingEditCalls = [];
+// ponytail: the tool currently awaiting/under a permission prompt. Set at
+// tool_execution_start (which fires immediately before THIS tool's safeguard
+// select, even in parallel mode — preparation is sequential) and read by
+// renderEditDiffPreviews so the permission modal shows THIS tool's diff, not
+// every edit/write streamed this turn. An earlier tool's select would
+// otherwise drain an accumulated list and starve later ones (the write bug).
+let curToolName = null;
+let curToolArgs = null;
 
 function api(obj) {
 	const p = fetch("/api/cmd", {
@@ -942,16 +947,20 @@ function renderTodos() {
 // ponytail: marker comes from server.js (window.__PI_ASK_MARKER) so the literal
 // can't drift between the browser and the pi_minimal_webui extension.
 const ASK_MARKER = window.__PI_ASK_MARKER || "\u0000pi-webui:ask-user-question";
-// ponytail: rendezvous latch. tool_execution_start args and the extension's
-// ctx.ui.input(MARKER) request arrive in indeterminate order; storing the id
-// only on pendingAsk loses it when the input request lands before the modal
-// is drawn. askId survives between the two regardless of arrival order.
+// ponytail: ask_user_question is a TWO-stage permission-then-UI flow. The old
+// code opened the modal at tool_execution_start, but that fires BEFORE the
+// safeguard "Allow?" select — so showModal() for the permission prompt
+// clobbered the questions and nothing reopened them after Allow. Correct order:
+//   1. tool_execution_start (full args) → stash args here.
+//   2. safeguard select ("Allow ask_user_question?") → user approves.
+//   3. tool's execute() runs ctx.ui.input(MARKER) → render the modal NOW from
+//      the stashed args. Order is guaranteed by pi-agent-core
+//      (tool_execution_start → prepareToolCall hook → execute).
 let askId = null; // extension_ui_response id for the active questionnaire
-let pendingAsk = null; // {qs} — modal state while a questionnaire is on screen
+let pendingAskArgs = null; // ask_user_question args stashed at tool_execution_start
 function askQuestion(args) {
 	const qs = (args && args.questions) || [];
 	if (!qs.length) return;
-	pendingAsk = { qs };
 	const answers = qs.map(() => null); // per-question: string | string[]
 	let step = 0; // current question index (one-at-a-time multistep)
 	const total = qs.length;
@@ -1179,7 +1188,6 @@ function askQuestion(args) {
 			value: JSON.stringify({ cancelled: false, answers: resultAnswers }),
 		});
 		askId = null;
-		pendingAsk = null;
 		setActivity("thinking…", true);
 		hideModal();
 	}
@@ -1354,63 +1362,59 @@ function buildPermissionBody(title, message) {
 	}
 	return { html: h, maxSev: a.maxSev };
 }
-// renderEditDiffPreviews: mount read-only side-by-side diffs for every
-// edit/write tool call streamed this turn into `container`. Used in the
-// permission modal so you can see exactly what you're approving. (For
-// write tools the 'original' side is empty — we don't fetch disk.)
-// renderEditDiffPreviews: mount read-only side-by-side diffs for every
-// edit/write hunk streamed this turn into `container`. Used in the
-// permission modal so you can see exactly what you're approving. One hunk
-// renders inline; multiple hunks become a tab strip so each can be
-// reviewed separately. (For write tools the 'original' side is empty — we
-// don't fetch disk.)
+// renderEditDiffPreviews: mount a read-only side-by-side diff for the tool
+// CURRENTLY awaiting a permission decision (curToolName/curToolArgs, set at
+// tool_execution_start) into `container`. Used in the permission modal so you
+// see exactly what you're approving for THIS prompt. An edit with N hunks → N
+// tabs; a write → one pane (original side empty — we don't fetch disk).
+//
+// Order guarantee: tool_execution_start fires immediately before each tool's
+// safeguard select (even in parallel mode, preparation is sequential), so
+// curToolName/curToolArgs always describe the prompt currently on screen.
 //
 // Note on approval granularity: the RPC permission protocol carries ONE
 // allow/deny response per prompt, so the browser can't approve individual
 // hunks independently — the tabs are for *review*, the buttons below
 // decide the whole prompt.
-function renderEditDiffPreviews(container, calls) {
-	const list = calls == null ? pendingEditCalls : calls;
-	// consume once: a permission modal shows only the edits streamed for THIS
-	// prompt, then discards them. Without this the list persists until the
-	// next agent_start and leaks onto every later confirm/choose modal
-	// (e.g. a bash confirmation showing the previous edit's diff).
-	if (calls == null) pendingEditCalls = [];
-	if (!list.length || !container) return null;
+function renderEditDiffPreviews(container) {
+	if (!container) return null;
+	const name = curToolName;
+	const inp = curToolArgs || {};
+	const isEdit =
+		name === "edit" && Array.isArray(inp.edits) && inp.edits.length;
+	const isWrite = name === "write";
+	if (!isEdit && !isWrite) return null;
 	// Flatten into per-hunk review items so an edit with N hunks yields N
 	// tabs (each independently diffable), and a write yields one.
 	const items = [];
-	list.forEach((c) => {
-		const inp = c.input || {};
-		const base = (inp.path || "(no path)").split(/[\\/]/).pop();
-		if (c.toolName === "edit" && Array.isArray(inp.edits) && inp.edits.length) {
-			inp.edits.forEach((e, ei) => {
-				items.push({
-					label:
-						inp.edits.length > 1
-							? base + " \u00b7 edit " + (ei + 1) + "/" + inp.edits.length
-							: base,
-					build: (host) =>
-						mountSideBySide(
-							host,
-							inp.path || "",
-							e.oldText || "",
-							e.newText || "",
-							false,
-							{ readOnly: true },
-						),
-				});
-			});
-		} else if (c.toolName === "write") {
+	const base = (inp.path || "(no path)").split(/[\\/]/).pop();
+	if (isEdit) {
+		inp.edits.forEach((e, ei) => {
 			items.push({
-				label: base + " \u00b7 write",
+				label:
+					inp.edits.length > 1
+						? base + " \u00b7 edit " + (ei + 1) + "/" + inp.edits.length
+						: base,
 				build: (host) =>
-					mountSideBySide(host, inp.path || "", null, inp.content || "", true, {
-						readOnly: true,
-					}),
+					mountSideBySide(
+						host,
+						inp.path || "",
+						e.oldText || "",
+						e.newText || "",
+						false,
+						{ readOnly: true },
+					),
 			});
-		}
-	});
+		});
+	} else {
+		items.push({
+			label: base + " \u00b7 write",
+			build: (host) =>
+				mountSideBySide(host, inp.path || "", null, inp.content || "", true, {
+					readOnly: true,
+				}),
+		});
+	}
 	if (!items.length) return null;
 
 	// single hunk: no tab chrome, just the diff
@@ -1459,11 +1463,26 @@ function renderEditDiffPreviews(container, calls) {
 }
 function uiRequest(req) {
 	const { id, method } = req;
-	// pi-webui ask_user_question latch: don't render an input box — the rich
-	// modal was already drawn from tool_execution_start.args. Just record where
-	// to send the JSON-encoded result.
+	// ponytail: ask_user_question latch. input(MARKER) arrives AFTER the user
+	// approves the safeguard prompt (it fires inside the tool's execute(),
+	// which runs after the permission hook). Record where to send the result,
+	// then render the rich modal from the args stashed at tool_execution_start.
+	// (Rendering earlier — at tool_execution_start — was the bug: the permission
+	// select fired next and clobbered the questions with showModal().)
 	if (method === "input" && req.title === ASK_MARKER) {
 		askId = id;
+		if (pendingAskArgs) {
+			const a = pendingAskArgs;
+			pendingAskArgs = null;
+			askQuestion(a);
+			setActivity("waiting for your input…", false);
+		} else {
+			// args never arrived (reload mid-turn / missed tool_execution_start).
+			// Resolve the latch so the tool doesn't hang — the extension treats
+			// an empty/null result as "declined".
+			api({ type: "extension_ui_response", id, value: "" });
+			askId = null;
+		}
 		return;
 	}
 	if (method === "notify") {
@@ -1711,7 +1730,9 @@ function handle(payload) {
 		case "agent_start":
 			setStreaming(true);
 			setActivity("thinking…", true);
-			pendingEditCalls = [];
+			// reset per-tool tracking for a fresh turn
+			curToolName = null;
+			curToolArgs = null;
 			break;
 		case "agent_end":
 			setStreaming(false);
@@ -1776,33 +1797,27 @@ function handle(payload) {
 				finalizeThink();
 			} else if (e.type === "toolcall_start") {
 				addToolCall(e.toolName);
-			} else if (e.type === "toolcall_end") {
-				// toolcall_end carries the parsed ToolCall (name + arguments) and
-				// fires during streaming — BEFORE execution and before any
-				// permission prompt. Stash edit/write args so the permission modal
-				// can render a diff preview. (The old code listened for a "tool_call"
-				// member of AssistantMessageEvent with an .input field; that member
-				// does not exist — tool_call is an extension hook event that
-				// server.js never forwards, so pendingEditCalls stayed empty.)
-				const tc = e.toolCall;
-				if (tc && (tc.name === "edit" || tc.name === "write") && tc.arguments) {
-					pendingEditCalls.push({
-						toolName: tc.name,
-						input: tc.arguments,
-					});
-				}
 			}
+			// toolcall_end is intentionally not handled: diff previews now source
+			// from tool_execution_start args (the exact tool whose prompt is on
+			// screen), not the accumulated toolcall_end stream — which was the
+			// source of the drain bug (an earlier tool's select emptied the list).
 			break;
 		}
 
 		case "tool_execution_start": {
 			toolBlock(payload.toolCallId, payload.toolName, payload.args, true);
-			if (payload.toolName === "ask_user_question" && payload.args) {
-				askQuestion(payload.args);
-				setActivity("waiting for your input…", false);
-			} else {
-				setActivity(describeTool(payload.toolName, payload.args), true);
+			// record the current tool for the permission-modal diff — fires right
+			// before THIS tool's safeguard select, so it's always the right one.
+			curToolName = payload.toolName || null;
+			curToolArgs = payload.args || null;
+			if (payload.toolName === "ask_user_question") {
+				// DON'T open the modal yet: the safeguard "Allow?" select fires
+				// next and would clobber it. Stash args; the modal renders from
+				// input(MARKER) once the user approves.
+				pendingAskArgs = payload.args || null;
 			}
+			setActivity(describeTool(payload.toolName, payload.args), true);
 			break;
 		}
 		case "tool_execution_update": {
@@ -1878,6 +1893,10 @@ function handle(payload) {
 					if (t.length > 500) w.el.open = false;
 				}
 			}
+			// clear the per-tool snapshot now that this tool is done — prevents a
+			// stale edit/write diff leaking onto an unrelated later select/confirm
+			curToolName = null;
+			curToolArgs = null;
 			if (payload.toolName === "todo") parseTodo(t);
 			setActivity("thinking…", true);
 			autoscroll();
