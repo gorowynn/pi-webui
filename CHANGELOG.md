@@ -1,170 +1,87 @@
-<!-- markdownlint-disable MD013 MD060 -->
+# CHANGELOG — pi-webui
 
-# AGENT_NOTES — pi-webui
-
-> **Read this first at the start of every session.** This file is the persistent
-> memory for the pi agent working on this repo. It captures non-obvious project
-> knowledge, conventions, gotchas, and a running changelog so work continues
-> cleanly across sessions. Update it whenever you learn something worth keeping.
->
-> Keep entries **factual and dense**. Prefer "why" + file:line over prose.
-> When you finish a chunk of work, add a dated entry under [Changelog](#changelog).
-
----
-
-## Single source of truth
-
-Project knowledge lives in two places, and **only** these two:
-
-- **`AGENT_NOTES.md`** (this file) — agent memory, conventions, gotchas,
-  changelog. Read first.
-- **`docs/`** — durable specs: [`docs/design.md`](docs/design.md) (UI/UX) and
-  [`docs/README.md`](docs/README.md) (index + the full SSOT charter).
-
-Code comments, commit messages, and chat are subordinate. When you learn
-something durable, put it in the right place (gotcha/convention → here; spec
-change → `docs/`). Full policy: [`docs/README.md`](docs/README.md).
-
----
-
-## What this project is
-
-**pi-webui** — a minimal, **zero-dependency** web UI for
-[pi](https://github.com/earendil-works/pi-coding-agent). No build step, no
-React/Express/`ws`. Just Node built-ins (`http` + `child_process`), native
-browser SSE + `fetch`, and pi's **RPC mode** (`pi --mode rpc`) over stdin/stdout
-JSON. Published as an installable pi package (`npm:pi-webui`).
-
-```text
-browser ──SSE──▶ Node (server.js) ──stdin──▶ pi --mode rpc
-        ◀─POST─                  ◀─stdout─
-```
-
-- Repo: <https://github.com/gorowynn/pi-webui.git>
-- Default branch work happens on: `dev`
-- Version: see `package.json` (currently `0.2.0`)
-- Node 18+. Requires `pi` on PATH.
-
-## How to run / dev
-
-```bash
-node server.js                 # standalone dev — http://127.0.0.1:4317
-# or, inside pi: /webui  (optional port: /webui 8080),  /webui-stop to stop
-```
-
-Env vars: `PORT` (4317), `PI_BIN` (pi), `PI_ARGS` (extra pi args), `PI_CWD`
-(working dir for the spawned pi — drives session location + tool roots).
-
-**Zero-build is a hard constraint.** No bundler, no transpile, no `npm install`
-at runtime. Editing `app.js`/`style.css`/`index.html` and refreshing the browser
-is the dev loop. Don't introduce a build step without strong reason.
-
-## File map
-
-| File | Role |
-|------|------|
-| `server.js` | The bridge. CommonJS, ~no deps. Serves assets, frames JSONL (splits on `\n` only), spawns/respawns `pi --mode rpc`, CSRF + DNS-rebinding gate, `safePath`, 1MB body cap. |
-| `index.html` | Markup only (~81 lines). Inline refs to `style.css` + `md.js` + `app.js` (load order matters: md.js before app.js). |
-| `style.css` | All styling (~1282 lines). Ayu-Dark palette — see [docs/design.md](docs/design.md). |
-| `md.js` | **Markdown → HTML parser + `esc()` HTML escaper** (~670 lines). Zero-dep, pure `string→string`, browser-loaded via `<script>` BEFORE app.js, also `require`-able in Node. Exports two globals: `md(markdown)` and `esc(text)`. The single source of truth for both — app.js dropped its duplicate copies. |
-| `app.js` | The entire frontend (~2140 lines, vanilla JS). SSE handling, rendering, modals, diffs, commands palette. Uses `md()` + `esc()` globals from md.js. |
-| `docs/` | Durable specs: [`design.md`](docs/design.md) (UI/UX, visual source of truth) and [`README.md`](docs/README.md) (index + SSOT charter). |
-| `extensions/pi_minimal_webui/` | The pi extension shipped with the package. See below. |
-| `package.json` | `keywords:["pi-package"]` makes it `pi install`-able. `files:` whitelist = `server.js`, `index.html`, `extensions`. |
-
-### The extension (`extensions/pi_minimal_webui/`)
-
-- `index.ts` — **Ask User Question RPC bridge.** Shadows the stock
-  `ask_user_question` tool (tool name is a wire contract with the LLM — **never
-  rename it**). The stock tool's `ctx.ui.custom()` is a no-op in RPC mode; this
-  routes the answer through `ctx.ui.input` (a blocking latch) which RPC *does*
-  bridge. Two-channel smuggle: tool→browser via `tool_execution_start` (full
-  args verbatim), browser→tool via `extension_ui_response{value}`.
-- `safeguard.ts` — **Per-tool allow/ask/deny gate** for *every* tool call.
-  Config at `~/.pi/agent/safeguard.json` (re-read every call). First match wins.
-- `webui.ts` — The `/webui` + `/webui-stop` launcher commands. Spawns
-  `server.js` detached; kills the whole tree (POSIX process group / Windows
-  `taskkill /T`). `session_shutdown` tears it down.
-- `todo.ts` — **Todo-list tool** (`todo`). Incremental, action-based: the
-  agent plans the list ONCE (`plan`) with stable per-task ids, then flips
-  statuses cheaply by id (`update`) — no whole-list resend on every status
-  change. Also `add` / `remove` / `clear`. Statuses are open | started |
-  finished. The browser owns the live list (applies each action from
-  `tool_execution_start` args, same smuggle channel as ask_user_question);
-  execute() just acknowledges. Reload-safe via a `pi:todos` localStorage hint
-  (mirrors the `pi:model` idiom); a new session clears it through
-  `setTodos([])`. Tool name matches the webui's UI hooks — don't rename.
-
-> **Naming:** the folder is still called `pi_minimal_webui` (open TODO P3 to
-> rename to something like `pi-webui-ask-bridge`). It does NOT contain a second
-> webui — only the ask-bridge tool.
-
-## Conventions & gotchas (read these — they cost real time)
-
-1. **`follow_up` is snake_case on the wire.** The RPC command type is
-   `"follow_up"`, not `"followUp"`. `streamingBehavior` is the *separate*
-   camelCase field. app.js maps `followUp`→`follow_up` in `send()`.
-   (`dist/modes/rpc/rpc-types.d.ts` is the source of truth.)
-2. **Never use `readline` for framing.** It splits on Unicode line separators
-   that are valid inside JSON strings. The bridge splits on `\n` only, per the
-   RPC spec.
-3. **`ASK_MARKER` has one source of truth: `server.js`.** It defines the
-   literal, exports it via `process.env.PI_WEBUI_ASK_MARKER` (read by the
-   extension) and injects `window.__PI_ASK_MARKER` (read by app.js). Both sides
-   keep a fallback for standalone use. If you change it, change all three + run
-   the round-trip self-check.
-4. **`safePath` must use `fs.realpathSync`**, not `path.resolve` (resolve does
-  *not* follow symlinks). Resolve both the base and the target (resolving the
-  existing parent for not-yet-existing write targets) or a symlink inside
-  `PI_CWD` aimed at `~/.ssh` slips through.
-5. **`api()` attaches a no-op `.catch`** so fire-and-forget callers
-   (refreshStats, init, UI buttons) never throw unhandled rejections, while
-   awaited callers (send) still receive rejections. Keep that pattern for new
-   fire-and-forget fetches.
-6. **Diff LCS has a guard at 4M cells** — skip the O(n·m) path above that to
-   avoid locking the UI. Manual Apply bails on non-unique hunks.
-7. **`toolcall_end` must carry `toolCall.arguments`** or the permission-modal
-   diff preview breaks (`pendingEditCalls` won't populate).
-8. **Mutable top-level closure state in app.js** (~11 pieces: `cur`, `pinned`,
-   `askId`, `pendingAsk`, `pendingEditCalls`, `compacting`, `todos`, `commands`,
-   `currentModelId`, `lastThinkPaint`, `renderRaf`). Fine at current size; flag
-   if it grows.
-9. **One shared pi session for all browser tabs.** Multi-session is a later
-   concern. If the pi subprocess crashes, the bridge restarts it after 1s
-   (crash-loop guard = exponential backoff).
-10. **Security baseline already in place:** CSRF + DNS-rebinding gate on POSTs,
-    SSE backpressure (drops stalled clients), `md()` link-scheme allowlist
-    (blocks `javascript:`/`data:`), 1MB body cap. Don't regress these.
-
-11. **`md.js` must load before `app.js`.** Both `index.html` (`<script src="md.js">` then `app.js`) and `server.js` (`STATIC` whitelist) must list `md.js`. app.js calls `md()`/`esc()` at runtime with no local definitions — they're globals set by md.js's IIFE. md.js is `require`-able in Node (exports `{md, esc}`); exercise it with `node -e "const{md}=require('./md.js');console.log(md('**x**'))"` after touching the parser.
-12. **`esc()` is shared, not duplicated.** It lives ONLY in `md.js` (static entity map, null-safe). app.js has ~22 call sites that use the global. Don't re-add a local `esc` to app.js — it would silently shadow and drift (the old copy returned `"null"` for null input; the shared one returns `""`).
-
-## Manual smoke tests (quick sanity)
-
-- **Editable transcript diff** — ask for a small edit; edit the right pane →
-  Apply → file updates, button reads `Applied ✓`.
-- **Permission-modal preview** — trigger an edit/write needing approval; modal
-  shows a read-only old|new hunk diff. No diff = `pendingEditCalls` not
-  populated (see gotcha #7).
-- **Health** — `GET /api/health`; SSE at `GET /api/events`; commands via
-  `POST /api/cmd`.
-
-## Open work
-
-Open items (P3 hygiene):
-
-- [ ] Rename `pi_minimal_webui` folder → e.g. `pi-webui-ask-bridge` (browser
-      side needs no change).
-- [ ] Watch the mutable top-level closure state in app.js as it grows.
-
-When you close an item, tick it here **and** add a changelog entry.
-
----
+> Running history, newest first. Moved out of [`AGENTS.md`](AGENTS.md) so the
+> orientation doc stays lean. One entry per meaningful chunk of work:
+> `### YYYY-MM-DD — <area>: <one-line summary>` then bullet detail (what + why + file).
 
 ## Changelog
 
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
+
+### 2026-06-23 — feat(webui): session list — resume an older session
+
+Browse and resume past sessions for the current project. Previously the webui
+pinned one live session with no way back to history (gotcha #9).
+
+- **Server** (`server.js` `GET /api/sessions` + `listSessions`/`sessionDirFor`/
+  `firstUserText`): enumerates this project's session JSONL newest-first. The
+  per-cwd dir name is derived from `PI_CWD` with pi's **exact** encoding
+  (mirrored verbatim from `session-manager.getSessionDir`: realpath → strip one
+  leading sep → replace `/ \ :` with `-` → wrap `--…--`), so the lookup can't
+  drift. One pass per file (lines capped at 60k): line 1 `{type:"session"}` →
+  id/timestamp/cwd; first `{type:"message",role:"user"}` → 160-char preview;
+  `message`-line count → rough size; sorted by mtime desc. GET-only, **no client
+  path accepted** → no traversal surface; localhost-gated like every route.
+- **RPC resume** (`app.js`): a row click sends `switch_session{sessionPath}`
+  (the RPC resume command); its success response re-fires `get_state`/
+  `get_messages`/`get_commands` with the same `init-*` ids the load path uses,
+  so the transcript + state repaint for the now-active session. `new_session`
+  responses do the same — so **＋New now actually clears the screen** (it
+  previously left the old transcript until the next event). Cancelled switches
+  (`session_before_switch`) are skipped (`data.cancelled`).
+- **UI** (`index.html` `⏱ Sessions` button in the footer bar; `app.js`
+  `showSessions`/`resumeSession`/`fmtSessionDate`/`pathEq` + `curSessionFile`;
+  `style.css` `#modal .sessions`/`.srow[.current]`/`.smeta`/`.sprev`): a free
+  modal lists sessions (relative date — today/yesterday/Mon DD + HH:MM — message
+  count, first prompt). The active session — tracked from `get_state.sessionFile`
+  — is highlighted and clicking it no-ops. All interpolated data is
+  `esc()`-wrapped (same model as the rest of the UI).
+- Self-checked: `node --check` server.js/app.js/md.js; `md.js` esc round-trip;
+  live `GET /api/sessions` → 31 sessions, correct previews/counts/paths, all
+  cwd-matched, newest-first.
+
+### 2026-06-23 — fix(webui): inline usage bar never showed — server-resolved key hidden by a client-side gate
+
+The inline `#usagebar` (next to the **Usage** button) stayed invisible even
+with a valid key, while the **Usage** button modal worked fine.
+
+- **Root cause** (`app.js` `refreshUsageBar`): the 60s poll pre-bailed on
+  `if (!getZaiKey())`, and `getZaiKey()` reads **only** browser `localStorage`
+  (`pi:zai-key`). But pi's documented key location is `~/.pi/agent/auth.json`
+  (`zai.key`), which the **server** resolves via `zaiKeyFromAuth()` (env →
+  auth.json → `X-ZAI-Key` header). So with the key only in auth.json (the
+  normal case), the modal fetched and rendered while the bar never even tried
+  — its own comment falsely claimed it was "the same gate as the modal."
+- **Fix** (`app.js`): dropped the `if (!getZaiKey())` pre-bail. The bar now
+  always fetches `/api/zai-usage`; the server's `{ok:false,error:"no API key"}`
+  response is the single gate — genuinely the same shape the modal uses.
+  `if (!u.ok)` / `if (!bars.length)` still hide the bar when there's genuinely
+  no key or no quota data.
+- Why the modal masked it: `showUsage()`/`renderUsage()` fetch first and let
+  the server decide; only the proactive poll had the client-side pre-gate.
+
+### 2026-06-23 — feat(webui): inline usage bar redesign — full-width two-row (tokens + reset countdown)
+
+The inline `#usagebar` moved from a bare body row into the header and became a
+full-width glance of the same z.ai data the modal shows.
+
+- **Markup** (`index.html`): `#usagebar` moved from below the header **into**
+  the header (after `#usage-btn`), so it shares the header flex row.
+- **Render** (`app.js` `renderUsageInline`, `fmtTokens`, `fmtDur`, `windowMs`):
+  two rows — **Tokens** (bar + `used / total · %`, colored <70/70–90/≥90) and
+  **Reset** (bar + `in <dur>`). Picks the `Tokens` limit for the usage row
+  (falls back to first count-pair), and the soonest `nextResetTime` for the
+  reset row. Reset fill = elapsed/window, clamped to [0,100] (windowMs is
+  nominal 30d/365d, so clamp guards calendar drift). Reuses `zaiLimits`/
+  `pctOf` from the modal path — one decode of z.ai's `/quota/limit` shape.
+- **Polling** (`app.js`): `setInterval(refreshUsageBar, 60000)` + an immediate
+  call on load; paused while the tab is backgrounded (same visibility hook as
+  stat/health polling). Click either row → usage modal.
+- **Style** (`style.css` `#usagebar`, `.ub-row`, `.ub-track`, `.ub-fill[.lo|.mid|.hi|.time]`):
+  `flex-direction:column`, `flex:1 1 auto` + `min-width:240px` so it grows
+  into the header space; `.ub-fill.time` uses `--accent` to distinguish the
+  countdown from the usage bars.
 
 ### 2026-06-23 — feat(webui): z.ai usage tracker — modal + always-on top bar (60s poll)
 

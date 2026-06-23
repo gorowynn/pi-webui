@@ -53,6 +53,31 @@ interface TodoParams {
 	updates?: TodoUpdate[];
 	ids?: (string | number)[];
 }
+export interface TodoItem {
+	id: string | number;
+	subject: string;
+	status: TodoStatus;
+}
+const STATUS_OK = new Set<TodoStatus>(["open", "started", "finished"]);
+function normItem(raw: TodoPlanItem): TodoItem {
+	const status = raw.status && STATUS_OK.has(raw.status) ? raw.status : "open";
+	return { id: raw.id, subject: raw.subject ?? "", status };
+}
+
+// ponytail: the extension's own mirror of the list. The browser owns the
+// rendered list (it applies each op at tool_execution_start); this mirror is
+// the source for the agent-facing tool RESULT and for discipline.ts nudges, so
+// the agent can see the live state after every call and catch stale/stuck
+// tasks instead of getting a bare "Updated N" ack. Applied here in execute()
+// (same idempotent semantics the browser uses) and reset per session.
+let todos: TodoItem[] = [];
+export function getTodos(): TodoItem[] {
+	return todos;
+}
+function summarize(): string {
+	if (!todos.length) return "  (empty)";
+	return todos.map((t) => `  #${t.id} [${t.status}] ${t.subject}`).join("\n");
+}
 interface AgentToolResult {
 	content: { type: "text"; text: string }[];
 	details: unknown;
@@ -77,6 +102,7 @@ interface ToolDefinition {
 }
 interface ExtensionAPI {
 	registerTool(def: ToolDefinition): void;
+	on(event: string, handler: (...args: any[]) => unknown): void;
 }
 
 // JSON-schema literal (TypeBox schemas are plain JSON Schema; jiti strips the
@@ -175,11 +201,10 @@ const PROMPT_GUIDELINES = [
 	'If you ever lose track of the current list (e.g. after context compaction), just action:"plan" the full list again — it replaces everything and resyncs. Skip the tool entirely for single-step tasks.',
 ];
 
-function len(arr: unknown): number {
-	return Array.isArray(arr) ? arr.length : 0;
-}
-
 export default function (pi: ExtensionAPI) {
+	pi.on("session_start", () => {
+		todos = [];
+	});
 	pi.registerTool({
 		name: "todo",
 		label: "Todo List",
@@ -187,36 +212,79 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet: PROMPT_SNIPPET,
 		promptGuidelines: PROMPT_GUIDELINES,
 		parameters,
-		// execute does almost nothing. tool_execution_start already shipped the
-		// action args to the browser, which applied them to its own todos state
-		// and re-rendered instantly. Just acknowledge so the call completes
-		// cleanly (and gives the agent a useful summary).
+		// tool_execution_start already shipped the action args to the browser,
+		// which applied them to its own list and re-rendered. Here we mirror the
+		// same op into our own state and RETURN THE LIVE LIST so the agent can
+		// verify progress and is told about unknown ids / stuck tasks — that's
+		// the feedback that keeps the list from drifting.
 		async execute(_toolCallId, params) {
 			const p = (params || {}) as TodoParams;
 			const action = p.action as TodoAction;
-			let text: string;
+			let head = "";
+			const notes: string[] = [];
 			switch (action) {
 				case "plan":
-					text = `Todo list planned: ${len(p.items)} task(s).`;
+					todos = (p.items ?? []).map(normItem).filter(Boolean);
+					head = `Planned ${todos.length} task(s).`;
 					break;
-				case "add":
-					text = `Added ${len(p.items)} task(s).`;
+				case "add": {
+					const added = (p.items ?? []).map(normItem).filter(Boolean);
+					todos = todos.concat(added);
+					head = `Added ${added.length} task(s).`;
 					break;
-				case "update":
-					text = `Updated ${len(p.updates)} task(s).`;
+				}
+				case "update": {
+					const ups = p.updates ?? [];
+					const seen = new Set<string>();
+					let matched = 0;
+					for (const u of ups) {
+						if (!u || u.id == null) continue;
+						const key = String(u.id);
+						seen.add(key);
+						const t = todos.find((x) => String(x.id) === key);
+						if (!t) {
+							notes.push(`#${u.id} not found (no such task — skipped)`);
+							continue;
+						}
+						if (STATUS_OK.has(u.status)) {
+							t.status = u.status;
+							matched++;
+						}
+					}
+					// a started task this update didn't touch is at risk of stalling —
+					// surface it so it isn't quietly abandoned.
+					const stuck = todos.filter(
+						(t) => t.status === "started" && !seen.has(String(t.id)),
+					);
+					if (stuck.length)
+						notes.push(
+							`${stuck.map((s) => "#" + s.id).join(", ")} still started — finish or re-scope before it stalls`,
+						);
+					head = `Updated ${matched}/${ups.length} task(s).`;
 					break;
-				case "remove":
-					text = `Removed ${len(p.ids)} task(s).`;
+				}
+				case "remove": {
+					const drop = new Set((p.ids ?? []).map(String));
+					const before = todos.length;
+					todos = todos.filter((t) => !drop.has(String(t.id)));
+					head = `Removed ${before - todos.length} task(s).`;
 					break;
+				}
 				case "clear":
-					text = "Todo list cleared.";
+					todos = [];
+					head = "Cleared.";
 					break;
 				default:
-					text = `Unknown todo action: ${String(p.action ?? "")}`;
+					head = `Unknown todo action: ${String(p.action ?? "")}`;
 			}
+			const text =
+				head +
+				"\nCurrent list:\n" +
+				summarize() +
+				(notes.length ? "\n⚠ " + notes.join("; ") : "");
 			return {
 				content: [{ type: "text" as const, text }],
-				details: { action },
+				details: { action, todos: [...todos] },
 			};
 		},
 	});

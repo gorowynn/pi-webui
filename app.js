@@ -6,6 +6,8 @@ const stopBtn = $("stop");
 const compactBtn = $("compact");
 const modeSel = $("mode");
 const modelSel = $("model");
+const thinkSel = $("think-sel");
+const ponySel = $("pony-sel");
 const dot = $("dot");
 const statusText = $("status-text");
 const activityEl = $("activity");
@@ -733,10 +735,25 @@ const LIMIT_UNITS = {
 	5: "month",
 	6: "year",
 };
+// ponytail: nominal 30d month / 365d year; real calendar months drift but this
+// is only for the glance reset-progress bar, never billing.
+const UNIT_MS = {
+	second: 1e3,
+	minute: 6e4,
+	hour: 36e5,
+	day: 864e5,
+	month: 2592e6,
+	year: 31536e6,
+};
 function windowLabel(l) {
 	const u = LIMIT_UNITS[l.unit];
 	if (!u || !l.number) return "";
 	return `${l.number} ${u}${l.number > 1 ? "s" : ""}`;
+}
+function windowMs(l) {
+	const u = LIMIT_UNITS[l.unit];
+	if (!u || !l.number) return 0;
+	return (UNIT_MS[u] || 0) * l.number;
 }
 function zaiLimits(data) {
 	const out = [];
@@ -747,6 +764,7 @@ function zaiLimits(data) {
 		const base = {
 			label: LIMIT_TYPES[l.type] || (l.type || "quota").replace(/_/g, " "),
 			window: windowLabel(l),
+			windowMs: windowMs(l),
 			reset: l.nextResetTime ? new Date(l.nextResetTime) : null,
 		};
 		if (typeof l.usage === "number" && typeof l.currentValue === "number")
@@ -791,17 +809,64 @@ function zaiBarHtml(b) {
 		`${details}</div>`
 	);
 }
-function zaiBarCompact(b) {
-	const pct = pctOf(b);
-	const cls = pct >= 90 ? "hi" : pct >= 70 ? "mid" : "lo";
-	const val =
-		typeof b.used === "number"
-			? `${Number(b.used).toLocaleString()} / ${Number(b.total).toLocaleString()}`
-			: `${pct.toFixed(0)}%`;
-	return (
-		`<div class="ub-item" title="${esc(b.label)}: ${val.replace(/"/g, "&quot;")}"><span class="ub-lbl">${esc(b.label)}</span>` +
-		`<span class="ub-track"><span class="ub-fill ${cls}" style="width:${pct}%"></span></span></div>`
-	);
+function fmtTokens(n) {
+	n = Number(n) || 0;
+	if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+	if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
+	return String(n);
+}
+function fmtDur(ms) {
+	if (ms < 0) ms = 0;
+	const s = Math.floor(ms / 1e3),
+		m = Math.floor(s / 60),
+		h = Math.floor(m / 60),
+		d = Math.floor(h / 24);
+	if (d > 0) return `${d}d ${h % 24}h`;
+	if (h > 0) return `${h}h ${m % 60}m`;
+	if (m > 0) return `${m}m`;
+	return `${s}s`;
+}
+// Full-width inline bar: token usage (bar + %) and reset countdown (bar +
+// time remaining). Tokens row colors by how close to the limit; the reset row
+// is a calm accent (it just tracks progress toward the next window).
+function renderUsageInline(bars) {
+	if (!bars.length) return "";
+	const tok =
+		bars.find((b) => b.label === "Tokens") ||
+		bars.find((b) => typeof b.total === "number") ||
+		bars[0];
+	// soonest nextResetTime across all limits; keep its bar so the Reset fill
+	// uses THAT limit's windowMs (not the Tokens window — they can differ).
+	const resetBar =
+		bars.filter((b) => b.reset).sort((a, b) => a.reset - b.reset)[0] || null;
+	const reset = resetBar ? resetBar.reset : null;
+	const rows = [];
+	{
+		const pct = pctOf(tok);
+		const cls = pct >= 90 ? "hi" : pct >= 70 ? "mid" : "lo";
+		const val =
+			typeof tok.used === "number"
+				? `${fmtTokens(tok.used)} / ${fmtTokens(tok.total)} · ${pct.toFixed(1)}%`
+				: `${pct.toFixed(1)}%`;
+		rows.push(
+			`<div class="ub-row"><span class="ub-lbl">Tokens</span>` +
+				`<span class="ub-track" title="${esc(tok.label)}: ${esc(val)}"><span class="ub-fill ${cls}" style="width:${pct}%"></span></span>` +
+				`<span class="ub-val">${esc(val)}</span></div>`,
+		);
+	}
+	if (reset) {
+		const remain = reset - Date.now();
+		const wm = (resetBar && resetBar.windowMs) || 0;
+		// fill = elapsed / window; windowMs is nominal so clamp to [0,100].
+		const fill =
+			wm > 0 ? Math.max(0, Math.min(100, (1 - remain / wm) * 100)) : 0;
+		rows.push(
+			`<div class="ub-row"><span class="ub-lbl">Reset</span>` +
+				`<span class="ub-track"><span class="ub-fill time" style="width:${fill}%"></span></span>` +
+				`<span class="ub-val">in ${fmtDur(remain)}</span></div>`,
+		);
+	}
+	return rows.join("");
 }
 function usageKeyForm() {
 	return (
@@ -864,11 +929,12 @@ async function showUsage() {
 		};
 }
 
-// ---- usage bar: persistent top bar, polls every 60s ----
-// Compact glance of the same z.ai data; click for the full modal. Polls
-// unconditionally (server short-circuits with "no API key" without hitting
-// z.ai, so a keyless install is one cheap localhost hop) and hides on no-key
-// or no limits — the Usage button remains the entry point to paste a key.
+// ---- usage bar: inline next to the Usage button, polls every 60s ----
+// Compact glance of the same z.ai data; click for the full modal. The server
+// resolves the key (ZAI_API_KEY -> auth.json zai.key -> X-ZAI-Key header), so we
+// must NOT pre-gate on a local key — a key in auth.json (where pi itself reads
+// it) would otherwise hide the bar while the Usage button still works. Let the
+// server's "no API key" response be the only gate (same shape the modal uses).
 const usageBar = $("usagebar");
 async function refreshUsageBar() {
 	let u;
@@ -888,7 +954,7 @@ async function refreshUsageBar() {
 		usageBar.style.display = "none";
 		return;
 	}
-	usageBar.innerHTML = bars.slice(0, 6).map(zaiBarCompact).join("");
+	usageBar.innerHTML = renderUsageInline(bars);
 	usageBar.style.display = "flex";
 }
 usageBar.onclick = showUsage;
@@ -2034,18 +2100,37 @@ function handle(payload) {
 	}
 }
 
-const sb = [
-	"repo",
-	"git",
-	"model",
-	"think",
-	"ctx",
-	"cache",
-	"tok",
-	"cost",
-].reduce((o, k) => ((o[k] = $("sb-" + k)), o), {});
+const sb = ["repo", "git", "model", "ctx", "cache", "tok", "cost"].reduce(
+	(o, k) => ((o[k] = $("sb-" + k)), o),
+	{},
+);
 function refreshSbModel() {
 	sb.model.textContent = (modelSel.selectedOptions[0] || {}).textContent || "…";
+}
+// ponytail: header dropdowns for thinking level (set_thinking_level RPC) and
+// ponytail mode (/ponytail extension command). Both sync from pi on load;
+// the statusbar "think" readout is gone — the select is the single source.
+["off", "minimal", "low", "medium", "high", "xhigh"].forEach((l) =>
+	thinkSel.add(new Option("think: " + l, l)),
+);
+["off", "lite", "full", "ultra"].forEach((m) =>
+	ponySel.add(new Option("pony: " + m, m)),
+);
+function setThinkSel(level) {
+	if (level) thinkSel.value = level;
+}
+thinkSel.onchange = () =>
+	api({ type: "set_thinking_level", level: thinkSel.value });
+ponySel.onchange = () =>
+	api({ type: "prompt", message: "/ponytail " + ponySel.value });
+async function refreshPonytailMode(sessionFile) {
+	try {
+		const m = await fetch(
+			"/api/ponytail-mode" +
+				(sessionFile ? "?session=" + encodeURIComponent(sessionFile) : ""),
+		).then((r) => r.json());
+		if (m && m.ok && m.mode) ponySel.value = m.mode;
+	} catch {}
 }
 const fmt = (n) =>
 	n == null
@@ -2123,8 +2208,7 @@ es.onmessage = (ev) => {
 		// intercept init responses to populate UI
 		if (p.type === "response" && p.success) {
 			if (p.id === "init-state" && p.data) {
-				if (p.data.thinkingLevel != null)
-					sb.think.textContent = p.data.thinkingLevel;
+				if (p.data.thinkingLevel != null) setThinkSel(p.data.thinkingLevel);
 				if (p.data.isStreaming != null && p.data.isStreaming) {
 					setStreaming(true);
 					setActivity("working…", true);
@@ -2138,6 +2222,8 @@ es.onmessage = (ev) => {
 					currentModelId = mid;
 					applyCurrentModel();
 				}
+				curSessionFile = p.data.sessionFile || null;
+				refreshPonytailMode(p.data.sessionFile);
 			} else if (
 				p.id === "init-msgs" &&
 				p.data &&
@@ -2176,12 +2262,20 @@ es.onmessage = (ev) => {
 					currentModelId = mid;
 					localStorage.setItem("pi:model", mid);
 				}
+			} else if (
+				(p.command === "switch_session" || p.command === "new_session") &&
+				(!p.data || !p.data.cancelled)
+			) {
+				// session replaced (resume / new) — re-render history + state for the now-active session
+				api({ type: "get_state", id: "init-state" });
+				api({ type: "get_messages", id: "init-msgs" });
+				api({ type: "get_commands", id: "init-cmds" });
 			}
 		} else if (p.type === "extension_ui_request") {
 			uiRequest(p);
 		} else {
 			if (p.type === "thinking_level_changed" && p.level != null)
-				sb.think.textContent = p.level;
+				setThinkSel(p.level);
 			else if (p.type === "agent_end" || p.type === "session_info_changed")
 				refreshStats();
 			handle(p);
@@ -2202,6 +2296,7 @@ es.onerror = () => {
 // ponytail: get_available_models returns no current id, so reconcile from
 // get_state.model (truth) + a localStorage hint for the very first load.
 let currentModelId = null;
+let curSessionFile = null; // active session file (get_state) — highlights the current row in the sessions list
 const savedModelId = localStorage.getItem("pi:model");
 function modelIdOf(m) {
 	return m && m.provider && m.id ? m.provider + "/" + m.id : null;
@@ -2293,6 +2388,82 @@ async function send() {
 		toast("send failed: " + e.message, "err");
 	}
 }
+// ---- sessions: list + resume older sessions ----
+// /api/sessions (server.js) enumerates this project's JSONL; switch_session
+// (RPC) swaps the live pi session to the chosen file, then the response handler
+// above re-fetches get_state/get_messages to repaint the transcript.
+function pathEq(a, b) {
+	// slash/case-agnostic: paths from the server and from pi may differ in form
+	return (
+		String(a).replace(/\\/g, "/").toLowerCase() ===
+		String(b).replace(/\\/g, "/").toLowerCase()
+	);
+}
+function fmtSessionDate(iso) {
+	const d = new Date(iso);
+	if (isNaN(d)) return "—";
+	const now = new Date();
+	const sameDay =
+		d.getFullYear() === now.getFullYear() &&
+		d.getMonth() === now.getMonth() &&
+		d.getDate() === now.getDate();
+	const yest = new Date(now);
+	yest.setDate(now.getDate() - 1);
+	const isYest =
+		yest.getFullYear() === d.getFullYear() &&
+		yest.getMonth() === d.getMonth() &&
+		yest.getDate() === d.getDate();
+	const hm = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+	if (sameDay) return "today " + hm;
+	if (isYest) return "yesterday " + hm;
+	return (
+		d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + hm
+	);
+}
+async function showSessions() {
+	showModal(`<h3>Sessions</h3><p class="um-hint">loading…</p>`, true);
+	let data;
+	try {
+		data = await (await fetch("/api/sessions")).json();
+	} catch (e) {
+		data = { ok: false, error: e.message };
+	}
+	const rows = (data.ok && data.sessions) || [];
+	if (!data.ok) {
+		card.innerHTML = `<h3>Sessions</h3><p class="um-hint">${esc(
+			data.error || "failed to load",
+		)}</p>`;
+		return;
+	}
+	if (!rows.length) {
+		card.innerHTML = `<h3>Sessions</h3><p class="um-hint">no sessions yet</p>`;
+		return;
+	}
+	card.innerHTML = `<h3>Sessions</h3><div class="sessions"></div>`;
+	const host = card.querySelector(".sessions");
+	rows.forEach((s) => {
+		const current = curSessionFile && pathEq(s.path, curSessionFile);
+		const row = document.createElement("div");
+		row.className = "srow" + (current ? " current" : "");
+		row.innerHTML =
+			`<div class="smeta"><span class="sdate">${esc(
+				fmtSessionDate(s.when),
+			)}</span><span class="scount">${s.messages || 0} msg${
+				current ? " · current" : ""
+			}</span></div>` + `<div class="sprev">${esc(s.preview)}</div>`;
+		row.onclick = () => resumeSession(s.path, current);
+		host.appendChild(row);
+	});
+}
+function resumeSession(sessionPath, current) {
+	hideModal();
+	if (current) return; // already active — nothing to resume
+	setTodos([]); // fresh todo panel for the resumed session
+	transcript.innerHTML = "";
+	toolBlocks.clear();
+	api({ type: "switch_session", sessionPath, id: "resume" });
+}
+
 sendBtn.onclick = send;
 stopBtn.onclick = () => api({ type: "abort" });
 compactBtn.onclick = () => api({ type: "compact" });
@@ -2304,6 +2475,7 @@ $("new").onclick = () => {
 		api({ type: "new_session" });
 	}
 };
+$("sessions").onclick = showSessions;
 
 inputEl.addEventListener("keydown", (e) => {
 	if (e.key === "Enter" && !e.shiftKey) {
