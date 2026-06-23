@@ -1,34 +1,118 @@
+#!/usr/bin/env node
 // Minimal zero-dependency bridge between a browser and `pi --mode rpc`.
 // Browser <--SSE-- POST--> Node <--stdin/stdout JSONL--> pi subprocess.
 // Run: node server.js   (optionally set PORT, PI_BIN, PI_ARGS, PI_CWD)
 const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const path = require("path");
-const { spawn } = require("child_process");
+const { spawn, execSync } = require("child_process");
+const os = require("os");
+const { StringDecoder } = require("string_decoder");
 
 const PORT = parseInt(process.env.PORT || "4317", 10);
 const PI_BIN = process.env.PI_BIN || "pi";
 const PI_ARGS = (process.env.PI_ARGS || "").split(/\s+/).filter(Boolean); // e.g. "--no-session"
 const PI_CWD = process.env.PI_CWD || process.cwd();
+const AUTH_FILE = path.join(os.homedir(), ".pi", "agent", "auth.json");
+const AGENT_DIR = path.dirname(AUTH_FILE); // ~/.pi/agent — pi's agent dir
 const HTML_PATH = path.join(__dirname, "index.html");
+// ponytail: static assets split out of index.html. Whitelist (not a full static
+// dir) keeps the surface to known files — no path traversal, no MIME guessing.
+const STATIC = {
+	"/style.css": { file: "style.css", type: "text/css; charset=utf-8" },
+	"/md.js": { file: "md.js", type: "text/javascript; charset=utf-8" },
+	"/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
+};
+
+// ponytail: single source of truth for the ask_user_question rendezvous marker.
+// Both the browser (injected below) and the pi_minimal_webui extension (reads
+// process.env.PI_WEBUI_ASK_MARKER) take this value, so the literal can't drift.
+const ASK_MARKER = "\u0000pi-webui:ask-user-question";
+process.env.PI_WEBUI_ASK_MARKER = ASK_MARKER;
+// Inject the marker into the page before app.js loads; cache once at startup.
+const HTML = fs
+	.readFileSync(HTML_PATH, "utf8")
+	.replace(
+		'<script src="app.js"></script>',
+		"<script>window.__PI_ASK_MARKER=" +
+			JSON.stringify(ASK_MARKER) +
+			';</script>\n    <script src="app.js"></script>',
+	);
 
 // ponytail: one shared agent process for all tabs. Multi-session is a later concern.
 let pi = null;
+// ponytail: crash-loop guard. An unconditional 1s restart loops forever if
+// pi can't start (bad binary, broken install). Count consecutive fast exits and
+// back off exponentially up to 30s; reset once a process lives >5s.
+let restartAttempts = 0;
+let startStamp = 0;
 const clients = new Set(); // open SSE responses
 
 function broadcast(obj) {
 	const line = "data: " + JSON.stringify(obj) + "\n\n";
 	for (const res of clients) {
+		// ponytail: per-client queue. write()==false is backpressure (socket
+		// saturated / main-thread stall), NOT a dead socket — buffer the line in
+		// _piQ and flush on 'drain' instead of dropping it. Dropping was the old
+		// bug: a saturated client skipped both text deltas AND the text_end heal
+		// event, so words vanished until a full SSE reconnect/resync. A client
+		// stuck >20s (backgrounded/slept tab) is still cut loose to reconnect.
 		try {
-			res.write(line);
+			if (res._piPaused) {
+				(res._piQ ||= []).push(line);
+			} else if (!res.write(line)) {
+				pause(res);
+			}
 		} catch {
+			clients.delete(res);
 			/* drop, onclose cleans up */
 		}
 	}
 }
 
+// ponytail: buffer _piQ until the socket drains, then flush; re-pause if it
+// saturates again mid-flush. Recurses safely — once('drain') fires per saturation.
+function pause(res) {
+	res._piPaused = true;
+	res._piQ = res._piQ || [];
+	const deadline = setTimeout(() => {
+		clients.delete(res);
+		try {
+			res.end();
+		} catch {}
+	}, 20000);
+	res.once("drain", () => {
+		res._piPaused = false;
+		clearTimeout(deadline);
+		const q = res._piQ;
+		res._piQ = [];
+		for (const l of q) {
+			try {
+				if (!res.write(l)) {
+					pause(res);
+					return;
+				}
+			} catch {
+				clients.delete(res);
+				return;
+			}
+		}
+	});
+}
+
+// exponential backoff for the crash-loop guard: 1s, 2s, 4s, ... capped at 30s.
+function backoffDelay() {
+	return Math.min(1000 * 2 ** restartAttempts++, 30000);
+}
 function startPi() {
-	const args = ["--mode", "rpc", ...PI_ARGS];
+	startStamp = Date.now();
+	// ponytail: --approve trusts project-local files (.pi/extensions) for the run.
+	// Without it, RPC mode can't resolve trust (no select-prompt handler) → the
+	// pi_minimal_webui plugin is skipped → stock npm ask_user_question runs and
+	// auto-declines (ctx.ui.custom is a no-op in RPC). PI_ARGS can override with
+	// --no-approve since it's appended after.
+	const args = ["--mode", "rpc", "--approve", ...PI_ARGS];
 	// Windows: npm-global bins (pi) are .cmd shims; spawn can't find them without a
 	// shell to resolve PATHEXT. Fold args into one command string (avoids the
 	// DEP0190 `shell + args` warning). Args are trusted operator flags only.
@@ -38,13 +122,19 @@ function startPi() {
 				cwd: PI_CWD,
 				env: process.env,
 				shell: true,
+				windowsHide: true, // no cmd window when launched headless (e.g. by /webui)
 			})
-		: spawn(PI_BIN, args, { cwd: PI_CWD, env: process.env });
+		: spawn(PI_BIN, args, { cwd: PI_CWD, env: process.env, windowsHide: true });
 
 	// Strict JSONL reader: split on \n only, strip trailing \r. (readline is non-compliant.)
+	// ponytail: StringDecoder buffers incomplete UTF-8 tails across chunks so a
+	// multibyte char (—, “”, emoji) split on a stdout seam decodes correctly
+	// instead of becoming U+FFFD. chunk.toString("utf8") decoded each chunk in
+	// isolation — the source of intermittent garbled characters in assistant text.
 	let buf = "";
+	const dec = new StringDecoder("utf8");
 	pi.stdout.on("data", (chunk) => {
-		buf += chunk.toString("utf8");
+		buf += dec.write(chunk);
 		let i;
 		while ((i = buf.indexOf("\n")) !== -1) {
 			let line = buf.slice(0, i);
@@ -66,32 +156,361 @@ function startPi() {
 	);
 	pi.on("error", (e) => {
 		broadcast({ source: "pi_exit", payload: { error: e.message } });
-		console.error(`[pi] spawn error: ${e.message}; retrying in 1s`);
-		setTimeout(startPi, 1000);
+		const delay = backoffDelay();
+		console.error(`[pi] spawn error: ${e.message}; retrying in ${delay}ms`);
+		setTimeout(startPi, delay);
 	});
 	pi.on("exit", (code, sig) => {
 		broadcast({ source: "pi_exit", payload: { code, sig } });
-		console.error(`[pi] exited code=${code} sig=${sig}; restarting in 1s`);
-		setTimeout(startPi, 1000); // survive a crashed agent
+		// survived >5s -> healthy run, reset the crash counter.
+		if (Date.now() - startStamp > 5000) restartAttempts = 0;
+		const delay = backoffDelay();
+		console.error(
+			`[pi] exited code=${code} sig=${sig}; restarting in ${delay}ms`,
+		);
+		setTimeout(startPi, delay); // survive a crashed agent
 	});
 }
 startPi();
+
+// ponytail: read the z.ai key pi already stores (~/.pi/agent/auth.json) so the
+// usage bar works once pi is logged in — no paste, no duplicate env var. Resolves
+// the same $VAR/literal forms pi documents (providers.md > Key Resolution); the
+// `!cmd` secret-manager form is left to the UI paste (executing an arbitrary
+// stored command server-side is a bad shape).
+function zaiKeyFromAuth() {
+	let raw;
+	try {
+		raw = JSON.parse(fs.readFileSync(AUTH_FILE, "utf8"));
+	} catch {
+		return "";
+	}
+	const key = raw && raw.zai && raw.zai.key;
+	if (typeof key !== "string" || key === "" || key[0] === "!") return "";
+	// $VAR / ${VAR} -> env; $$ -> $; $! -> !. Uppercase-only matches pi's
+	// convention that lowercase stays literal.
+	return key.replace(
+		/\$(\$|!|\{([A-Z_][A-Z0-9_]*)\}|[A-Z_][A-Z0-9_]*)/g,
+		(_, whole, braced) => {
+			if (whole === "$") return "$";
+			if (whole === "!") return "!";
+			const name = braced || whole;
+			return process.env[name] ?? "";
+		},
+	);
+}
+
+// ponytail: proxy z.ai usage so the key never reaches the browser and we dodge
+// CORS (provider APIs don't set permissive CORS). Key resolution mirrors the
+// operator-first convention: ZAI_API_KEY env, then pi's own auth.json (so the
+// usage bar works once pi is logged in — no paste), finally the UI-paste header
+// so a user can supply a different key without a server restart. Forwarded as a
+// Bearer header — never a query param (those land in logs). 8s cap so a stalled
+// z.ai can't hang the (already async) handler.
+function zaiUsage(key) {
+	return new Promise((resolve, reject) => {
+		const req = https.request(
+			{
+				hostname: "api.z.ai",
+				path: "/api/monitor/usage/quota/limit",
+				method: "GET",
+				headers: {
+					Authorization: "Bearer " + key,
+					Accept: "application/json",
+				},
+			},
+			(resp) => {
+				let body = "";
+				resp.on("data", (c) => (body += c));
+				resp.on("end", () => resolve({ status: resp.statusCode, body }));
+			},
+		);
+		req.on("error", reject);
+		req.setTimeout(8000, () => req.destroy(new Error("z.ai timeout")));
+		req.end();
+	});
+}
+
+// ponytail: resolve the active ponytail mode for the header dropdown. Mirrors
+// the ponytail extension's resolver so the UI and the agent agree: default =
+// PONYTAIL_DEFAULT_MODE env > config file defaultMode > "full"; a session
+// override (last ponytail-mode custom entry in the session jsonl) wins.
+const PONY_VALID = ["off", "lite", "full", "ultra"];
+function ponyConfigPath() {
+	if (process.env.XDG_CONFIG_HOME)
+		return path.join(process.env.XDG_CONFIG_HOME, "ponytail", "config.json");
+	if (process.platform === "win32")
+		return path.join(
+			process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"),
+			"ponytail",
+			"config.json",
+		);
+	return path.join(os.homedir(), ".config", "ponytail", "config.json");
+}
+function ponyDefaultMode() {
+	const env = process.env.PONYTAIL_DEFAULT_MODE;
+	if (env && PONY_VALID.includes(env.toLowerCase())) return env.toLowerCase();
+	try {
+		const c = JSON.parse(fs.readFileSync(ponyConfigPath(), "utf8"));
+		if (
+			c &&
+			c.defaultMode &&
+			PONY_VALID.includes(String(c.defaultMode).toLowerCase())
+		)
+			return String(c.defaultMode).toLowerCase();
+	} catch {}
+	return "full";
+}
+// ponytail: scan the session jsonl newest-first for the last ponytail-mode
+// custom entry. Cheap string-include pre-filter before JSON.parse per line.
+function ponySessionMode(sessionFile) {
+	if (!sessionFile) return null;
+	let lines;
+	try {
+		lines = fs.readFileSync(sessionFile, "utf8").split(/\r?\n/);
+	} catch {
+		return null;
+	}
+	for (let i = lines.length - 1; i >= 0; i--) {
+		if (!lines[i].includes("ponytail-mode")) continue;
+		try {
+			const e = JSON.parse(lines[i]);
+			if (
+				e &&
+				e.type === "custom" &&
+				e.customType === "ponytail-mode" &&
+				e.data &&
+				typeof e.data.mode === "string" &&
+				PONY_VALID.includes(e.data.mode.toLowerCase())
+			)
+				return e.data.mode.toLowerCase();
+		} catch {}
+	}
+	return null;
+}
+
+// ponytail: sync git probe with a 2s cache; status endpoint, blocking ~50ms is fine.
+let gitCache = { t: 0, data: null };
+function gitInfo() {
+	if (Date.now() - gitCache.t < 2000) return gitCache.data;
+	let data = null;
+	try {
+		const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+			cwd: PI_CWD,
+			stdio: ["ignore", "pipe", "ignore"],
+			encoding: "utf8",
+			windowsHide: true, // health endpoint is polled every 2s — must never pop a window
+		}).trim();
+		const changes = execSync("git status --porcelain", {
+			cwd: PI_CWD,
+			stdio: ["ignore", "pipe", "ignore"],
+			encoding: "utf8",
+			windowsHide: true,
+		})
+			.split("\n")
+			.filter(Boolean).length;
+		data = { branch, changes };
+	} catch {
+		data = null; // not a git repo
+	}
+	gitCache = { t: Date.now(), data };
+	return data;
+}
+
+// ponytail: list resumable sessions for this project. Sessions are append-only
+// JSONL under ~/.pi/agent/sessions/<encoded-cwd>/. The dir-name encoding mirrors
+// pi's session-manager.getSessionDir() verbatim (realpath, strip one leading sep,
+// replace / \ : with '-', wrap in '--'), so the lookup can't drift from pi.
+// One pass per file: line 1 {type:"session"} -> id/timestamp/cwd; first
+// {type:"message",role:"user"} -> preview; count message lines for a rough size.
+// Files are KB–low MB, so a full read is fine; cap scanned lines at 60k to bound
+// a pathological file. No path param is taken -> no traversal surface.
+function sessionDirFor(cwd) {
+	let resolved;
+	try {
+		resolved = fs.realpathSync(cwd);
+	} catch {
+		resolved = cwd;
+	}
+	const safe =
+		"--" + resolved.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-") + "--";
+	return path.join(AGENT_DIR, "sessions", safe);
+}
+function firstUserText(content) {
+	let t = "";
+	if (typeof content === "string") t = content;
+	else if (Array.isArray(content))
+		t = content
+			.filter((b) => b && b.type === "text")
+			.map((b) => b.text || "")
+			.join(" ");
+	return t.replace(/\s+/g, " ").trim();
+}
+function listSessions() {
+	const dir = sessionDirFor(PI_CWD);
+	let files = [];
+	try {
+		files = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+	} catch {
+		return []; // no sessions dir yet (fresh project)
+	}
+	const out = [];
+	for (const f of files) {
+		const full = path.join(dir, f);
+		let txt;
+		try {
+			txt = fs.readFileSync(full, "utf8");
+		} catch {
+			continue;
+		}
+		const lines = txt.split("\n");
+		let id = null,
+			when = null,
+			cwd = null,
+			preview = "",
+			messages = 0,
+			sawSession = false;
+		for (let i = 0; i < lines.length && i < 60000; i++) {
+			const l = lines[i];
+			if (!l || l[0] !== "{") continue;
+			let e;
+			try {
+				e = JSON.parse(l);
+			} catch {
+				continue;
+			}
+			if (!e) continue;
+			if (e.type === "session" && !sawSession) {
+				sawSession = true;
+				id = e.id || null;
+				when = e.timestamp || null;
+				cwd = e.cwd || null;
+			} else if (e.type === "message" && e.message) {
+				messages++;
+				if (!preview && e.message.role === "user")
+					preview = firstUserText(e.message.content).slice(0, 160);
+			}
+		}
+		let mtime = 0;
+		try {
+			mtime = fs.statSync(full).mtimeMs;
+		} catch {}
+		out.push({
+			path: full,
+			id,
+			when,
+			cwd,
+			preview: preview || "(no messages)",
+			messages,
+			mtime,
+		});
+	}
+	out.sort((a, b) => b.mtime - a.mtime);
+	return out;
+}
 
 function sendToPi(obj) {
 	if (!pi || !pi.stdin.writable) throw new Error("pi not running");
 	pi.stdin.write(JSON.stringify(obj) + "\n");
 }
 
+// ponytail: sandbox any browser-supplied path to PI_CWD so the webui can't
+// read/write outside the project (the manual-edit diff feature uses this).
+// Resolve, then require the result to be PI_CWD itself or live beneath it.
+// ponytail: path.resolve does NOT follow symlinks — a link inside PI_CWD aimed at
+// ~/.ssh would pass. realpathSync does, so compare resolved-real paths. It throws
+// on a not-yet-existing target (manual-edit writes new files), so in that case
+// resolve the existing parent and re-append the basename.
+function safePath(rel) {
+	const base = fs.realpathSync(PI_CWD);
+	const full = path.resolve(base, rel || "");
+	let real;
+	try {
+		real = fs.realpathSync(full);
+	} catch {
+		real = path.join(fs.realpathSync(path.dirname(full)), path.basename(full));
+	}
+	if (real !== base && !real.startsWith(base + path.sep))
+		throw new Error("path escapes project root");
+	return real;
+}
+
+// ponytail: cap POST bodies (~1MB) so a runaway client can't OOM the bridge.
+// Enforces both Content-Length up front and accumulated bytes on the wire.
+const MAX_BODY = 1_000_000;
+function readBody(req) {
+	const clen = parseInt(req.headers["content-length"] || "0", 10);
+	if (clen > MAX_BODY) throw new Error("body too large");
+	return new Promise((resolve, reject) => {
+		let body = "",
+			n = 0,
+			aborted = false;
+		req.on("data", (c) => {
+			n += c.length;
+			if (n > MAX_BODY) {
+				aborted = true;
+				reject(new Error("body too large"));
+				req.destroy();
+				return;
+			}
+			body += c;
+		});
+		req.on("end", () => aborted || resolve(body));
+		req.on("error", reject);
+	});
+}
+
+// ponytail: CSRF + DNS-rebinding gate. The bridge is bound to 127.0.0.1, but any
+// website in your browser can still POST to 127.0.0.1:PORT. For state-changing
+// methods require Origin (when sent) to be localhost; always require Host to be
+// localhost. Kills drive-by /api/cmd and /api/write POSTs and rebinding attacks.
+const isLocalHost = (h) =>
+	typeof h === "string" && /^(127\.0\.0\.1|localhost)(:\d+)?$/.test(h);
+function isAllowed(req) {
+	if (!isLocalHost(req.headers.host)) return false;
+	if (req.method === "GET" || req.method === "HEAD") return true;
+	const origin = req.headers.origin;
+	if (!origin) return true; // non-browser clients (curl, pi) send no Origin
+	let host;
+	try {
+		host = new URL(origin).host;
+	} catch {
+		return false; // malformed Origin -> reject
+	}
+	return isLocalHost(host);
+}
+
 const server = http.createServer(async (req, res) => {
 	const url = new URL(req.url, "http://localhost");
+
+	if (!isAllowed(req)) {
+		res.writeHead(403, { "Content-Type": "text/plain" });
+		return res.end("forbidden");
+	}
 
 	if (
 		req.method === "GET" &&
 		(url.pathname === "/" || url.pathname === "/index.html")
 	) {
-		const body = fs.readFileSync(HTML_PATH);
 		res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-		return res.end(body);
+		return res.end(HTML);
+	}
+
+	if (req.method === "GET" && STATIC[url.pathname]) {
+		const a = STATIC[url.pathname];
+		try {
+			// ponytail: no-cache so editing app.js/style.css + browser refresh always
+			// picks up the change (the documented dev loop). Without it the browser
+			// heuristically caches and serves stale JS after an edit.
+			res.writeHead(200, {
+				"Content-Type": a.type,
+				"Cache-Control": "no-cache, no-transform",
+			});
+			return res.end(fs.readFileSync(path.join(__dirname, a.file)));
+		} catch {
+			res.writeHead(404);
+			return res.end("not found");
+		}
 	}
 
 	if (req.method === "GET" && url.pathname === "/api/events") {
@@ -116,9 +535,9 @@ const server = http.createServer(async (req, res) => {
 	}
 
 	if (req.method === "POST" && url.pathname === "/api/cmd") {
-		let body = "";
-		for await (const c of req) body += c;
+		let body;
 		try {
+			body = await readBody(req);
 			const obj = JSON.parse(body || "{}");
 			sendToPi(obj);
 			res.writeHead(200, { "Content-Type": "application/json" });
@@ -137,12 +556,127 @@ const server = http.createServer(async (req, res) => {
 				ok: true,
 				pi: PI_BIN + " " + ["--mode", "rpc", ...PI_ARGS].join(" "),
 				cwd: PI_CWD,
+				git: gitInfo(),
 			}),
 		);
 	}
 
+	if (req.method === "GET" && url.pathname === "/api/file") {
+		// manual-edit feature: read a project file (sandboxed to PI_CWD).
+		try {
+			const full = safePath(url.searchParams.get("path") || "");
+			const content = fs.readFileSync(full, "utf8");
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true, content }));
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+
+	if (req.method === "POST" && url.pathname === "/api/write") {
+		// manual-edit feature: write a project file (sandboxed to PI_CWD).
+		let body;
+		try {
+			body = await readBody(req);
+			const obj = JSON.parse(body || "{}");
+			const full = safePath(obj.path || "");
+			fs.mkdirSync(path.dirname(full), { recursive: true });
+			fs.writeFileSync(full, obj.content == null ? "" : obj.content, "utf8");
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end('{"ok":true}');
+		} catch (e) {
+			res.writeHead(500, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+
+	if (req.method === "GET" && url.pathname === "/api/zai-usage") {
+		// z.ai usage/quota proxy. GET so it's read-only; localhost-bound like the
+		// rest. Key: env ZAI_API_KEY -> pi auth.json -> X-ZAI-Key header (paste).
+		const key =
+			process.env.ZAI_API_KEY || zaiKeyFromAuth() || req.headers["x-zai-key"];
+		if (!key) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end('{"ok":false,"error":"no API key"}');
+		}
+		try {
+			const { status, body } = await zaiUsage(key);
+			let parsed = null;
+			try {
+				parsed = JSON.parse(body);
+			} catch {}
+			// ponytail: z.ai returns HTTP 200 even for auth/rate errors, burying the
+			// real status in the body (code>=400 or success:false). Honor it so a
+			// bad key surfaces as a clear error, not "no quota fields found".
+			let error = null;
+			if (
+				parsed &&
+				typeof parsed === "object" &&
+				((typeof parsed.code === "number" && parsed.code >= 400) ||
+					parsed.success === false)
+			)
+				error =
+					parsed.msg ||
+					parsed.message ||
+					`provider error${parsed.code ? " (code " + parsed.code + ")" : ""}`;
+			// ponytail: z.ai wraps the payload in an envelope {code,msg,data,success};
+			// unwrap data so the client sees {limits[],level} directly (the envelope's
+			// code/success were only needed for the error check above).
+			const data =
+				parsed &&
+				typeof parsed === "object" &&
+				parsed.data != null &&
+				typeof parsed.data === "object"
+					? parsed.data
+					: parsed;
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({
+					ok: !error && status >= 200 && status < 300,
+					status,
+					data,
+					error,
+					// ponytail: raw fallback so a non-JSON error page still surfaces
+					raw: data ? null : body.slice(0, 2000),
+				}),
+			);
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+
+	if (req.method === "GET" && url.pathname === "/api/ponytail-mode") {
+		// ponytail: read the active ponytail mode for the header dropdown.
+		// Default mirrors the ponytail extension's resolver exactly:
+		// PONYTAIL_DEFAULT_MODE env > config file defaultMode > "full". A
+		// session override (most recent ponytail-mode custom entry in the
+		// session jsonl, whose path the client passes in ?session=) wins.
+		const mode =
+			ponySessionMode(url.searchParams.get("session")) || ponyDefaultMode();
+		res.writeHead(200, { "Content-Type": "application/json" });
+		return res.end(JSON.stringify({ ok: true, mode }));
+	}
+
+	if (req.method === "GET" && url.pathname === "/api/sessions") {
+		// resumable sessions for this project's cwd (newest first). The dir is
+		// derived from PI_CWD — no client path is accepted, so nothing escapes it.
+		res.writeHead(200, { "Content-Type": "application/json" });
+		return res.end(JSON.stringify({ ok: true, sessions: listSessions() }));
+	}
+
 	res.writeHead(404);
 	res.end("not found");
+});
+
+// ponytail: surface listen-time failures (EADDRINUSE, EACCES, …) as a clear
+// log line and exit, instead of an unhandled 'error' stack. server.js isn't
+// supervised, so a clean exit + log line is what /webui tails to tell the user
+// why it died on start. (Connection errors emit on req/res, not the server.)
+server.on("error", (e) => {
+	console.error(`[server] listen error: ${e.code || ""} ${e.message}`);
+	process.exit(1);
 });
 
 server.listen(PORT, "127.0.0.1", () => {
