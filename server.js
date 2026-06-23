@@ -15,6 +15,7 @@ const PI_BIN = process.env.PI_BIN || "pi";
 const PI_ARGS = (process.env.PI_ARGS || "").split(/\s+/).filter(Boolean); // e.g. "--no-session"
 const PI_CWD = process.env.PI_CWD || process.cwd();
 const AUTH_FILE = path.join(os.homedir(), ".pi", "agent", "auth.json");
+const AGENT_DIR = path.dirname(AUTH_FILE); // ~/.pi/agent — pi's agent dir
 const HTML_PATH = path.join(__dirname, "index.html");
 // ponytail: static assets split out of index.html. Whitelist (not a full static
 // dir) keeps the surface to known files — no path traversal, no MIME guessing.
@@ -230,6 +231,64 @@ function zaiUsage(key) {
 	});
 }
 
+// ponytail: resolve the active ponytail mode for the header dropdown. Mirrors
+// the ponytail extension's resolver so the UI and the agent agree: default =
+// PONYTAIL_DEFAULT_MODE env > config file defaultMode > "full"; a session
+// override (last ponytail-mode custom entry in the session jsonl) wins.
+const PONY_VALID = ["off", "lite", "full", "ultra"];
+function ponyConfigPath() {
+	if (process.env.XDG_CONFIG_HOME)
+		return path.join(process.env.XDG_CONFIG_HOME, "ponytail", "config.json");
+	if (process.platform === "win32")
+		return path.join(
+			process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"),
+			"ponytail",
+			"config.json",
+		);
+	return path.join(os.homedir(), ".config", "ponytail", "config.json");
+}
+function ponyDefaultMode() {
+	const env = process.env.PONYTAIL_DEFAULT_MODE;
+	if (env && PONY_VALID.includes(env.toLowerCase())) return env.toLowerCase();
+	try {
+		const c = JSON.parse(fs.readFileSync(ponyConfigPath(), "utf8"));
+		if (
+			c &&
+			c.defaultMode &&
+			PONY_VALID.includes(String(c.defaultMode).toLowerCase())
+		)
+			return String(c.defaultMode).toLowerCase();
+	} catch {}
+	return "full";
+}
+// ponytail: scan the session jsonl newest-first for the last ponytail-mode
+// custom entry. Cheap string-include pre-filter before JSON.parse per line.
+function ponySessionMode(sessionFile) {
+	if (!sessionFile) return null;
+	let lines;
+	try {
+		lines = fs.readFileSync(sessionFile, "utf8").split(/\r?\n/);
+	} catch {
+		return null;
+	}
+	for (let i = lines.length - 1; i >= 0; i--) {
+		if (!lines[i].includes("ponytail-mode")) continue;
+		try {
+			const e = JSON.parse(lines[i]);
+			if (
+				e &&
+				e.type === "custom" &&
+				e.customType === "ponytail-mode" &&
+				e.data &&
+				typeof e.data.mode === "string" &&
+				PONY_VALID.includes(e.data.mode.toLowerCase())
+			)
+				return e.data.mode.toLowerCase();
+		} catch {}
+	}
+	return null;
+}
+
 // ponytail: sync git probe with a 2s cache; status endpoint, blocking ~50ms is fine.
 let gitCache = { t: 0, data: null };
 function gitInfo() {
@@ -256,6 +315,98 @@ function gitInfo() {
 	}
 	gitCache = { t: Date.now(), data };
 	return data;
+}
+
+// ponytail: list resumable sessions for this project. Sessions are append-only
+// JSONL under ~/.pi/agent/sessions/<encoded-cwd>/. The dir-name encoding mirrors
+// pi's session-manager.getSessionDir() verbatim (realpath, strip one leading sep,
+// replace / \ : with '-', wrap in '--'), so the lookup can't drift from pi.
+// One pass per file: line 1 {type:"session"} -> id/timestamp/cwd; first
+// {type:"message",role:"user"} -> preview; count message lines for a rough size.
+// Files are KB–low MB, so a full read is fine; cap scanned lines at 60k to bound
+// a pathological file. No path param is taken -> no traversal surface.
+function sessionDirFor(cwd) {
+	let resolved;
+	try {
+		resolved = fs.realpathSync(cwd);
+	} catch {
+		resolved = cwd;
+	}
+	const safe =
+		"--" + resolved.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-") + "--";
+	return path.join(AGENT_DIR, "sessions", safe);
+}
+function firstUserText(content) {
+	let t = "";
+	if (typeof content === "string") t = content;
+	else if (Array.isArray(content))
+		t = content
+			.filter((b) => b && b.type === "text")
+			.map((b) => b.text || "")
+			.join(" ");
+	return t.replace(/\s+/g, " ").trim();
+}
+function listSessions() {
+	const dir = sessionDirFor(PI_CWD);
+	let files = [];
+	try {
+		files = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+	} catch {
+		return []; // no sessions dir yet (fresh project)
+	}
+	const out = [];
+	for (const f of files) {
+		const full = path.join(dir, f);
+		let txt;
+		try {
+			txt = fs.readFileSync(full, "utf8");
+		} catch {
+			continue;
+		}
+		const lines = txt.split("\n");
+		let id = null,
+			when = null,
+			cwd = null,
+			preview = "",
+			messages = 0,
+			sawSession = false;
+		for (let i = 0; i < lines.length && i < 60000; i++) {
+			const l = lines[i];
+			if (!l || l[0] !== "{") continue;
+			let e;
+			try {
+				e = JSON.parse(l);
+			} catch {
+				continue;
+			}
+			if (!e) continue;
+			if (e.type === "session" && !sawSession) {
+				sawSession = true;
+				id = e.id || null;
+				when = e.timestamp || null;
+				cwd = e.cwd || null;
+			} else if (e.type === "message" && e.message) {
+				messages++;
+				if (!preview && e.message.role === "user")
+					preview = firstUserText(e.message.content).slice(0, 160);
+			}
+		}
+		let mtime = 0;
+		try {
+			mtime = fs.statSync(full).mtimeMs;
+		} catch {}
+		out.push({
+			path: full,
+			id,
+			when,
+			cwd,
+			preview: preview || "(no messages)",
+			messages,
+			mtime,
+		});
+	}
+	out.sort((a, b) => b.mtime - a.mtime);
+	return out;
 }
 
 function sendToPi(obj) {
@@ -348,7 +499,13 @@ const server = http.createServer(async (req, res) => {
 	if (req.method === "GET" && STATIC[url.pathname]) {
 		const a = STATIC[url.pathname];
 		try {
-			res.writeHead(200, { "Content-Type": a.type });
+			// ponytail: no-cache so editing app.js/style.css + browser refresh always
+			// picks up the change (the documented dev loop). Without it the browser
+			// heuristically caches and serves stale JS after an edit.
+			res.writeHead(200, {
+				"Content-Type": a.type,
+				"Cache-Control": "no-cache, no-transform",
+			});
 			return res.end(fs.readFileSync(path.join(__dirname, a.file)));
 		} catch {
 			res.writeHead(404);
@@ -488,6 +645,25 @@ const server = http.createServer(async (req, res) => {
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: false, error: e.message }));
 		}
+	}
+
+	if (req.method === "GET" && url.pathname === "/api/ponytail-mode") {
+		// ponytail: read the active ponytail mode for the header dropdown.
+		// Default mirrors the ponytail extension's resolver exactly:
+		// PONYTAIL_DEFAULT_MODE env > config file defaultMode > "full". A
+		// session override (most recent ponytail-mode custom entry in the
+		// session jsonl, whose path the client passes in ?session=) wins.
+		const mode =
+			ponySessionMode(url.searchParams.get("session")) || ponyDefaultMode();
+		res.writeHead(200, { "Content-Type": "application/json" });
+		return res.end(JSON.stringify({ ok: true, mode }));
+	}
+
+	if (req.method === "GET" && url.pathname === "/api/sessions") {
+		// resumable sessions for this project's cwd (newest first). The dir is
+		// derived from PI_CWD — no client path is accepted, so nothing escapes it.
+		res.writeHead(200, { "Content-Type": "application/json" });
+		return res.end(JSON.stringify({ ok: true, sessions: listSessions() }));
 	}
 
 	res.writeHead(404);

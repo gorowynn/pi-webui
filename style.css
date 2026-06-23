@@ -822,6 +822,50 @@ textarea:focus {
 	font-size: 11px;
 }
 
+/* ---- sessions list (resume an older session) ---- */
+#modal .sessions {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+#modal .srow {
+	padding: 8px 10px;
+	cursor: pointer;
+	border: 1px solid transparent;
+	border-radius: var(--r);
+}
+#modal .srow:hover {
+	background: #ffffff0d;
+	border-color: var(--border);
+}
+#modal .srow.current {
+	background: var(--accent);
+}
+#modal .smeta {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+	font-size: 11px;
+	color: var(--muted);
+	margin-bottom: 2px;
+}
+#modal .srow.current .smeta {
+	color: #0b0e14b3;
+}
+#modal .sdate {
+	font-weight: 600;
+}
+#modal .sprev {
+	font-size: 13px;
+	color: var(--fg);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+#modal .srow.current .sprev {
+	color: #0b0e14;
+}
+
 #modal {
 	position: fixed;
 	inset: 0;
@@ -1353,44 +1397,50 @@ textarea:focus-visible,
 	}
 }
 
-/* ---- z.ai usage bar (persistent, below header) ---- */
+/* ---- z.ai usage bar (inline in header, next to Usage button) ---- */
 #usagebar {
 	display: none;
-	flex: 0 0 auto;
-	gap: 16px;
-	align-items: center;
-	padding: 4px 12px;
-	background: var(--panel);
-	border-bottom: 1px solid var(--border);
-	overflow-x: auto;
+	flex: 1 1 auto;
+	min-width: 240px;
+	flex-direction: row;
+	gap: 24px;
+	margin: 0 12px;
 	cursor: pointer;
 }
 #usagebar:hover {
-	background: var(--panel2);
+	opacity: 0.8;
 }
-.ub-item {
+.ub-row {
+	flex: 1 1 0;
 	display: flex;
 	align-items: center;
-	gap: 6px;
-	flex: 0 0 auto;
+	gap: 8px;
 	font-size: 12px;
+	min-width: 0;
 }
 .ub-lbl {
+	flex: 0 0 auto;
+	width: 46px;
 	color: var(--muted);
 	white-space: nowrap;
-	max-width: 140px;
-	overflow: hidden;
-	text-overflow: ellipsis;
 }
 .ub-track {
-	width: 80px;
-	height: 5px;
+	flex: 1 1 auto;
+	min-width: 40px;
+	height: 7px;
 	background: #00000060;
 	border: 1px solid var(--border);
 	border-radius: var(--r);
 	overflow: hidden;
 }
+.ub-val {
+	flex: 0 0 auto;
+	color: var(--muted);
+	font-family: ui-monospace, Menlo, Consolas, monospace;
+	white-space: nowrap;
+}
 .ub-fill {
+	display: block;
 	height: 100%;
 	transition: width 0.3s ease;
 }
@@ -1402,6 +1452,9 @@ textarea:focus-visible,
 }
 .ub-fill.hi {
 	background: var(--err);
+}
+.ub-fill.time {
+	background: var(--accent);
 }
 
 /* ---- z.ai usage modal (Usage button) ---- */

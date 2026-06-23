@@ -60,6 +60,17 @@ var md, esc;
 		return u;
 	}
 
+	// ---------- link reference definitions ([id]: url "title") ----------
+	// ponytail: collected in a md() prepass (defs may appear anywhere in the doc).
+	// Module-scoped + reset per md() call — JS is single-threaded so no race.
+	// Hidden (blanked) from rendering so they don't surface as stray paragraphs.
+	var DEFS = {};
+	var DEF_RE =
+		/^\[([^\]]+)\]:\s*(<[^>]*>|\S+)(?:\s+(?:"([^"]*)"|'([^']*)'))?\s*$/;
+	function normLabel(s) {
+		return String(s).trim().replace(/\s+/g, " ").toLowerCase();
+	}
+
 	// ---------- inline parsing (recursive descent, depth-bounded) ----------
 	// Replaces the old sequential regex-replace inline parser, which couldn't
 	// nest emphasis, only handled single-backtick code spans, and had no escape
@@ -268,8 +279,22 @@ var md, esc;
 		return out;
 	}
 
-	// [text](url) or [text](url "title"). Allows one level of nested brackets in
-	// the text. Unclosed → null (literal). Disallowed scheme → text without link.
+	// Build an <a> for a resolved (url, title, text). Shared by inline + ref links.
+	function anchor(url, title, text, depth) {
+		return (
+			'<a href="' +
+			escapeHtml(url) +
+			'" target="_blank" rel="noopener noreferrer"' +
+			(title ? ' title="' + escapeHtml(title) + '"' : "") +
+			">" +
+			inline(text, depth) +
+			"</a>"
+		);
+	}
+
+	// [text](url) / [text](url "title") / [text][id] / [text][] / [text]. Allows
+	// one level of nested brackets in the text. Unclosed or unknown ref → null
+	// (literal). Inline url uses balanced () so URLs containing parens survive.
 	function link(s, i, depth) {
 		var j = i + 1,
 			depthb = 1,
@@ -289,26 +314,52 @@ var md, esc;
 			}
 			j++;
 		}
-		if (textEnd < 0 || s[textEnd + 1] !== "(") return null;
+		if (textEnd < 0) return null;
 		var text = s.slice(i + 1, textEnd);
-		var close = s.indexOf(")", textEnd + 2);
-		if (close < 0) return null; // unclosed → not a link (streaming-safe)
-		var inner = s.slice(textEnd + 2, close);
-		var tm = inner.match(/^\s*(\S*)\s*("([^"]*)"|'([^']*)')?\s*$/);
-		if (!tm) return null;
-		var url = tm[1];
-		var title = tm[3] != null ? tm[3] : tm[4] != null ? tm[4] : null;
-		var cu = cleanUrl(url);
-		if (cu == null) return { html: inline(text, depth), next: close + 1 };
-		var html =
-			'<a href="' +
-			escapeHtml(cu) +
-			'" target="_blank" rel="noopener noreferrer"' +
-			(title ? ' title="' + escapeHtml(title) + '"' : "") +
-			">" +
-			inline(text, depth) +
-			"</a>";
-		return { html: html, next: close + 1 };
+
+		// inline link [text](url …): balanced-paren scan so a URL with its own
+		// parens (e.g. wiki/Foo_(bar)) isn't truncated at the first ')'.
+		if (s[textEnd + 1] === "(") {
+			var d = 1,
+				p = textEnd + 2,
+				close = -1;
+			while (p < s.length) {
+				if (s[p] === "(") d++;
+				else if (s[p] === ")") {
+					d--;
+					if (d === 0) {
+						close = p;
+						break;
+					}
+				}
+				p++;
+			}
+			if (close < 0) return null; // unclosed → not a link (streaming-safe)
+			var inner = s.slice(textEnd + 2, close);
+			var tm = inner.match(/^\s*(\S*)\s*("([^"]*)"|'([^']*)')?\s*$/);
+			if (!tm) return null;
+			var url = tm[1];
+			var title = tm[3] != null ? tm[3] : tm[4] != null ? tm[4] : null;
+			var cu = cleanUrl(url);
+			if (cu == null) return { html: inline(text, depth), next: close + 1 };
+			return { html: anchor(cu, title, text, depth), next: close + 1 };
+		}
+
+		// reference link [text][id] / [text][] / shortcut [text]. Unknown id →
+		// null (renders literally), matching CommonMark.
+		var id,
+			after = textEnd + 1;
+		if (s[after] === "[") {
+			var rb = s.indexOf("]", after + 1);
+			if (rb < 0) return null;
+			id = rb === after + 1 ? text : s.slice(after + 1, rb); // [] → reuse text
+			after = rb;
+		} else {
+			id = text;
+		}
+		var def = DEFS[normLabel(id)];
+		if (!def) return null;
+		return { html: anchor(def.url, def.title, text, depth), next: after + 1 };
 	}
 
 	// <scheme:path> or <user@host.tld>. Bare '<' stays an escaped literal.
@@ -542,6 +593,50 @@ var md, esc;
 				continue;
 			}
 
+			// fenced code block (handled here, not just at top level, so a fence
+			// indented inside a list item stays in its <li> instead of being
+			// ripped out as a sibling block).
+			var open = fenceOpen(line);
+			if (open) {
+				var j = i + 1;
+				while (j < n && !fenceClose(lines[j], open)) j++;
+				var closed = j < n;
+				var code = lines.slice(i + 1, closed ? j : n).join("\n");
+				if (code && code[code.length - 1] === "\n") code = code.slice(0, -1);
+				var cls = open.lang
+					? ' class="language-' + escapeHtml(open.lang) + '"'
+					: "";
+				// unclosed fence (streaming) → render the partial code as a <pre>,
+				// identical to its closed form, and consume to end.
+				out.push("<pre><code" + cls + ">" + escapeHtml(code) + "</code></pre>");
+				i = closed ? j + 1 : n;
+				continue;
+			}
+
+			// indented code block (4+ spaces). Only at a block boundary (after a
+			// blank line / BOF) so it doesn't eat lazy paragraph continuation or
+			// lines already claimed by a list region (those advance past i).
+			if ((i === 0 || isBlank(lines[i - 1])) && indentOf(line) >= 4) {
+				var cl = [];
+				while (i < n) {
+					var ln = lines[i];
+					if (isBlank(ln)) {
+						cl.push(ln);
+						i++;
+						continue;
+					}
+					if (indentOf(ln) >= 4) {
+						cl.push(dedent(ln, 4));
+						i++;
+						continue;
+					}
+					break;
+				}
+				while (cl.length && isBlank(cl[cl.length - 1])) cl.pop();
+				out.push("<pre><code>" + escapeHtml(cl.join("\n")) + "</code></pre>");
+				continue;
+			}
+
 			// ATX heading (# … ######)
 			if (HEADING_START_RE.test(line)) {
 				var hm = /^ {0,3}(#{1,6})\s*(.*?)(?:\s+#+\s*)?$/.exec(line);
@@ -650,37 +745,44 @@ var md, esc;
 		return out.join("");
 	}
 
-	// ---------- top level: fenced code blocks + prose ----------
+	// ---------- top level: link-def prepass, then mdProse (which owns fences) ----------
 	md = function md(text) {
 		var src = String(text == null ? "" : text);
 		if (!src) return "";
+		DEFS = {};
 		var lines = src.split("\n");
-		var out = [];
-		var i = 0,
-			n = lines.length;
-		while (i < n) {
-			var open = fenceOpen(lines[i]);
-			if (open) {
-				var j = i + 1;
-				while (j < n && !fenceClose(lines[j], open)) j++;
-				var closed = j < n;
-				var code = lines.slice(i + 1, closed ? j : n).join("\n");
-				if (code && code[code.length - 1] === "\n") code = code.slice(0, -1);
-				var cls = open.lang
-					? ' class="language-' + escapeHtml(open.lang) + '"'
-					: "";
-				// unclosed fence (streaming) → still render the partial code as a
-				// <pre>, identical to its closed form, and consume to end.
-				out.push("<pre><code" + cls + ">" + escapeHtml(code) + "</code></pre>");
-				i = closed ? j + 1 : n;
+		// Collect link reference definitions, fence/indent-aware (a [id]: url
+		// inside a code block is literal, not a def). Defs may sit anywhere in
+		// the doc; blank their lines so they don't render as stray paragraphs.
+		var inFence = false,
+			fenceInfo = null;
+		for (var k = 0; k < lines.length; k++) {
+			var lk = lines[k];
+			if (inFence) {
+				if (fenceClose(lk, fenceInfo)) inFence = false;
 				continue;
 			}
-			// gather prose up to the next fence
-			var start = i;
-			while (i < n && !fenceOpen(lines[i])) i++;
-			out.push(mdProse(lines.slice(start, i).join("\n")));
+			var fo = fenceOpen(lk);
+			if (fo) {
+				inFence = true;
+				fenceInfo = fo;
+				continue;
+			}
+			if (indentOf(lk) >= 4) continue; // indented code: literal
+			var dm = DEF_RE.exec(lk);
+			if (dm) {
+				var url = dm[2];
+				if (url.charAt(0) === "<" && url.charAt(url.length - 1) === ">")
+					url = url.slice(1, -1);
+				if (cleanUrl(url) == null) continue;
+				DEFS[normLabel(dm[1])] = {
+					url: url,
+					title: dm[3] != null ? dm[3] : dm[4] != null ? dm[4] : null,
+				};
+				lines[k] = "";
+			}
 		}
-		return out.join("");
+		return mdProse(lines.join("\n"));
 	};
 
 	// expose esc as a global, parallel to md. app.js (and any later browser

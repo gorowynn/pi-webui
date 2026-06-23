@@ -11,13 +11,14 @@
       <span class="logo">◆ pi</span>
       <select id="model" title="model"></select>
       <button id="models-btn" title="reload models">↻</button>
+      <select id="think-sel" title="thinking level"></select>
+      <select id="pony-sel" title="ponytail mode"></select>
       <button id="usage-btn" title="z.ai usage / quota">Usage</button>
+      <div id="usagebar" aria-hidden="true"></div>
       <span id="status"
         ><span id="dot"></span><span id="status-text">connecting…</span></span
       >
     </header>
-
-    <div id="usagebar" aria-hidden="true"></div>
 
     <main id="transcript"></main>
     <details id="todopanel" open>
@@ -54,6 +55,9 @@
           >
             ⇲ Compact
           </button>
+          <button id="sessions" title="resume an older session">
+            ⏱ Sessions
+          </button>
           <button id="new" title="new session">＋ New</button>
           <span class="hint">Enter = send</span>
         </div>
@@ -63,8 +67,6 @@
         ><span class="sep">·</span> <span>git <code id="sb-git">…</code></span
         ><span class="sep">·</span>
         <span>model <code id="sb-model">…</code></span
-        ><span class="sep">·</span>
-        <span>think <code id="sb-think">…</code></span
         ><span class="sep">·</span> <span>ctx <code id="sb-ctx">…</code></span
         ><span class="sep">·</span>
         <span>cache <code id="sb-cache">…</code></span
