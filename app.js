@@ -41,209 +41,9 @@ function api(obj) {
 // browser can't render them, so strip the escapes at the status boundary.
 const stripAnsi = (s) => String(s).replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
 
-function esc(s) {
-	return String(s).replace(
-		/[&<>"']/g,
-		(c) =>
-			({
-				"&": "&amp;",
-				"<": "&lt;",
-				">": "&gt;",
-				'"': "&quot;",
-				"'": "&#39;",
-			})[c],
-	);
-}
-
-// ---- markdown: fenced code, headings, lists, tables, blockquotes, hr, links ----
-// ponytail: zero-dep inline parser. Block-level split (code vs prose), then
-// per-line block detection, then inline formatting with code-span protection
-// (placeholders so ** / * never touch code contents).
-function inlineMd(sEsc) {
-	const codes = [];
-	let s = sEsc.replace(
-		/`([^`]+)`/g,
-		(_, c) => (codes.push(c), `\u0000${codes.length - 1}\u0000`),
-	);
-	s = s
-		.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-		.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>")
-		.replace(/~~([^~]+)~~/g, "<del>$1</del>")
-		.replace(
-			/\[([^\]]+)\]\(([^)\s]+)(?: +"([^"]*)")?\)/g,
-			// ponytail: allow only http(s)/mailto/relative refs — assistant
-			// output is semi-trusted; block javascript:/data: link schemes.
-			(_m, t, url, title) =>
-				/^(https?:|mailto:|#|\/|\?)/.test(url)
-					? `<a href="${url}" target="_blank" rel="noopener noreferrer"${title ? ` title="${title}"` : ""}>${t}</a>`
-					: t,
-		);
-	return s.replace(
-		/\u0000(\d+)\u0000/g,
-		(_, i) => "<code>" + codes[+i] + "</code>",
-	);
-}
-function splitRow(line) {
-	return line
-		.trim()
-		.replace(/^\|/, "")
-		.replace(/\|$/, "")
-		.split("|")
-		.map((c) => c.trim());
-}
-function mdProse(src) {
-	const lines = src.split("\n");
-	const out = [];
-	let i = 0;
-	while (i < lines.length) {
-		const line = lines[i];
-		if (!line.trim()) {
-			i++;
-			continue;
-		}
-		const m = /^(#{1,6})\s+(.*)$/.exec(line);
-		if (m) {
-			out.push(`<h${m[1].length}>${inlineMd(esc(m[2]))}</h${m[1].length}>`);
-			i++;
-			continue;
-		}
-		if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
-			out.push("<hr>");
-			i++;
-			continue;
-		}
-		if (/^>\s?/.test(line)) {
-			const buf = [];
-			while (i < lines.length && /^>\s?/.test(lines[i])) {
-				buf.push(lines[i].replace(/^>\s?/, ""));
-				i++;
-			}
-			out.push(`<blockquote>${mdProse(buf.join("\n"))}</blockquote>`);
-			continue;
-		}
-		// table: header row + next line is a separator of |, -, :
-		if (
-			/\|/.test(line) &&
-			i + 1 < lines.length &&
-			/^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]) &&
-			/\|/.test(lines[i + 1])
-		) {
-			const header = splitRow(line);
-			i += 2;
-			const rows = [];
-			while (i < lines.length && /\|/.test(lines[i])) {
-				rows.push(splitRow(lines[i]));
-				i++;
-			}
-			const th = header.map((h) => `<th>${inlineMd(esc(h))}</th>`).join("");
-			const trs = rows
-				.map(
-					(r) =>
-						`<tr>${r.map((c) => `<td>${inlineMd(esc(c))}</td>`).join("")}</tr>`,
-				)
-				.join("");
-			out.push(
-				`<table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`,
-			);
-			continue;
-		}
-		if (/^\s*[-*+]\s+/.test(line)) {
-			const items = [];
-			while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) {
-				items.push(lines[i].replace(/^\s*[-*+]\s+/, ""));
-				i++;
-			}
-			out.push(
-				"<ul>" +
-					items.map((it) => `<li>${inlineMd(esc(it))}</li>`).join("") +
-					"</ul>",
-			);
-			continue;
-		}
-		if (/^\s*\d+\.\s+/.test(line)) {
-			const items = [];
-			while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
-				items.push(lines[i].replace(/^\s*\d+\.\s+/, ""));
-				i++;
-			}
-			out.push(
-				"<ol>" +
-					items.map((it) => `<li>${inlineMd(esc(it))}</li>`).join("") +
-					"</ol>",
-			);
-			continue;
-		}
-		// paragraph: gather until blank/special/pipe
-		const buf = [];
-		while (
-			i < lines.length &&
-			lines[i].trim() &&
-			!/^(#{1,6}\s|>\s?|\s*[-*+]\s|\s*\d+\.\s|\s*(-{3,}|\*{3,}|_{3,})\s*$)/.test(
-				lines[i],
-			) &&
-			!/\|/.test(lines[i])
-		) {
-			buf.push(lines[i]);
-			i++;
-		}
-		if (buf.length) {
-			out.push(
-				`<p>${inlineMd(esc(buf.join("\n"))).replace(/\n/g, "<br>")}</p>`,
-			);
-		} else {
-			// ponytail: unhandled single line (e.g. a stray `|` that isn't a
-			// table row, since the table branch above already consumed valid
-			// tables). Render it as its own paragraph so i always advances —
-			// without this the outer while spins forever on a pipe line and
-			// freezes the tab.
-			out.push(`<p>${inlineMd(esc(lines[i]))}</p>`);
-			i++;
-		}
-	}
-	return out.join("");
-}
-function md(text) {
-	const src = String(text == null ? "" : text);
-	if (!src) return "";
-	// split on CLOSED fenced code blocks; matched ```...``` pairs are captured
-	// by the regex. Any other ``` surviving into a prose segment is an
-	// UNCLOSED fence from a still-streaming message -- handled below so the
-	// live render matches the final post-reload render instead of flashing
-	// raw fence markers + code-as-prose until the closer arrives.
-	const segs = src.split(/(```[\s\S]*?```)/g);
-	let html = "";
-	for (let k = 0; k < segs.length; k++) {
-		const seg = segs[k];
-		if (!seg) continue;
-		if (seg.startsWith("```") && seg.endsWith("```")) {
-			// closed fence: slice off both ``` delimiters (slice(3, -3)). The
-			// old slice(3) + replace(/\n$/) left the closing ``` inside the
-			// code block as a stray trailing line.
-			const body = seg.slice(3, -3);
-			const nl = body.indexOf("\n");
-			const lang = (nl >= 0 ? body.slice(0, nl) : "").trim();
-			const code = nl >= 0 ? body.slice(nl + 1) : "";
-			const cls = lang ? ` class="language-${esc(lang)}"` : "";
-			html += `<pre><code${cls}>${esc(code.replace(/\n$/, ""))}</code></pre>`;
-			continue;
-		}
-		const open = seg.indexOf("```");
-		if (open >= 0) {
-			// unclosed fence (streaming): render prose before it, then the
-			// partial code as an open <pre> identical to its closed form.
-			html += mdProse(seg.slice(0, open));
-			const body = seg.slice(open + 3);
-			const nl = body.indexOf("\n");
-			const lang = (nl >= 0 ? body.slice(0, nl) : "").trim();
-			const code = nl >= 0 ? body.slice(nl + 1) : "";
-			const cls = lang ? ` class="language-${esc(lang)}"` : "";
-			html += `<pre><code${cls}>${esc(code.replace(/\n$/, ""))}</code></pre>`;
-		} else {
-			html += mdProse(seg);
-		}
-	}
-	return html;
-}
+// md() + esc() now live in md.js (loaded via <script> BEFORE app.js). The old
+// parser cluster (esc / inlineMd / splitRow / mdProse / md) was extracted there
+// as the single Markdown + HTML-escaping source of truth for the browser side.
 
 function nearBottom() {
 	return (
@@ -321,6 +121,16 @@ function renderText() {
 		cur.textPar.innerHTML = md(cur.textBuf);
 		autoscroll();
 	}
+}
+// ponytail: assistant text is NOT painted incrementally — it commits once
+// fully received (text_end / message_end) for a clean final render, while the
+// thinking block above it still streams live via renderThink(). Guarded so a
+// missing/empty buffer (or a turn with no text) is a no-op.
+function commitText() {
+	if (!cur || !cur.textBuf) return;
+	ensureTextPar();
+	cur.textPar.innerHTML = md(cur.textBuf);
+	autoscroll();
 }
 // ponytail: thinking-block lifecycle. The <details> carries its own
 // state: the .thinking class swaps the summary indicator from caret to
@@ -403,24 +213,6 @@ function scheduleRender() {
 	});
 }
 
-function addToolCall(name, args) {
-	if (!cur) newAssistantBubble();
-	const line = document.createElement("div");
-	line.style.margin = "4px 0";
-	const a = args
-		? (() => {
-				try {
-					return JSON.stringify(args);
-				} catch {
-					return "";
-				}
-			})()
-		: "";
-	line.innerHTML = `<span style="color:var(--accent)">▸ ${esc(name || "tool")}</span> <code>${esc(a)}</code>`;
-	cur.bubble.appendChild(line);
-	autoscroll();
-}
-
 function toolBlock(id, name, args, running) {
 	let wrap = toolBlocks.get(id);
 	if (!wrap) {
@@ -428,7 +220,9 @@ function toolBlock(id, name, args, running) {
 		el.className = "tool" + (running ? " run" : "");
 		if (running) el.open = true;
 		const a = args ? JSON.stringify(args) : "";
-		el.innerHTML = `<summary class="head"><span class="caret">▸</span><span class="name">${esc(name || "tool")}</span> <code>${esc(a)}</code></summary><div class="out"></div>`;
+		// two-line head: line 1 = caret + tool name, line 2 = the call args.
+		const argsHtml = a ? `<code>${esc(a)}</code>` : "";
+		el.innerHTML = `<summary class="head"><span class="trow"><span class="caret">▸</span><span class="name">${esc(name || "tool")}</span></span>${argsHtml}</summary><div class="out"></div>`;
 		transcript.appendChild(el);
 		wrap = { el, out: el.querySelector(".out") };
 		toolBlocks.set(id, wrap);
@@ -771,7 +565,16 @@ function describeTool(name, args) {
 		return `bash: ${String(args.command || "").slice(0, 60)}`;
 	if (name === "grep" || name === "find")
 		return `${name}: ${args.pattern || args.path || ""}`;
-	if (name === "todo") return `todo: ${args.action || ""}`;
+	if (name === "todo") {
+		const a = args && args.action;
+		const n = (x) => (Array.isArray(x) ? x.length : 0);
+		if (a === "plan" || a === "add")
+			return `todo ${a}: ${n(args.items)} task(s)`;
+		if (a === "update") return `todo update: ${n(args.updates)} change(s)`;
+		if (a === "remove") return `todo remove: ${n(args.ids)}`;
+		if (a === "clear") return "todo cleared";
+		return "todo";
+	}
 	if (name === "web_search" || name === "web_fetch")
 		return `${name}: ${String(args.query || args.url || "").slice(0, 60)}`;
 	return name || "tool";
@@ -874,50 +677,74 @@ function hideModal() {
 	}
 }
 
-// ---- todo panel: reconstruct state from rpiv-todo result texts ----
+// ---- todo panel: incremental state from the `todo` tool ----
+// The `todo` tool (extensions/pi_minimal_webui/todo.ts) sends one ACTION per
+// call (plan/add/update/remove/clear); we apply it to our own `todos` state and
+// re-render straight from tool_execution_start args. Tasks carry a stable `id`
+// (agent-supplied) and a status: open | started | finished. The frontend owns
+// the state — same proven OUT smuggling channel as ask_user_question, and
+// nothing to lose across compaction / new sessions / pi restarts.
 const todopanel = $("todopanel"),
 	tpBody = $("tp-body"),
 	tpCount = $("tp-count");
 let todos = []; // {id, subject, status}
-function parseTodo(text) {
-	if (!text) {
-		renderTodos();
-		return;
+const TODO_OK = new Set(["open", "started", "finished"]);
+// ponytail: localStorage is a reload HINT, mirroring the pi:model idiom.
+// The browser owns the live state; without this, a page reload empties the
+// panel until the agent's next todo call (tool_execution_start only fires
+// once). Keyed under pi:todos; the new-session reset (setTodos([]) above)
+// flows through persistTodos() so a fresh session clears it automatically.
+const TODO_KEY = "pi:todos";
+function persistTodos() {
+	try {
+		localStorage.setItem(TODO_KEY, JSON.stringify(todos));
+	} catch (e) {
+		/* private mode / quota — non-fatal, live state still renders */
 	}
-	let m;
-	// Multi-line list output: [status] #id subject [(activeForm)] [⛓ deps].
-	// ponytail: list is the source of truth — rebuild fully when present.
-	const listLines = text.split("\n").filter((l) => /^\[\w+\]\s*#\d+/.test(l));
-	if (listLines.length) {
-		todos = listLines
-			.map((l) => {
-				const lm = /^\[(\w+)\]\s*#(\d+)\s+(.*)$/.exec(l);
-				if (!lm) return null;
-				let subject = lm[3];
-				const depIdx = subject.indexOf("⛓");
-				if (depIdx !== -1) subject = subject.slice(0, depIdx);
-				return { id: +lm[2], subject: subject.trim(), status: lm[1] };
-			})
+}
+function normStatus(s) {
+	return TODO_OK.has(s) ? s : "open";
+}
+function todoItem(raw) {
+	if (!raw || typeof raw.subject !== "string") return null;
+	return {
+		id: raw.id != null ? raw.id : raw.subject,
+		subject: raw.subject,
+		status: normStatus(raw.status),
+	};
+}
+function setTodos(list) {
+	// full replace — used by the new-session reset (and as a safety fallback)
+	todos = (Array.isArray(list) ? list : []).map(todoItem).filter(Boolean);
+	persistTodos();
+	renderTodos();
+}
+function applyTodoOp(args) {
+	if (!args || typeof args !== "object") return;
+	const a = args.action;
+	if (a === "plan") {
+		todos = (Array.isArray(args.items) ? args.items : [])
+			.map(todoItem)
 			.filter(Boolean);
-		renderTodos();
-		return;
-	}
-	if ((m = /^Created #(\d+):\s*(.*?)\s*\((\w+)\)/.exec(text))) {
-		const ex = todos.find((t) => t.id === +m[1]);
-		if (ex) {
-			ex.subject = m[2];
-			ex.status = m[3];
-		} else {
-			todos.push({ id: +m[1], subject: m[2], status: m[3] });
-		}
-	} else if ((m = /^Updated #(\d+)\s*\(\w+\s*→\s*(\w+)\)/.exec(text))) {
-		const ex = todos.find((t) => t.id === +m[1]);
-		if (ex) ex.status = m[2];
-	} else if ((m = /^Deleted #(\d+):/.exec(text))) {
-		todos = todos.filter((t) => t.id !== +m[1]);
-	} else if (/^Cleared \d+ (todos?|tasks?)/.test(text)) {
+	} else if (a === "add") {
+		(Array.isArray(args.items) ? args.items : [])
+			.map(todoItem)
+			.filter(Boolean)
+			.forEach((t) => todos.push(t));
+	} else if (a === "update") {
+		const ups = Array.isArray(args.updates) ? args.updates : [];
+		ups.forEach((u) => {
+			if (!u || u.id == null) return;
+			const t = todos.find((x) => String(x.id) === String(u.id));
+			if (t) t.status = normStatus(u.status);
+		});
+	} else if (a === "remove") {
+		const drop = new Set((Array.isArray(args.ids) ? args.ids : []).map(String));
+		todos = todos.filter((t) => !drop.has(String(t.id)));
+	} else if (a === "clear") {
 		todos = [];
 	}
+	persistTodos();
 	renderTodos();
 }
 function renderTodos() {
@@ -926,15 +753,21 @@ function renderTodos() {
 		return;
 	}
 	todopanel.style.display = "block";
-	const done = todos.filter((t) => t.status === "completed").length;
+	const done = todos.filter((t) => t.status === "finished").length;
 	tpCount.textContent = `${done}/${todos.length}`;
 	tpBody.innerHTML = "";
-	todos.forEach((t) => {
-		const row = document.createElement("div");
-		row.className = "ti " + (t.status === "completed" ? "done" : t.status);
+	todos.forEach((t, i) => {
+		const cls =
+			t.status === "finished"
+				? "done"
+				: t.status === "started"
+					? "live"
+					: "pend";
 		const ck =
-			t.status === "completed" ? "✓" : t.status === "in_progress" ? "●" : "○";
-		row.innerHTML = `<span class="ck ${t.status === "completed" ? "done" : t.status === "in_progress" ? "live" : "pend"}">${ck}</span><span class="id">#${t.id}</span><span class="sbj">${esc(t.subject)}</span>`;
+			t.status === "finished" ? "✓" : t.status === "started" ? "●" : "○";
+		const row = document.createElement("div");
+		row.className = "ti " + cls;
+		row.innerHTML = `<span class="ck ${cls}">${ck}</span><span class="id">#${t.id != null ? esc(String(t.id)) : i + 1}</span><span class="sbj">${esc(t.subject)}</span>`;
 		tpBody.appendChild(row);
 	});
 }
@@ -1681,8 +1514,6 @@ function renderMessage(msg) {
 				cur.thinkCount = null;
 				cur.thinkEl = null;
 				cur.thinkBuf = "";
-			} else if (b.type === "toolCall") {
-				addToolCall(b.name, b.arguments);
 			}
 		}
 		cur = null;
@@ -1703,7 +1534,7 @@ function renderMessage(msg) {
 	} else if (msg.role === "bashExecution") {
 		const el = document.createElement("details");
 		el.className = "tool done";
-		el.innerHTML = `<summary class="head"><span class="caret">▸</span><span class="name">bash</span> <code>${esc(msg.command || "")}</code></summary><div class="out">${esc(msg.output || "")}</div>`;
+		el.innerHTML = `<summary class="head"><span class="trow"><span class="caret">▸</span><span class="name">bash</span></span><code>${esc(msg.command || "")}</code></summary><div class="out">${esc(msg.output || "")}</div>`;
 		transcript.appendChild(el);
 	}
 }
@@ -1749,7 +1580,7 @@ function handle(payload) {
 		case "message_end":
 			// finalize current text/think buffers
 			if (cur) {
-				renderText();
+				commitText(); // safety paint in case text_end didn't fire
 				renderThink(true);
 				finalizeThink();
 			}
@@ -1764,22 +1595,19 @@ function handle(payload) {
 				(e.type === "text_start" ||
 					e.type === "text_delta" ||
 					e.type === "thinking_start" ||
-					e.type === "thinking_delta" ||
-					e.type === "toolcall_start")
+					e.type === "thinking_delta")
 			)
 				cur = newAssistantBubble();
 			if (e.type === "text_start") {
-				ensureTextPar();
 				cur.textBuf = "";
 				setActivity("writing…", true);
 			} else if (e.type === "text_delta") {
-				ensureTextPar();
 				cur.textBuf += e.delta || "";
-				scheduleRender();
+				// deferred render: assistant text paints only once fully received
+				// (text_end / message_end). The thinking block still streams live.
 			} else if (e.type === "text_end") {
-				ensureTextPar();
 				if (e.content != null) cur.textBuf = e.content;
-				renderText();
+				commitText();
 			} else if (e.type === "thinking_start") {
 				ensureThink(true);
 				cur.thinkBuf = "";
@@ -1795,13 +1623,10 @@ function handle(payload) {
 				}
 				renderThink(true);
 				finalizeThink();
-			} else if (e.type === "toolcall_start") {
-				addToolCall(e.toolName);
 			}
-			// toolcall_end is intentionally not handled: diff previews now source
-			// from tool_execution_start args (the exact tool whose prompt is on
-			// screen), not the accumulated toolcall_end stream — which was the
-			// source of the drain bug (an earlier tool's select emptied the list).
+			// toolcall_start + toolcall_end are intentionally not handled: tool calls
+			// render ONLY in their own box below (toolBlock via tool_execution_start,
+			// toolResult in replay) — never inline in the assistant bubble.
 			break;
 		}
 
@@ -1816,6 +1641,11 @@ function handle(payload) {
 				// next and would clobber it. Stash args; the modal renders from
 				// input(MARKER) once the user approves.
 				pendingAskArgs = payload.args || null;
+			}
+			if (payload.toolName === "todo") {
+				// args carry an ACTION (plan/add/update/remove/clear); apply it to
+				// our own todos state and re-render. execute() just acknowledges.
+				applyTodoOp(payload.args);
 			}
 			setActivity(describeTool(payload.toolName, payload.args), true);
 			break;
@@ -1833,8 +1663,7 @@ function handle(payload) {
 		}
 		case "tool_execution_end": {
 			const w = toolBlocks.get(payload.toolCallId);
-			// ponytail: hoist t out of the if(w) block — parseTodo(t) needs it in scope.
-			// (was block-scoped → ReferenceError → panel never updated.)
+			// build the result text once; consumed inside the if(w) block below.
 			let t = "";
 			if (w) {
 				w.el.classList.remove("run");
@@ -1897,7 +1726,6 @@ function handle(payload) {
 			// stale edit/write diff leaking onto an unrelated later select/confirm
 			curToolName = null;
 			curToolArgs = null;
-			if (payload.toolName === "todo") parseTodo(t);
 			setActivity("thinking…", true);
 			autoscroll();
 			break;
@@ -2013,6 +1841,15 @@ es.onopen = () => {
 	setActivity("ready", false);
 	refreshHealth();
 	refreshStats();
+	// restore the todo panel from the localStorage reload hint (mirrors pi:model).
+	// If the list is stale vs the live session it self-corrects on the next todo
+	// call, and a new session clears it (setTodos([]) persists).
+	try {
+		const saved = JSON.parse(localStorage.getItem(TODO_KEY) || "[]");
+		if (Array.isArray(saved) && saved.length) setTodos(saved);
+	} catch (e) {
+		/* corrupt JSON — ignore, start empty */
+	}
 	api({ type: "get_state", id: "init-state" });
 	api({ type: "get_messages", id: "init-msgs" });
 	api({ type: "get_commands", id: "init-cmds" });
@@ -2218,8 +2055,12 @@ sendBtn.onclick = send;
 stopBtn.onclick = () => api({ type: "abort" });
 compactBtn.onclick = () => api({ type: "compact" });
 $("new").onclick = () => {
-	if (confirm("Start a new session? Current chat stays saved on the pi side."))
+	if (
+		confirm("Start a new session? Current chat stays saved on the pi side.")
+	) {
+		setTodos([]); // clear the todo panel for the fresh session
 		api({ type: "new_session" });
+	}
 };
 
 inputEl.addEventListener("keydown", (e) => {

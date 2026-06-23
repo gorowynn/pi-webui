@@ -68,8 +68,10 @@ interface ExtensionAPI {
 // `export default`; nothing else calls them, so wire them here or their commands never register.
 import webui from "./webui.js";
 import safeguard from "./safeguard.js";
+import todo from "./todo.js";
 
 export const ASK_MARKER =
+	// @ts-expect-error no @types/node in this zero-dep extension; jiti strips types at load, and the typeof guard keeps this safe at runtime.
 	(typeof process !== "undefined" &&
 		process.env &&
 		process.env.PI_WEBUI_ASK_MARKER) ||
@@ -265,6 +267,7 @@ const PROMPT_GUIDELINES = [
 export default function (pi: ExtensionAPI) {
 	webui(pi);
 	safeguard(pi);
+	todo(pi);
 	pi.registerTool({
 		name: "ask_user_question",
 		label: "Ask User Question",

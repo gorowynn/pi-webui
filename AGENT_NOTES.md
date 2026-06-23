@@ -64,9 +64,10 @@ is the dev loop. Don't introduce a build step without strong reason.
 | File | Role |
 |------|------|
 | `server.js` | The bridge. CommonJS, ~no deps. Serves assets, frames JSONL (splits on `\n` only), spawns/respawns `pi --mode rpc`, CSRF + DNS-rebinding gate, `safePath`, 1MB body cap. |
-| `index.html` | Markup only (~81 lines). Inline refs to `style.css` + `app.js`. |
+| `index.html` | Markup only (~81 lines). Inline refs to `style.css` + `md.js` + `app.js` (load order matters: md.js before app.js). |
 | `style.css` | All styling (~1282 lines). Ayu-Dark palette — see [docs/design.md](docs/design.md). |
-| `app.js` | The entire frontend (~2300 lines, vanilla JS). SSE handling, rendering, modals, diffs, commands palette. |
+| `md.js` | **Markdown → HTML parser + `esc()` HTML escaper** (~670 lines). Zero-dep, pure `string→string`, browser-loaded via `<script>` BEFORE app.js, also `require`-able in Node. Exports two globals: `md(markdown)` and `esc(text)`. The single source of truth for both — app.js dropped its duplicate copies. |
+| `app.js` | The entire frontend (~2140 lines, vanilla JS). SSE handling, rendering, modals, diffs, commands palette. Uses `md()` + `esc()` globals from md.js. |
 | `docs/` | Durable specs: [`design.md`](docs/design.md) (UI/UX, visual source of truth) and [`README.md`](docs/README.md) (index + SSOT charter). |
 | `extensions/pi_minimal_webui/` | The pi extension shipped with the package. See below. |
 | `package.json` | `keywords:["pi-package"]` makes it `pi install`-able. `files:` whitelist = `server.js`, `index.html`, `extensions`. |
@@ -84,6 +85,15 @@ is the dev loop. Don't introduce a build step without strong reason.
 - `webui.ts` — The `/webui` + `/webui-stop` launcher commands. Spawns
   `server.js` detached; kills the whole tree (POSIX process group / Windows
   `taskkill /T`). `session_shutdown` tears it down.
+- `todo.ts` — **Todo-list tool** (`todo`). Incremental, action-based: the
+  agent plans the list ONCE (`plan`) with stable per-task ids, then flips
+  statuses cheaply by id (`update`) — no whole-list resend on every status
+  change. Also `add` / `remove` / `clear`. Statuses are open | started |
+  finished. The browser owns the live list (applies each action from
+  `tool_execution_start` args, same smuggle channel as ask_user_question);
+  execute() just acknowledges. Reload-safe via a `pi:todos` localStorage hint
+  (mirrors the `pi:model` idiom); a new session clears it through
+  `setTodos([])`. Tool name matches the webui's UI hooks — don't rename.
 
 > **Naming:** the folder is still called `pi_minimal_webui` (open TODO P3 to
 > rename to something like `pi-webui-ask-bridge`). It does NOT contain a second
@@ -126,6 +136,9 @@ is the dev loop. Don't introduce a build step without strong reason.
     SSE backpressure (drops stalled clients), `md()` link-scheme allowlist
     (blocks `javascript:`/`data:`), 1MB body cap. Don't regress these.
 
+11. **`md.js` must load before `app.js`.** Both `index.html` (`<script src="md.js">` then `app.js`) and `server.js` (`STATIC` whitelist) must list `md.js`. app.js calls `md()`/`esc()` at runtime with no local definitions — they're globals set by md.js's IIFE. md.js is `require`-able in Node (exports `{md, esc}`); exercise it with `node -e "const{md}=require('./md.js');console.log(md('**x**'))"` after touching the parser.
+12. **`esc()` is shared, not duplicated.** It lives ONLY in `md.js` (static entity map, null-safe). app.js has ~22 call sites that use the global. Don't re-add a local `esc` to app.js — it would silently shadow and drift (the old copy returned `"null"` for null input; the shared one returns `""`).
+
 ## Manual smoke tests (quick sanity)
 
 - **Editable transcript diff** — ask for a small edit; edit the right pane →
@@ -152,6 +165,89 @@ When you close an item, tick it here **and** add a changelog entry.
 
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
+
+### 2026-06-23 — feat(webui): extract md.js (hardened parser + shared esc), drop inline tool display
+
+- **New `md.js`** (~670 lines): zero-dependency Markdown→HTML parser extracted from
+  app.js's inline cluster. Pure `string→string`, browser-loaded via `<script>`
+  BEFORE app.js, also `require`-able in Node — the whole point of the extraction
+  was testability (app.js can't be `require`d, its top level touches `document`).
+  Rewritten from sequential-regex-replace to a **recursive-descent inline
+  scanner** (proper code spans incl. multi-backtick, backslash escapes, nested
+  emphasis, depth-bounded recursion), **streaming-safe** fences/code-spans/links
+  (unclosed → graceful partial render), GFM tables w/ alignment, nested/task
+  lists, setext headings, link scheme allowlist + esc'd attributes (XSS-safe).
+  **Advance guarantee**: every loop branch advances the cursor — no input can
+  stall or throw. (No committed test file — exercise via `node -e` after edits.)
+- **`esc()` consolidated:** md.js is now the SINGLE source of truth for HTML
+  escaping (static entity map, null-safe — the old app.js copy returned literal
+  `"null"` for null and allocated an object per matched char). Exports `esc` as
+  a global alongside `md`; app.js dropped its ~215-line parser cluster AND its
+  `esc` definition (~22 call sites now use the global).
+- **Wiring:** `index.html` loads `md.js` before `app.js`; `server.js` `STATIC`
+  whitelist adds `/md.js`. The ask-marker injection (targets `<script
+  src="app.js">`) still injects between md.js and app.js — correct order.
+- **Inline tool display removed:** dropped `addToolCall()` (stamped `▸ name
+  <args>` inside the assistant bubble) + its 3 call sites (live `toolcall_start`,
+  bubble-creation guard, replay). Tool calls now render ONLY in their own box
+  below (`toolBlock` via `tool_execution_start`, `toolResult` in replay) — the
+  inline stamp was redundant. Removed `toolcall_start` from the bubble-creation
+  guard so a tool-only turn leaves no empty "assistant" bubble.
+- Two bugs the test caught + fixed: `***both***` (bold-italic) now peels spare
+  delimiters → `<strong><em>`; setext headings (`Title\n=====`) now recognized
+  (paragraph gather stops at the underline).
+
+### 2026-06-23 — feat(webui): two-line tool boxes + deferred assistant-text render
+
+- **Tool display box** (`app.js` `toolBlock` + `bashExecution` replay, `style.css`):
+  the `<summary class="head">` is now two lines — line 1 = caret + tool name,
+  line 2 = the call args (the JSON). Wraps caret+name in a `.trow`; summary is now
+  `flex-direction: column`; `.tool .head code` is a muted, indented (`padding-left:
+  16px`, aligned under the name) `pre-wrap` second line. Empty-args tool boxes (e.g.
+  `toolResult` replay) omit the code line. The inline `addToolCall` one-liner in
+  the assistant bubble is unchanged (it's a marker, not the box).
+- **Deferred assistant text** (`app.js`): assistant message text no longer paints
+  incrementally on every `text_delta` — it accumulates in `cur.textBuf` and
+  commits once via the new `commitText()` at `text_end` (with a safety net at
+  `message_end`). The thinking block above it STILL streams live (unchanged:
+  `thinking_delta` → `scheduleRender` → `renderThink`). The rAF `renderText()` is
+  a safe no-op during accumulation because `cur.textPar` isn't created until the
+  commit. Activity bar still shows "writing…" for feedback. Historical replay
+  (`renderMessage`) still renders full text immediately (it's already complete).
+
+### 2026-06-23 — feat(todo): incremental action-based todo tool + reload-safe state
+
+- `extensions/pi_minimal_webui/todo.ts` rewritten from full-state-replace to
+  INCREMENTAL: one `action` per call — `plan` (set the whole list once, with
+  stable per-task `id`s), `update` (flip one-or-more statuses by `id`, the
+  frequent cheap call that does NOT resend the list), `add`, `remove`, `clear`.
+  Statuses renamed to open | started | finished (was pending/in_progress/
+  completed). `execute()` only acknowledges; the browser applies each action.
+- `app.js`: replaced `setTodos(args.todos)` with `applyTodoOp(args)` (plan/add/
+  update/remove/clear against a local `todos` array); `renderTodos` maps the new
+  statuses to the existing pend/live/done styles (○/●/✓) and shows the task id;
+  `describeTool` summarizes the action; `tool_execution_start` routes `todo` to
+  `applyTodoOp`.
+- **Reload safety:** added a `pi:todos` localStorage hint (mirrors the existing
+  `pi:model` idiom) — `persistTodos()` writes on every state change, `es.onopen`
+  restores it on load so a page reload no longer empties the panel until the
+  next `todo` call. The new-session reset (`setTodos([])`) flows through
+  `persistTodos()`, so a fresh session clears stale entries. (Note: this reload
+  gap predated this change — the old full-replace design also rendered only from
+  tool_execution_start — but it's fixed now.)
+- `details`/status/description/snippet/guidelines updated to the new model.
+
+### 2026-06-23 — feat(todo): declarative todo-list tool + panel above activity bar
+
+- New `extensions/pi_minimal_webui/todo.ts` registers a `todo` tool: the agent
+  sends the FULL list each call (subject + pending/in_progress/completed). Ships
+  promptSnippet/guidelines so the agent creates it for 3+ step tasks and updates
+  on every status change. Renders instantly from `tool_execution_start` args.
+- Replaced the fragile rpiv-todo result-text parsing (`parseTodo`) with
+  declarative `setTodos`; fixed the in_progress row-class bug. Moved
+  `#todopanel` from `<footer>` to directly above `#activity` (collapsible,
+  default open); styled as edge-to-edge chrome with content aligned to the
+  activity bar. Cleared on new session.
 
 ### 2026-06-23 — docs: drop stale docs/todo.md; track open work in AGENT_NOTES.md
 
