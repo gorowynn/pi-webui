@@ -166,6 +166,92 @@ When you close an item, tick it here **and** add a changelog entry.
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-06-23 — feat(webui): z.ai usage tracker — modal + always-on top bar (60s poll)
+
+z.ai quota/usage viewer. Two surfaces over one proxied endpoint:
+
+- **Server proxy** (`server.js`): new `GET /api/zai-usage` + `zaiUsage(key)`
+  helper (`require("https")`, 8s timeout). Proxies
+  `api.z.ai/api/monitor/usage/quota/limit` so the key never reaches the browser
+  and CORS is dodged (provider APIs set no permissive CORS). Key source:
+  `ZAI_API_KEY` env var first, else the `X-ZAI-Key` request header (UI-pasted,
+  stays out of access logs — never a query param). Read-only GET, gated by the
+  existing localhost + CSRF check like every other route.
+- **Body-level error fix** (`server.js`): z.ai returns **HTTP 200 even for
+  auth/rate failures**, burying the real status in the JSON body
+  (`{code:401,success:false,msg:"token expired or incorrect"}`). The `ok`
+  flag now honors both the HTTP status AND a body-level error
+  (`data.code>=400 || data.success===false`), surfacing `data.msg` as
+  `error` — so a bad key reads as a clear error, not the confusing
+  "no quota fields found" (which is what a bare HTTP-2xx check produces).
+  Verified live: bogus key → `{ok:false,error:"token expired or incorrect"}`.
+- **Usage button + modal** (`index.html` header `#usage-btn`; `app.js`
+  `showUsage`/`renderUsage`/`zaiBars`/`usageKeyForm`; `style.css` `.um-*`):
+  clicking **Usage** opens a modal. First open with no key shows a password
+  field (stored in `localStorage` `pi:zai-key`). With a key it renders a
+  progress bar per `{used,total}`-shaped object found recursively — z.ai's
+  exact `/quota/limit` shape isn't documented, so `zaiBars` scans generically
+  (denominator names: total/totalQuota/total_quota/limit/max/quota/…; numerator:
+  used/usedQuota/consumed/spent/usage/…) and labels from
+  name/model/modelName/plan. Bars color by fill: <70% `--ok`, 70–90% `--warn`,
+  ≥90% `--err`. A collapsible **raw response** `<details>` is always shown as a
+  fallback (no quota fields → still inspectable). Refresh button re-fetches.
+- **Always-on top bar** (`index.html` `#usagebar`; `app.js`
+  `refreshUsageBar`/`usageBarCompact` + `usageTimer`; `style.css` `#usagebar`/
+  `.ub-*`): a thin bar below the header rendering up to 6 compact quota bars,
+  **polled every 60s**. Same pause-while-tab-hidden cadence as the 3s/6s
+  stats/health timers (added `usageTimer` to the `visibilitychange`
+  handler + an immediate `refreshUsageBar()` in `es.onopen`). Stays hidden until
+  a key is set (no clutter); clicking it opens the detail modal; the Usage
+  button remains as the entry point to set/change the key when the bar is
+  hidden. Saving a key in the modal also refreshes the bar immediately.
+
+Self-checked: `node --check` on app.js/server.js; `md.js` esc round-trip
+(null→`""`); `zaiBars` against 5 plausible shapes (snake/camel/per-model/
+  nested/no-fields) + cap-at-6 + XSS-in-label → escaped; live `/api/zai-usage`
+no-key + bogus-key probes.
+
+### 2026-06-23 — fix(webui): missing/cutoff assistant text, mid-stream scroll drift, ugly scrollbars, todo auto-clear, startup logging
+
+Five reported bugs:
+
+- **Missing words / cutoff assistant text (reload fixed it)** (`app.js` `message_update`):
+  root cause was MULTI-BLOCK messages. Providers (verified in `pi-ai`'s
+  google/anthropic sources) emit a separate `text_start`/`text_end` (and
+  `thinking_start`/`thinking_end`) per content block, each `text_end` carrying
+  the block's full `content`. But the streaming path used ONE `cur.textPar`
+  for the whole message — so a 2nd text block's `commitText` overwrote the
+  1st block's committed node in place (its words vanished). Reload "fixed" it
+  because `renderMessage` already reset `cur.textPar` per block. Fix: reset
+  `cur.textPar` at `text_start` (and the think-node set at `thinking_start`)
+  when a prior block was committed, so each block gets its own DOM node —
+  mirroring `renderMessage`. Order is preserved (append order = content order).
+- **Message log jumped back to the middle of the scrollbar** (`app.js` scroll
+  listener): `pinned` was set to `nearBottom()` on EVERY scroll event. A
+  programmatic `scrollDown()` fires a scroll event that can land AFTER a big
+  streamed chunk grew `scrollHeight`; `nearBottom()` then read false and
+  wrongly un-pinned, so the log stopped following and drifted to the middle.
+  Fix: un-pin ONLY on a genuine UPWARD scroll (`top + 4 < lastScrollTop`);
+  `scrollDown()` and content growth never move the viewport up, so they can't
+  un-pin. Re-pin whenever back near the bottom.
+- **Ugly plain-white scrollbars** (`style.css`): the UA default scrollbar
+  clashed with Ayu-Dark. Added global themed scrollbars — webkit
+  pseudo-elements (`var(--muted)` thumb, `var(--bg)`-inset, hover boost) +
+  Firefox `scrollbar-width: thin` / `scrollbar-color`. The hidden-on-purpose
+  bar on `.sx-hlbody` keeps its own `none`/`display:none` rules (specificity).
+- **Todo panel didn't clear after all tasks finished** (`app.js` `renderTodos`):
+  it only hid when `todos.length === 0`. Now also hides when every task is
+  `finished` (`allDone`) — a fully-done list is clutter. State is kept (a
+  later `plan`/`add` re-opens the panel); `persistTodos` still saved it.
+- **Occasional "webui exited unexpectedly" on start + add logging**
+  (`extensions/pi_minimal_webui/webui.ts`, `server.js`): server.js was spawned
+  with `stdio:"ignore"`, so an early death left only a bare exit code.
+  server.js stdout+stderr are now redirected (inherited fd, not a pipe, so
+  `detached`+`unref` still hold) to `~/.pi/webui.log`; the exit notify tails
+  the last 12 lines so the user sees WHY (port in use, pi spawn error, …).
+  Added a `server.on("error")` listen-failure handler (clear `EADDRINUSE`/
+  `EACCES` log line + `exit(1)`) instead of an unhandled-error stack.
+
 ### 2026-06-23 — feat(webui): extract md.js (hardened parser + shared esc), drop inline tool display
 
 - **New `md.js`** (~670 lines): zero-dependency Markdown→HTML parser extracted from

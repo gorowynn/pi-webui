@@ -11,10 +11,13 @@
       <span class="logo">◆ pi</span>
       <select id="model" title="model"></select>
       <button id="models-btn" title="reload models">↻</button>
+      <button id="usage-btn" title="z.ai usage / quota">Usage</button>
       <span id="status"
         ><span id="dot"></span><span id="status-text">connecting…</span></span
       >
     </header>
+
+    <div id="usagebar" aria-hidden="true"></div>
 
     <main id="transcript"></main>
     <details id="todopanel" open>
@@ -72,7 +75,18 @@
     </footer>
 
     <div id="modal" role="dialog" aria-modal="false" aria-label="pi dialog">
-      <div class="card" id="modal-card"></div>
+      <div id="modal-wrap">
+        <div class="card" id="modal-card"></div>
+        <button
+          id="modal-x"
+          class="modal-x"
+          type="button"
+          aria-label="Close dialog"
+          hidden
+        >
+          &times;
+        </button>
+      </div>
     </div>
 
     <script src="md.js"></script>

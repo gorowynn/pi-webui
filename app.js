@@ -56,8 +56,18 @@ function scrollDown() {
 }
 // ponytail: follow new output unless the user scrolled up to read.
 let pinned = true;
+let lastScrollTop = transcript.scrollTop;
 transcript.addEventListener("scroll", () => {
-	pinned = nearBottom();
+	const top = transcript.scrollTop;
+	// Un-pin only on a genuine UPWARD scroll (user reading back). scrollDown()
+	// and content growth never move the viewport up, so they can't un-pin —
+	// that was the bug: a scrollDown's scroll event fired AFTER a big streamed
+	// chunk landed (scrollHeight grew), nearBottom() read false, and the log
+	// stopped following and drifted to the middle. Re-pin whenever we're back
+	// near the bottom.
+	if (nearBottom()) pinned = true;
+	else if (top + 4 < lastScrollTop) pinned = false;
+	lastScrollTop = top;
 });
 function autoscroll() {
 	if (pinned) scrollDown();
@@ -615,18 +625,17 @@ function toast(msg, kind) {
 
 // ---- extension UI modal ----
 const modal = $("modal"),
-	card = $("modal-card");
+	card = $("modal-card"),
+	modalX = $("modal-x");
 let lastFocus = null;
+let modalFree = false; // true = no pi latch pending; safe to close freely (Usage)
 // ponytail: modal a11y. Esc fires the modal's [data-dismiss] button if present
 // (so pi's latch is always resolved, never stranded); Tab cycles inside the
 // card. Focus moves into the modal on open and back to the trigger on close.
 function onModalKey(e) {
 	if (e.key === "Escape") {
-		const d = card.querySelector("[data-dismiss]");
-		if (d) {
-			e.preventDefault();
-			d.click();
-		}
+		e.preventDefault();
+		dismissModal();
 		return;
 	}
 	if (e.key === "Tab") {
@@ -649,6 +658,8 @@ function onModalKey(e) {
 }
 function openModal() {
 	lastFocus = document.activeElement;
+	modalFree = false; // default: assume a latch modal; free openers opt in below
+	if (modalX) modalX.hidden = true;
 	modal.style.display = "flex";
 	modal.setAttribute("aria-modal", "true");
 	document.addEventListener("keydown", onModalKey, true);
@@ -659,11 +670,28 @@ function openModal() {
 		if (f) f.focus();
 	});
 }
-function showModal(html) {
+function showModal(html, free) {
 	// reset any per-modal modifier (e.g. .wide) so it can't leak across opens
 	card.className = "card";
 	card.innerHTML = html;
 	openModal();
+	if (free) {
+		modalFree = true;
+		if (modalX) modalX.hidden = false;
+	}
+}
+// ponytail: shared close path for the x button, Esc, and overlay click. For
+// latch modals (pi awaits an extension_ui_response) click the [data-dismiss]
+// button so the latch resolves cleanly (Cancel/No/"Chat about this"); for free
+// modals just hide. The permission "choose" prompt has neither, so close is
+// intentionally inert there — closing without a choice would strand pi.
+function dismissModal() {
+	const d = card.querySelector("[data-dismiss]");
+	if (d) {
+		d.click();
+		return;
+	}
+	if (modalFree) hideModal();
 }
 function hideModal() {
 	modal.style.display = "none";
@@ -676,6 +704,195 @@ function hideModal() {
 		lastFocus = null;
 	}
 }
+if (modalX) modalX.onclick = dismissModal;
+modal.addEventListener("click", (e) => {
+	// click on the backdrop (not the card/x) closes via the shared path
+	if (e.target === modal) dismissModal();
+});
+
+// ---- z.ai usage / quota tracker ----
+// Server proxies api.z.ai (keeps the key off the wire + dodges CORS). Key
+// resolution on the server: ZAI_API_KEY env -> pi's ~/.pi/agent/auth.json -> a
+// UI-pasted value (sent via header, stored in localStorage). We decode z.ai's
+// real /quota/limit shape (data.limits[]) and always keep the raw JSON as a
+// fallback.
+const ZAI_KEY = "pi:zai-key";
+const getZaiKey = () => localStorage.getItem(ZAI_KEY) || "";
+// ponytail: z.ai /quota/limit returns data.limits[] — each entry is either a
+// count pair (usage = total, currentValue = used) or percentage-only, with an
+// optional per-model usageDetails breakdown and a top-level level (plan). The
+// previous code guessed field names and matched none of this; decode the real
+// shape. Window unit codes (1=s 2=m 3=h 4=d 5=month 6=year) cross-checked
+// against the reset-time deltas.
+const LIMIT_TYPES = { TIME_LIMIT: "Time", TOKENS_LIMIT: "Tokens" };
+const LIMIT_UNITS = {
+	1: "second",
+	2: "minute",
+	3: "hour",
+	4: "day",
+	5: "month",
+	6: "year",
+};
+function windowLabel(l) {
+	const u = LIMIT_UNITS[l.unit];
+	if (!u || !l.number) return "";
+	return `${l.number} ${u}${l.number > 1 ? "s" : ""}`;
+}
+function zaiLimits(data) {
+	const out = [];
+	if (!data || typeof data !== "object") return out;
+	const limits = Array.isArray(data.limits) ? data.limits : [];
+	for (const l of limits) {
+		if (!l || typeof l !== "object") continue;
+		const base = {
+			label: LIMIT_TYPES[l.type] || (l.type || "quota").replace(/_/g, " "),
+			window: windowLabel(l),
+			reset: l.nextResetTime ? new Date(l.nextResetTime) : null,
+		};
+		if (typeof l.usage === "number" && typeof l.currentValue === "number")
+			out.push({
+				...base,
+				used: l.currentValue,
+				total: l.usage,
+				details: Array.isArray(l.usageDetails) ? l.usageDetails : null,
+			});
+		else if (typeof l.percentage === "number")
+			out.push({ ...base, pct: l.percentage });
+	}
+	return out;
+}
+function pctOf(b) {
+	if (typeof b.pct === "number") return b.pct;
+	return b.total > 0 ? Math.min(100, (b.used / b.total) * 100) : 0;
+}
+function zaiBarHtml(b) {
+	const pct = pctOf(b);
+	const cls = pct >= 90 ? "hi" : pct >= 70 ? "mid" : "lo";
+	const val =
+		typeof b.used === "number"
+			? `${Number(b.used).toLocaleString()} / ${Number(b.total).toLocaleString()} · ${pct.toFixed(1)}%`
+			: `${pct.toFixed(1)}%`;
+	const sub = [b.window, b.reset ? `resets ${b.reset.toLocaleString()}` : ""]
+		.filter(Boolean)
+		.join(" · ");
+	const details =
+		b.details && b.details.length
+			? `<div class="um-details">${b.details
+					.map(
+						(d) =>
+							`${esc(d.modelCode || "?")} ${Number(d.usage || 0).toLocaleString()}`,
+					)
+					.join(" · ")}</div>`
+			: "";
+	return (
+		`<div class="um-bar"><div class="um-head"><span class="um-lbl">${esc(b.label)}</span><span class="um-val">${val}</span></div>` +
+		(sub ? `<div class="um-sub">${esc(sub)}</div>` : "") +
+		`<div class="um-track"><div class="um-fill ${cls}" style="width:${pct}%"></div></div>` +
+		`${details}</div>`
+	);
+}
+function zaiBarCompact(b) {
+	const pct = pctOf(b);
+	const cls = pct >= 90 ? "hi" : pct >= 70 ? "mid" : "lo";
+	const val =
+		typeof b.used === "number"
+			? `${Number(b.used).toLocaleString()} / ${Number(b.total).toLocaleString()}`
+			: `${pct.toFixed(0)}%`;
+	return (
+		`<div class="ub-item" title="${esc(b.label)}: ${val.replace(/"/g, "&quot;")}"><span class="ub-lbl">${esc(b.label)}</span>` +
+		`<span class="ub-track"><span class="ub-fill ${cls}" style="width:${pct}%"></span></span></div>`
+	);
+}
+function usageKeyForm() {
+	return (
+		`<p class="um-hint">Enter your z.ai API key. It's stored only in this browser ` +
+		`(localStorage); the server forwards it to api.z.ai on demand. Operators can ` +
+		`also set the <code>ZAI_API_KEY</code> env var.</p>` +
+		`<form id="um-key-form"><input type="password" id="um-key" class="um-key" placeholder="z.ai API key" autocomplete="off" />` +
+		`<div class="row"><button>Save &amp; load</button></div></form>`
+	);
+}
+async function renderUsage() {
+	const u = await fetch("/api/zai-usage", {
+		headers: { "X-ZAI-Key": getZaiKey() },
+	}).then((r) => r.json());
+	if (!u.ok && u.error === "no API key" && !getZaiKey()) return usageKeyForm();
+	if (!u.ok)
+		return (
+			`<p class="um-err">\u26a0 ${esc(u.error || "request failed")}` +
+			`${u.status ? ` (HTTP ${u.status})` : ""}</p>` +
+			(u.raw
+				? `<details class="um-raw"><summary>response</summary><pre>${esc(u.raw)}</pre></details>`
+				: "")
+		);
+	const bars = zaiLimits(u.data);
+	const barsHtml = bars.length
+		? bars.map(zaiBarHtml).join("")
+		: `<p class="um-err">no quota fields found in the response</p>`;
+	const tier =
+		u.data && u.data.level
+			? `<span class="um-tier">${esc(u.data.level)}</span>`
+			: "";
+	const raw = JSON.stringify(u.data, null, 2);
+	return (
+		`<div class="um-meta"><span>${new Date().toLocaleTimeString()}` +
+		`${bars.length ? ` · ${bars.length} limit${bars.length > 1 ? "s" : ""}` : ""}` +
+		`${u.status ? ` · HTTP ${u.status}` : ""}</span>${tier}` +
+		`<button id="um-refresh" class="um-refresh">\u21bb refresh</button></div>` +
+		barsHtml +
+		`<details class="um-raw"><summary>raw response</summary><pre>${esc(raw)}</pre></details>`
+	);
+}
+async function showUsage() {
+	showModal(`<h3>z.ai usage</h3><p class="um-hint">loading\u2026</p>`, true);
+	let inner;
+	try {
+		inner = await renderUsage();
+	} catch (e) {
+		inner = `<p class="um-err">\u26a0 ${esc(e.message)}</p>`;
+	}
+	card.innerHTML = `<h3>z.ai usage</h3>` + inner;
+	const rb = card.querySelector("#um-refresh");
+	if (rb) rb.onclick = showUsage;
+	const form = card.querySelector("#um-key-form");
+	if (form)
+		form.onsubmit = (e) => {
+			e.preventDefault();
+			localStorage.setItem(ZAI_KEY, $("um-key").value.trim());
+			refreshUsageBar();
+			showUsage();
+		};
+}
+
+// ---- usage bar: persistent top bar, polls every 60s ----
+// Compact glance of the same z.ai data; click for the full modal. Polls
+// unconditionally (server short-circuits with "no API key" without hitting
+// z.ai, so a keyless install is one cheap localhost hop) and hides on no-key
+// or no limits — the Usage button remains the entry point to paste a key.
+const usageBar = $("usagebar");
+async function refreshUsageBar() {
+	let u;
+	try {
+		u = await fetch("/api/zai-usage", {
+			headers: { "X-ZAI-Key": getZaiKey() },
+		}).then((r) => r.json());
+	} catch {
+		return;
+	}
+	if (!u.ok) {
+		usageBar.style.display = "none";
+		return;
+	}
+	const bars = zaiLimits(u.data);
+	if (!bars.length) {
+		usageBar.style.display = "none";
+		return;
+	}
+	usageBar.innerHTML = bars.slice(0, 6).map(zaiBarCompact).join("");
+	usageBar.style.display = "flex";
+}
+usageBar.onclick = showUsage;
+usageBar.title = "z.ai usage — click for details";
 
 // ---- todo panel: incremental state from the `todo` tool ----
 // The `todo` tool (extensions/pi_minimal_webui/todo.ts) sends one ACTION per
@@ -748,7 +965,12 @@ function applyTodoOp(args) {
 	renderTodos();
 }
 function renderTodos() {
-	if (!todos.length) {
+	// ponytail: hide once every task is finished — a fully-done list has done
+	// its job; lingering checkmarks are clutter. State is kept (a later plan/add
+	// re-opens the panel), and persistTodos already saved it for reload safety.
+	const allDone =
+		todos.length > 0 && todos.every((t) => t.status === "finished");
+	if (!todos.length || allDone) {
 		todopanel.style.display = "none";
 		return;
 	}
@@ -1599,6 +1821,12 @@ function handle(payload) {
 			)
 				cur = newAssistantBubble();
 			if (e.type === "text_start") {
+				// ponytail: a message can carry SEVERAL text blocks (text → thinking
+				// → text). Drop the previous block's paragraph so this one gets its
+				// own — without this, a later block overwrites the earlier one's
+				// committed node in place and its words vanish until a reload
+				// (reload's renderMessage already resets per block).
+				if (cur.textPar) cur.textPar = null;
 				cur.textBuf = "";
 				setActivity("writing…", true);
 			} else if (e.type === "text_delta") {
@@ -1609,6 +1837,14 @@ function handle(payload) {
 				if (e.content != null) cur.textBuf = e.content;
 				commitText();
 			} else if (e.type === "thinking_start") {
+				// multiple thinking blocks: each gets its own <details> (same
+				// multi-block fix as text_start — don't overwrite a finalized one).
+				if (cur.thinkEl) {
+					cur.thinkEl = null;
+					cur.thinkDetails = null;
+					cur.thinkLabel = null;
+					cur.thinkCount = null;
+				}
 				ensureThink(true);
 				cur.thinkBuf = "";
 				setActivity("thinking…", true);
@@ -1841,6 +2077,7 @@ es.onopen = () => {
 	setActivity("ready", false);
 	refreshHealth();
 	refreshStats();
+	refreshUsageBar();
 	// restore the todo panel from the localStorage reload hint (mirrors pi:model).
 	// If the list is stale vs the live session it self-corrects on the next todo
 	// call, and a new session clears it (setTodos([]) persists).
@@ -1855,19 +2092,23 @@ es.onopen = () => {
 	api({ type: "get_commands", id: "init-cmds" });
 	api({ type: "get_available_models", id: "init-models" });
 };
-// ponytail: pause stat/health polling while the tab is backgrounded — avoids
-// burning a request every 3s/6s on an unseen window. Re-sync on return.
+// ponytail: pause stat/health/usage polling while the tab is backgrounded — avoids
+// burning requests every 3s/6s/60s on an unseen window. Re-sync on return.
 let statsTimer = setInterval(refreshStats, 3000);
 let healthTimer = setInterval(refreshHealth, 6000);
+let usageTimer = setInterval(refreshUsageBar, 60000);
 document.addEventListener("visibilitychange", () => {
 	if (document.hidden) {
 		clearInterval(statsTimer);
 		clearInterval(healthTimer);
+		clearInterval(usageTimer);
 	} else {
 		refreshStats();
 		refreshHealth();
+		refreshUsageBar();
 		statsTimer = setInterval(refreshStats, 3000);
 		healthTimer = setInterval(refreshHealth, 6000);
+		usageTimer = setInterval(refreshUsageBar, 60000);
 	}
 });
 es.onmessage = (ev) => {
@@ -2010,6 +2251,7 @@ modelSel.onchange = () => {
 };
 $("models-btn").onclick = () =>
 	api({ type: "get_available_models", id: "init-models" });
+$("usage-btn").onclick = showUsage;
 
 // ---- composer ----
 function autosize() {

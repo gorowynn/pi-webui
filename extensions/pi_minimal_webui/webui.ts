@@ -15,8 +15,20 @@
  * The whole process tree (server.js + its pi child) is killed together:
  * POSIX kills the detached process group; Windows uses `taskkill /T`.
  */
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import {
+	spawn,
+	spawnSync,
+	type ChildProcess,
+	type StdioOptions,
+} from "node:child_process";
+import {
+	closeSync,
+	existsSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -24,6 +36,12 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const baseDir = dirname(fileURLToPath(import.meta.url));
 const serverScript = join(baseDir, "..", "..", "server.js"); // extensions/pi_minimal_webui/ → package root
 const DEFAULT_PORT = 4317;
+// ponytail: startup log. server.js is spawned detached with stdio redirected to
+// this file, so an unexpected early exit (port in use, pi spawn failure, crash)
+// leaves a reason behind instead of a bare "exited (code N)". /webui tails the
+// last lines into the exit notify. ~/.pi/ mirrors where pi keeps its own state.
+const LOG_DIR = join(homedir(), ".pi");
+const LOG_PATH = join(LOG_DIR, "webui.log");
 
 let webui: ChildProcess | null = null;
 
@@ -77,6 +95,22 @@ function killTree(proc: ChildProcess) {
 	}
 }
 
+// ponytail: last N non-empty log lines for the exit notify. Sync read — the
+// child is already dead when we call this. Best-effort: a missing/unreadable
+// log yields "" and the notify falls back to just the exit code.
+function readTail(p: string, n: number): string {
+	try {
+		return readFileSync(p, "utf8")
+			.split(/\r?\n/)
+			.filter(Boolean)
+			.slice(-n)
+			.join("\n")
+			.trim();
+	} catch {
+		return "";
+	}
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("webui", {
 		description: "Start the pi-webui browser UI (http://127.0.0.1:<port>)",
@@ -94,13 +128,35 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			const env = { ...process.env, PORT: String(port), PI_CWD: ctx.cwd };
+			// ponytail: redirect server.js stdout+stderr to the log file. Inheriting
+			// an fd (not a pipe) keeps detached+unref working — no stream handle in
+			// the TUI keeps it alive — while still capturing the output so an early
+			// exit leaves a reason. Fall back to ignored stdio if the log can't open.
+			let logFd: number | undefined;
+			try {
+				mkdirSync(LOG_DIR, { recursive: true });
+				logFd = openSync(LOG_PATH, "a");
+			} catch {
+				/* best-effort: logging is a nicety, not a requirement */
+			}
+			const stdio: StdioOptions =
+				logFd != null ? ["ignore", logFd, logFd] : "ignore";
 			const proc = spawn(process.execPath, [serverScript], {
 				cwd: ctx.cwd,
 				env,
 				detached: true,
-				stdio: "ignore",
+				stdio,
 				windowsHide: true,
 			});
+			// the child inherited its own copy of the fd; drop the parent's so the
+			// log file isn't held open by the TUI.
+			if (logFd != null) {
+				try {
+					closeSync(logFd);
+				} catch {
+					/* already gone */
+				}
+			}
 			webui = proc;
 			proc.on("error", (e) => {
 				if (webui === proc) {
@@ -111,8 +167,13 @@ export default function (pi: ExtensionAPI) {
 			proc.on("exit", (code) => {
 				if (webui === proc) {
 					if (code !== 0 && code !== null && code !== 143 && code !== 130) {
+						// ponytail: tail the log into the notify so the user sees WHY
+						// it died (port in use, pi spawn error, …) without digging.
+						const tail = readTail(LOG_PATH, 12);
 						ctx.ui.notify(
-							`pi-webui exited unexpectedly (code ${code})`,
+							`pi-webui exited unexpectedly (code ${code})` +
+								(tail ? `:\n${tail}` : "") +
+								`\nlog: ${LOG_PATH}`,
 							"info",
 						);
 					}

@@ -3,15 +3,18 @@
 // Browser <--SSE-- POST--> Node <--stdin/stdout JSONL--> pi subprocess.
 // Run: node server.js   (optionally set PORT, PI_BIN, PI_ARGS, PI_CWD)
 const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const { spawn, execSync } = require("child_process");
+const os = require("os");
 const { StringDecoder } = require("string_decoder");
 
 const PORT = parseInt(process.env.PORT || "4317", 10);
 const PI_BIN = process.env.PI_BIN || "pi";
 const PI_ARGS = (process.env.PI_ARGS || "").split(/\s+/).filter(Boolean); // e.g. "--no-session"
 const PI_CWD = process.env.PI_CWD || process.cwd();
+const AUTH_FILE = path.join(os.homedir(), ".pi", "agent", "auth.json");
 const HTML_PATH = path.join(__dirname, "index.html");
 // ponytail: static assets split out of index.html. Whitelist (not a full static
 // dir) keeps the surface to known files — no path traversal, no MIME guessing.
@@ -168,6 +171,64 @@ function startPi() {
 	});
 }
 startPi();
+
+// ponytail: read the z.ai key pi already stores (~/.pi/agent/auth.json) so the
+// usage bar works once pi is logged in — no paste, no duplicate env var. Resolves
+// the same $VAR/literal forms pi documents (providers.md > Key Resolution); the
+// `!cmd` secret-manager form is left to the UI paste (executing an arbitrary
+// stored command server-side is a bad shape).
+function zaiKeyFromAuth() {
+	let raw;
+	try {
+		raw = JSON.parse(fs.readFileSync(AUTH_FILE, "utf8"));
+	} catch {
+		return "";
+	}
+	const key = raw && raw.zai && raw.zai.key;
+	if (typeof key !== "string" || key === "" || key[0] === "!") return "";
+	// $VAR / ${VAR} -> env; $$ -> $; $! -> !. Uppercase-only matches pi's
+	// convention that lowercase stays literal.
+	return key.replace(
+		/\$(\$|!|\{([A-Z_][A-Z0-9_]*)\}|[A-Z_][A-Z0-9_]*)/g,
+		(_, whole, braced) => {
+			if (whole === "$") return "$";
+			if (whole === "!") return "!";
+			const name = braced || whole;
+			return process.env[name] ?? "";
+		},
+	);
+}
+
+// ponytail: proxy z.ai usage so the key never reaches the browser and we dodge
+// CORS (provider APIs don't set permissive CORS). Key resolution mirrors the
+// operator-first convention: ZAI_API_KEY env, then pi's own auth.json (so the
+// usage bar works once pi is logged in — no paste), finally the UI-paste header
+// so a user can supply a different key without a server restart. Forwarded as a
+// Bearer header — never a query param (those land in logs). 8s cap so a stalled
+// z.ai can't hang the (already async) handler.
+function zaiUsage(key) {
+	return new Promise((resolve, reject) => {
+		const req = https.request(
+			{
+				hostname: "api.z.ai",
+				path: "/api/monitor/usage/quota/limit",
+				method: "GET",
+				headers: {
+					Authorization: "Bearer " + key,
+					Accept: "application/json",
+				},
+			},
+			(resp) => {
+				let body = "";
+				resp.on("data", (c) => (body += c));
+				resp.on("end", () => resolve({ status: resp.statusCode, body }));
+			},
+		);
+		req.on("error", reject);
+		req.setTimeout(8000, () => req.destroy(new Error("z.ai timeout")));
+		req.end();
+	});
+}
 
 // ponytail: sync git probe with a 2s cache; status endpoint, blocking ~50ms is fine.
 let gitCache = { t: 0, data: null };
@@ -373,8 +434,73 @@ const server = http.createServer(async (req, res) => {
 		}
 	}
 
+	if (req.method === "GET" && url.pathname === "/api/zai-usage") {
+		// z.ai usage/quota proxy. GET so it's read-only; localhost-bound like the
+		// rest. Key: env ZAI_API_KEY -> pi auth.json -> X-ZAI-Key header (paste).
+		const key =
+			process.env.ZAI_API_KEY || zaiKeyFromAuth() || req.headers["x-zai-key"];
+		if (!key) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end('{"ok":false,"error":"no API key"}');
+		}
+		try {
+			const { status, body } = await zaiUsage(key);
+			let parsed = null;
+			try {
+				parsed = JSON.parse(body);
+			} catch {}
+			// ponytail: z.ai returns HTTP 200 even for auth/rate errors, burying the
+			// real status in the body (code>=400 or success:false). Honor it so a
+			// bad key surfaces as a clear error, not "no quota fields found".
+			let error = null;
+			if (
+				parsed &&
+				typeof parsed === "object" &&
+				((typeof parsed.code === "number" && parsed.code >= 400) ||
+					parsed.success === false)
+			)
+				error =
+					parsed.msg ||
+					parsed.message ||
+					`provider error${parsed.code ? " (code " + parsed.code + ")" : ""}`;
+			// ponytail: z.ai wraps the payload in an envelope {code,msg,data,success};
+			// unwrap data so the client sees {limits[],level} directly (the envelope's
+			// code/success were only needed for the error check above).
+			const data =
+				parsed &&
+				typeof parsed === "object" &&
+				parsed.data != null &&
+				typeof parsed.data === "object"
+					? parsed.data
+					: parsed;
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({
+					ok: !error && status >= 200 && status < 300,
+					status,
+					data,
+					error,
+					// ponytail: raw fallback so a non-JSON error page still surfaces
+					raw: data ? null : body.slice(0, 2000),
+				}),
+			);
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+
 	res.writeHead(404);
 	res.end("not found");
+});
+
+// ponytail: surface listen-time failures (EADDRINUSE, EACCES, …) as a clear
+// log line and exit, instead of an unhandled 'error' stack. server.js isn't
+// supervised, so a clean exit + log line is what /webui tails to tell the user
+// why it died on start. (Connection errors emit on req/res, not the server.)
+server.on("error", (e) => {
+	console.error(`[server] listen error: ${e.code || ""} ${e.message}`);
+	process.exit(1);
 });
 
 server.listen(PORT, "127.0.0.1", () => {

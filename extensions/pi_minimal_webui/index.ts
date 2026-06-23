@@ -55,8 +55,23 @@ interface ToolDefinition {
 		ctx: ToolExecutionContext,
 	): Promise<AgentToolResult>;
 }
+// Covers the surface the four sibling modules (webui, safeguard, todo, ponytail)
+// touch from the single `pi` handed to this default export: registerTool (ask,
+// todo), registerCommand + on (webui, safeguard, ponytail). `on`'s handler is
+// `any[]` because index.ts never calls `on` itself — it only declares it so the
+// same `pi` flows into the sibling modules, which type each event precisely
+// (e.g. ponytail's before_agent_start). `any` keeps the pass-through structurally
+// compatible without forcing a node_modules type dependency; jiti strips it.
 interface ExtensionAPI {
 	registerTool(def: ToolDefinition): void;
+	registerCommand(
+		name: string,
+		def: {
+			description: string;
+			handler: (args: string | undefined, ctx: unknown) => void | Promise<void>;
+		},
+	): void;
+	on(event: string, handler: (...args: any[]) => unknown): void;
 }
 
 // ponytail: server.js is the single source — it sets process.env.PI_WEBUI_ASK_MARKER
@@ -66,16 +81,18 @@ interface ExtensionAPI {
 // ponytail: pi loads a subdir extension via index.ts only (see collectAutoExtensionEntries
 // in pi's package-manager). webui.ts and safeguard.ts are sibling factories with their own
 // `export default`; nothing else calls them, so wire them here or their commands never register.
+import ponytail from "./ponytail.js";
 import webui from "./webui.js";
 import safeguard from "./safeguard.js";
 import todo from "./todo.js";
 
-export const ASK_MARKER =
-	// @ts-expect-error no @types/node in this zero-dep extension; jiti strips types at load, and the typeof guard keeps this safe at runtime.
+// @ts-expect-error no @types/node in this zero-dep extension; jiti strips types at load, and the typeof guard keeps this safe at runtime.
+const envMarker =
 	(typeof process !== "undefined" &&
 		process.env &&
 		process.env.PI_WEBUI_ASK_MARKER) ||
-	"\u0000pi-webui:ask-user-question";
+	"";
+export const ASK_MARKER = envMarker || "\u0000pi-webui:ask-user-question";
 
 const ERROR_NO_UI = "Error: UI not available (running in non-interactive mode)";
 const DECLINE_MESSAGE = "User declined to answer questions";
@@ -265,6 +282,7 @@ const PROMPT_GUIDELINES = [
 ];
 
 export default function (pi: ExtensionAPI) {
+	ponytail(pi);
 	webui(pi);
 	safeguard(pi);
 	todo(pi);
