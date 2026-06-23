@@ -12,6 +12,21 @@
 
 ---
 
+## Single source of truth
+
+Project knowledge lives in two places, and **only** these two:
+
+- **`AGENT_NOTES.md`** (this file) — agent memory, conventions, gotchas,
+  changelog. Read first.
+- **`docs/`** — durable specs: [`docs/design.md`](docs/design.md) (UI/UX) and
+  [`docs/README.md`](docs/README.md) (index + the full SSOT charter).
+
+Code comments, commit messages, and chat are subordinate. When you learn
+something durable, put it in the right place (gotcha/convention → here; spec
+change → `docs/`). Full policy: [`docs/README.md`](docs/README.md).
+
+---
+
 ## What this project is
 
 **pi-webui** — a minimal, **zero-dependency** web UI for
@@ -49,10 +64,10 @@ is the dev loop. Don't introduce a build step without strong reason.
 | File | Role |
 |------|------|
 | `server.js` | The bridge. CommonJS, ~no deps. Serves assets, frames JSONL (splits on `\n` only), spawns/respawns `pi --mode rpc`, CSRF + DNS-rebinding gate, `safePath`, 1MB body cap. |
-| `index.html` | Markup only (~78 lines). Inline refs to `style.css` + `app.js`. |
-| `style.css` | All styling (~1260 lines). Ayu-Dark palette — see [design.md](design.md). |
-| `app.js` | The entire frontend (~2310 lines, vanilla JS). SSE handling, rendering, modals, diffs, commands palette. |
-| `design.md` | UI/UX spec (colors, layout, code block styling). Source of truth for visual decisions. |
+| `index.html` | Markup only (~81 lines). Inline refs to `style.css` + `app.js`. |
+| `style.css` | All styling (~1282 lines). Ayu-Dark palette — see [docs/design.md](docs/design.md). |
+| `app.js` | The entire frontend (~2300 lines, vanilla JS). SSE handling, rendering, modals, diffs, commands palette. |
+| `docs/` | Durable specs: [`design.md`](docs/design.md) (UI/UX, visual source of truth) and [`README.md`](docs/README.md) (index + SSOT charter). |
 | `extensions/pi_minimal_webui/` | The pi extension shipped with the package. See below. |
 | `package.json` | `keywords:["pi-package"]` makes it `pi install`-able. `files:` whitelist = `server.js`, `index.html`, `extensions`. |
 
@@ -123,14 +138,13 @@ is the dev loop. Don't introduce a build step without strong reason.
 
 ## Open work
 
-See [TODO.md](TODO.md) for the tracked, priority-ordered list. Current open
-items (P3 hygiene):
+Open items (P3 hygiene):
 
 - [ ] Rename `pi_minimal_webui` folder → e.g. `pi-webui-ask-bridge` (browser
       side needs no change).
 - [ ] Watch the mutable top-level closure state in app.js as it grows.
 
-When you close a TODO item, tick it there **and** add a changelog entry here.
+When you close an item, tick it here **and** add a changelog entry.
 
 ---
 
@@ -139,6 +153,23 @@ When you close a TODO item, tick it there **and** add a changelog entry here.
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-06-23 — docs: drop stale docs/todo.md; track open work in AGENT_NOTES.md
+
+- `docs/todo.md` was stale (line-count claims and the "~11 pieces" mutable-state
+  count had drifted; all P1/P2 items were long done) and redundant — its two open
+  P3 items were already listed in [Open work](#open-work). Removed it; `docs/`
+  now holds durable specs only (`design.md`, `README.md`). Open work is tracked
+  solely here. Also refreshed stale line-counts in the file map.
+
+### 2026-06-23 — docs: establish AGENT_NOTES.md + docs/ as single source of truth
+
+- Defined `AGENT_NOTES.md` (agent memory/changelog) + `docs/` (durable specs) as
+  the project's single source of truth; added an SSOT section here and the
+  canonical charter + index in `docs/README.md`.
+- Recovered the deleted `design.md` → `docs/design.md` and `TODO.md` →
+  `docs/todo.md`; fixed all cross-references. Code comments/chat are now
+  subordinate to these two locations.
+
 ### 2026-06-22 — webui: streaming markdown, real diff line numbers, drop command summary
 
 - Streaming markdown rendering; diff line numbers now reflect real file lines;
@@ -146,7 +177,7 @@ When you close a TODO item, tick it there **and** add a changelog entry here.
 
 ### 2026-06-22 — webui: Ayu-Dark rework
 
-- Flat corners, accent stripes, darker palette per [design.md](design.md).
+- Flat corners, accent stripes, darker palette per [docs/design.md](docs/design.md).
   (commit `2e11f66`)
 
 ### 2026-06-22 — refactor: split into pi_minimal_webui subdir extension
@@ -193,4 +224,5 @@ When you close a TODO item, tick it there **and** add a changelog entry here.
 ### 2026-06-23 — chore: created AGENT_NOTES.md
 
 - Added this file as the agent's persistent project memory + changelog. Seed
-  content captured from README/TODO/design.md/git log. No code changes.
+  content captured from README (absorbed here), design.md + TODO.md (since
+  relocated to `docs/`), and git log. No code changes.
