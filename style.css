@@ -19,6 +19,32 @@
 * {
 	box-sizing: border-box;
 }
+/* ponytail: themed scrollbars. The UA default is a bright white bar that
+   clashes with the dark UI — style it once globally (webkit pseudo-elements +
+   the spec scrollbar-color for Firefox). Hidden-on-purpose bars (.sx-hlbody)
+   keep their own none/none rules, which win on specificity. */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--muted) transparent;
+}
+::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+::-webkit-scrollbar-thumb {
+	background: var(--muted);
+	border: 2px solid var(--bg);
+	border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+	background: #7a8898;
+}
+::-webkit-scrollbar-corner {
+	background: transparent;
+}
 html,
 body {
 	height: 100%;
@@ -622,7 +648,6 @@ pre.diff .ctx {
 }
 /* read-only diff preview inside the permission modal */
 #modal .card.wide {
-	width: min(1500px, 96vw);
 	max-height: 92vh;
 }
 #modal .sxs .sx-body {
@@ -806,14 +831,47 @@ textarea:focus {
 	justify-content: center;
 	z-index: 50;
 }
+#modal-wrap {
+	position: relative;
+	width: min(640px, 94vw);
+}
+/* ponytail: widen the wrapper to match a .wide card so the x button and diff
+   previews still track the card edge. :has() keys the parent off the card's
+   class without touching the 3 JS spots that toggle .wide. */
+#modal-wrap:has(.card.wide) {
+	width: min(1500px, 96vw);
+}
 #modal .card {
 	background: var(--panel);
 	border: 1px solid var(--border);
 	border-radius: var(--r);
 	padding: 16px;
-	width: min(640px, 94vw);
+	width: 100%;
 	max-height: 86vh;
 	overflow: auto;
+}
+.modal-x {
+	position: absolute;
+	top: -11px;
+	right: -11px;
+	width: 24px;
+	height: 24px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: 1px solid var(--border);
+	border-radius: 50%;
+	background: var(--panel);
+	color: var(--muted);
+	font-size: 15px;
+	line-height: 1;
+	cursor: pointer;
+	z-index: 3;
+}
+.modal-x:hover {
+	color: var(--accent);
+	border-color: var(--accent);
 }
 #modal h3 {
 	margin: 0 0 10px;
@@ -1293,4 +1351,194 @@ textarea:focus-visible,
 		width: 98vw;
 		max-height: 92vh;
 	}
+}
+
+/* ---- z.ai usage bar (persistent, below header) ---- */
+#usagebar {
+	display: none;
+	flex: 0 0 auto;
+	gap: 16px;
+	align-items: center;
+	padding: 4px 12px;
+	background: var(--panel);
+	border-bottom: 1px solid var(--border);
+	overflow-x: auto;
+	cursor: pointer;
+}
+#usagebar:hover {
+	background: var(--panel2);
+}
+.ub-item {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 0 0 auto;
+	font-size: 12px;
+}
+.ub-lbl {
+	color: var(--muted);
+	white-space: nowrap;
+	max-width: 140px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.ub-track {
+	width: 80px;
+	height: 5px;
+	background: #00000060;
+	border: 1px solid var(--border);
+	border-radius: var(--r);
+	overflow: hidden;
+}
+.ub-fill {
+	height: 100%;
+	transition: width 0.3s ease;
+}
+.ub-fill.lo {
+	background: var(--ok);
+}
+.ub-fill.mid {
+	background: var(--warn);
+}
+.ub-fill.hi {
+	background: var(--err);
+}
+
+/* ---- z.ai usage modal (Usage button) ---- */
+.um-meta {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	color: var(--muted);
+	font-size: 12px;
+	margin: 0 0 12px;
+}
+.um-meta .um-refresh {
+	margin-left: auto;
+}
+.um-tier {
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	font-size: 11px;
+	font-weight: 700;
+	color: var(--accent);
+	border: 1px solid var(--accent);
+	border-radius: 999px;
+	padding: 1px 8px;
+}
+.um-refresh {
+	background: var(--panel2);
+	color: var(--text);
+	border: 1px solid var(--border);
+	border-radius: var(--r);
+	padding: 2px 8px;
+	cursor: pointer;
+	font-size: 12px;
+}
+.um-refresh:hover {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+.um-bar {
+	margin-bottom: 12px;
+}
+.um-sub {
+	color: var(--muted);
+	font-size: 11px;
+	margin: -2px 0 4px;
+}
+.um-details {
+	color: var(--muted);
+	font-size: 11px;
+	margin-top: 4px;
+	font-family: ui-monospace, Menlo, Consolas, monospace;
+	overflow-wrap: anywhere;
+}
+.um-head {
+	display: flex;
+	justify-content: space-between;
+	gap: 10px;
+	font-size: 13px;
+	margin-bottom: 4px;
+}
+.um-lbl {
+	color: var(--text);
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+.um-val {
+	color: var(--muted);
+	font-family: ui-monospace, Menlo, Consolas, monospace;
+	white-space: nowrap;
+}
+.um-track {
+	height: 8px;
+	background: #00000060;
+	border: 1px solid var(--border);
+	border-radius: var(--r);
+	overflow: hidden;
+}
+.um-fill {
+	height: 100%;
+	transition: width 0.3s ease;
+}
+.um-fill.lo {
+	background: var(--ok);
+}
+.um-fill.mid {
+	background: var(--warn);
+}
+.um-fill.hi {
+	background: var(--err);
+}
+.um-err {
+	color: var(--err);
+}
+.um-hint {
+	color: var(--muted);
+	font-size: 13px;
+}
+.um-key {
+	width: 100%;
+	background: #00000060;
+	border: 1px solid var(--border);
+	border-radius: var(--r);
+	color: var(--text);
+	padding: 8px;
+	font-family: ui-monospace, Menlo, Consolas, monospace;
+	font-size: 13px;
+	margin-bottom: 8px;
+}
+.um-raw {
+	margin-top: 8px;
+	background: #00000060;
+	border: 1px solid var(--border);
+	border-radius: var(--r);
+}
+.um-raw > summary {
+	list-style: none;
+	cursor: pointer;
+	padding: 6px 10px;
+	color: var(--muted);
+	font-size: 12px;
+}
+.um-raw > summary::-webkit-details-marker {
+	display: none;
+}
+.um-raw > summary::before {
+	content: "\25b8 ";
+}
+.um-raw[open] > summary::before {
+	content: "\25be ";
+}
+.um-raw pre {
+	margin: 0;
+	padding: 10px;
+	font-family: ui-monospace, Menlo, Consolas, monospace;
+	font-size: 12px;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	max-height: 40vh;
+	overflow: auto;
+	color: var(--text);
 }
