@@ -9,6 +9,23 @@
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-06-23 — docs: verify RPC/SDK coverage + tidy design spec
+
+Audited the implementation against the official pi docs and recorded the
+result so a future session doesn't re-audit.
+
+- **`AGENTS.md`** — new "RPC coverage (verified 2026-06-23)" section: RPC is
+  the correct surface (not the in-process SDK — would break zero-dep + process
+  isolation); all wire keys verified correct (`follow_up` snake_case,
+  full Extension-UI protocol handled, `contextUsage:null` handled); two events
+  deliberately unhandled (`auto_retry_end`, `extension_error`); nothing custom
+  is replaceable by a native command (`/api/sessions` dir-scan is forced — RPC
+  has no `list_sessions`).
+- **`docs/design.md`** — restructured: added an H1 + blockquote, promoted
+  sections from ordered-list items to real `##` headings, turned the run-on
+  Color Palette paragraph into a proper bullet list with inline-code hex
+  values. Content unchanged.
+
 ### 2026-06-23 — feat(webui): session list — resume an older session
 
 Browse and resume past sessions for the current project. Previously the webui

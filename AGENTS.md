@@ -179,6 +179,31 @@ is the dev loop. Don't introduce a build step without strong reason.
 11. **`md.js` must load before `app.js`.** Both `index.html` (`<script src="md.js">` then `app.js`) and `server.js` (`STATIC` whitelist) must list `md.js`. app.js calls `md()`/`esc()` at runtime with no local definitions — they're globals set by md.js's IIFE. md.js is `require`-able in Node (exports `{md, esc}`); exercise it with `node -e "const{md}=require('./md.js');console.log(md('**x**'))"` after touching the parser.
 12. **`esc()` is shared, not duplicated.** It lives ONLY in `md.js` (static entity map, null-safe). app.js has ~22 call sites that use the global. Don't re-add a local `esc` to app.js — it would silently shadow and drift (the old copy returned `"null"` for null input; the shared one returns `""`).
 
+## RPC coverage (verified 2026-06-23)
+
+Checked `app.js`/`server.js`/extensions against
+<https://pi.dev/docs/latest/sdk> + <https://pi.dev/docs/latest/rpc>. Nothing
+to change — don't re-audit without a pi version bump.
+
+- **Use RPC, not the SDK.** The SDK docs cover `createAgentSession()` /
+  in-process `AgentSession`; we deliberately use `pi --mode rpc` (subprocess)
+  instead — it keeps the zero-dependency constraint, the process isolation,
+  and the crash-restart backoff in `server.js`. Migrating would break both.
+- **Wire keys are correct.** `follow_up` is snake_case (gotcha #1); the
+  composer maps mode→`steer`/`follow_up`/`prompt`; `contextUsage:null` after
+  compaction already degrades to `—`; all Extension-UI protocol methods
+  (4 dialog + 5 fire-and-forget) are handled in `uiRequest()`.
+- **Two events deliberately unhandled:** `auto_retry_end` (only
+  `auto_retry_start` is toasted) and `extension_error`. Add if you want
+  retry-recovery / extension-throw surfacing.
+- **No custom piece is replaceable by a native command.** `/api/sessions` +
+  `sessionDirFor` (`server.js`) looks reimplementable, but RPC has **no
+  `list_sessions`** — only `new_session`/`switch_session`/`set_session_name`,
+  so the JSONL dir-scan is forced. `ask_user_question` stays shadowed: the
+  stock tool renders via `ctx.ui.custom()`, a no-op in RPC.
+
+---
+
 ## Manual smoke tests (quick sanity)
 
 - **Editable transcript diff** — ask for a small edit; edit the right pane →
