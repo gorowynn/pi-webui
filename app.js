@@ -15,6 +15,10 @@ const actLabel = $("act-label");
 
 let streaming = false;
 let commands = []; // [{name, description, source}]
+let availableModels = []; // from get_available_models; drives model + tier selects
+// subagent live-view density, set from the sidebar toggle. localStorage hint
+// mirrors the pi:model / pi:todos idiom; default "full".
+let subagentDensity = localStorage.getItem("pi:sa-density") || "full";
 const toolBlocks = new Map(); // toolCallId -> {head, out}
 let cur = null; // {bubble, textPar, textBuf, thinkEl, thinkBuf}
 // ponytail: the tool currently awaiting/under a permission prompt. Set at
@@ -71,8 +75,19 @@ transcript.addEventListener("scroll", () => {
 	else if (top + 4 < lastScrollTop) pinned = false;
 	lastScrollTop = top;
 });
+// ponytail: coalesce autoscroll to ONE rAF. It's called from every streaming
+// hot site (renderText, renderThink, toolBlock, tool_execution_end); each
+// synchronous scrollHeight read forces layout, so a burst of N onmessage tasks
+// = N forced layouts in a frame (the [Violation] forced-reflow + slow 'message'
+// handler). One rAF collapses them to one layout/scroll per frame. scrollDown()
+// (explicit snap-to-bottom) stays synchronous — it's one-off, never in a burst.
+let scrollRaf = 0;
 function autoscroll() {
-	if (pinned) scrollDown();
+	if (scrollRaf) return;
+	scrollRaf = requestAnimationFrame(() => {
+		scrollRaf = 0;
+		if (pinned) transcript.scrollTop = transcript.scrollHeight;
+	});
 }
 
 function addUser(text) {
@@ -118,6 +133,8 @@ function newAssistantBubble() {
 		thinkLabel: null,
 		thinkCount: null,
 		thinkBuf: "",
+		content: [], // raw {type:"text"|"thinking", text/thinking} blocks, rendered once at message_end
+		_blk: null, // block currently being filled by *_delta
 	};
 	return cur;
 }
@@ -134,15 +151,77 @@ function renderText() {
 		autoscroll();
 	}
 }
-// ponytail: assistant text is NOT painted incrementally — it commits once
-// fully received (text_end / message_end) for a clean final render, while the
-// thinking block above it still streams live via renderThink(). Guarded so a
-// missing/empty buffer (or a turn with no text) is a no-op.
-function commitText() {
-	if (!cur || !cur.textBuf) return;
-	ensureTextPar();
-	cur.textPar.innerHTML = md(cur.textBuf);
-	autoscroll();
+// ponytail: drop blocks with no text/thinking — a text_start that never got a
+// delta, or an assistant turn that went straight to tool calls, would leave an
+// empty bubble otherwise. Shared by live (finalizeBubble) and reload
+// (renderMessage) so both suppress empty messages identically.
+function nonEmptyContent(content) {
+	return (content || []).filter(
+		(b) =>
+			(b.type === "text" && b.text) || (b.type === "thinking" && b.thinking),
+	);
+}
+// ponytail: the ONE render path for assistant text + thinking blocks, shared
+// by the live stream (message_end → finalizeBubble) and reload (renderMessage).
+// Text is NOT streamed live — it renders once, fully formed, at message_end —
+// so md() gets identical input live and after reload: no more "renders broken
+// until reload". Thinking still streams live above; this just (re)renders its
+// finalized form. Mirrors what renderMessage used to inline.
+function renderAssistantContent(content) {
+	for (const b of nonEmptyContent(content)) {
+		if (b.type === "text") {
+			cur.textBuf = b.text || "";
+			ensureTextPar();
+			renderText();
+			cur.textPar = null;
+			cur.textBuf = "";
+		} else if (b.type === "thinking") {
+			cur.thinkBuf = b.thinking || "";
+			ensureThink(false);
+			renderThink(true);
+			cur.thinkDetails = null;
+			cur.thinkLabel = null;
+			cur.thinkCount = null;
+			cur.thinkEl = null;
+			cur.thinkBuf = "";
+		}
+	}
+}
+// definitive render into cur's bubble, replacing any live-streamed nodes (keeps
+// the .role label). Called from message_end (normal, with pi's AUTHORITATIVE
+// message.content) and agent_end (safety net, falls back to accumulated
+// cur.content if message_end never fired).
+//
+// ponytail: the authoritative source matters. message_end carries the final
+// AssistantMessage pi assembles server-side — the SAME object it persists and
+// returns via get_messages (reload). Deltas re-accumulated in the browser are
+// lossy/corruptible in the SSE transport (dropped/merged words, stripped
+// spaces — the "renders broken until reload" bug). Rendering from
+// payload.message.content makes live read byte-identical input to reload, so
+// the two can't diverge regardless of transport hiccups.
+function finalizeBubble(content) {
+	if (!cur) return;
+	const src = content != null ? content : cur.content;
+	// nothing renderable (tool-only / truly-empty turn) — drop the whole message
+	// so no stray "assistant" label is left. cur.bubble is .bubble; .msg wraps it.
+	if (!nonEmptyContent(src).length) {
+		const msg = cur.bubble.parentElement;
+		if (msg) msg.remove();
+		return;
+	}
+	const role = cur.bubble.querySelector(".role");
+	cur.bubble.innerHTML = "";
+	if (role) cur.bubble.appendChild(role);
+	// reset per-block cursors so renderAssistantContent creates FRESH nodes instead
+	// of painting into the live-streamed (now detached) ones it still points at.
+	cur.textPar = null;
+	cur.textBuf = "";
+	cur.thinkEl = null;
+	cur.thinkDetails = null;
+	cur.thinkLabel = null;
+	cur.thinkCount = null;
+	cur.thinkBuf = "";
+	renderAssistantContent(src);
 }
 // ponytail: thinking-block lifecycle. The <details> carries its own
 // state: the .thinking class swaps the summary indicator from caret to
@@ -211,16 +290,14 @@ function renderThink(force) {
 		autoscroll();
 	}
 }
-// ponytail: coalesce per-token paints to one rAF. md() parses the whole
-// buffer each call, so per-token renderText is O(n²) and freezes long
-// answers. Delta handlers schedule; _end/finalize paths still render
-// directly for an immediate final paint.
+// ponytail: coalesce thinking-delta paints to one rAF. Only thinking streams
+// live now (text renders once at message_end), so this just feeds renderThink;
+// thinking_end/finalize paint directly for an immediate final paint.
 let renderRaf = 0;
 function scheduleRender() {
 	if (renderRaf) return;
 	renderRaf = requestAnimationFrame(() => {
 		renderRaf = 0;
-		renderText(); // both no-op unless their buffer/element exists
 		renderThink();
 	});
 }
@@ -242,6 +319,116 @@ function toolBlock(id, name, args, running) {
 	if (args != null) wrap.args = args;
 	autoscroll();
 	return wrap;
+}
+
+// ---- subagent live view ----
+// The `subagent` tool streams its live state via partialResult.details
+// {mode, results:[{agent, model, turns, exitCode, messages:[...child tool calls +
+// partial output...], usage}]}. agent-session.js forwards partialResult whole, so
+// everything below is already arriving on tool_execution_update — this just renders
+// it instead of dropping it. Same details land once more at tool_execution_end.
+// ponytail: keep it compact — collapsed shows agent+model+status+recent child
+// actions; the density toggle (sidebar) trims to status-only. See docs/plans.md.
+const SUBAGENT_TIERS = {
+	// model id prefix → tier label + color (matches subagent.ts TIERS defaults)
+	"glm-5.2": { label: "capable", color: "var(--accent)" },
+	"glm-5-turbo": { label: "implement", color: "var(--cyan)" },
+	"glm-5.1": { label: "implement", color: "var(--cyan)" },
+	"glm-4.5-air": { label: "lookup", color: "var(--muted)" },
+};
+function tierOf(model) {
+	if (!model) return null;
+	for (const k in SUBAGENT_TIERS)
+		if (model.includes(k)) return SUBAGENT_TIERS[k];
+	return null;
+}
+function describeChildCall(name, args) {
+	if (name === "bash")
+		return "$ " + String((args && args.command) || "").slice(0, 50);
+	if (name === "read")
+		return "read " + ((args && (args.path || args.file_path)) || "");
+	if (name === "edit" || name === "write")
+		return name + " " + ((args && args.path) || "");
+	if (name === "grep" || name === "find")
+		return name + " " + ((args && args.pattern) || (args && args.path) || "");
+	if (name === "ls") return "ls " + ((args && args.path) || ".");
+	return name || "?";
+}
+// render one child's messages as a compact stream of recent actions + any text
+function childItems(messages, limit) {
+	const items = [];
+	for (const msg of messages || []) {
+		if (msg.role !== "assistant") continue;
+		for (const part of msg.content || []) {
+			if (part.type === "toolCall")
+				items.push({
+					k: "call",
+					t: describeChildCall(part.name, part.arguments),
+				});
+			else if (part.type === "text" && part.text && part.text.trim())
+				items.push({ k: "text", t: part.text });
+		}
+	}
+	const out = limit ? items.slice(-limit) : items;
+	return out
+		.map((it) =>
+			it.k === "call"
+				? `<div class="sa-call">→ ${esc(it.t)}</div>`
+				: `<div class="sa-text">${esc(it.t.split("\n").slice(0, 3).join(" ").slice(0, 120))}</div>`,
+		)
+		.join("");
+}
+function statusIcon(r) {
+	if (r.exitCode === -1) return "⏳";
+	if (
+		r.exitCode !== 0 ||
+		r.stopReason === "error" ||
+		r.stopReason === "aborted"
+	)
+		return "✗";
+	return "✓";
+}
+// density: "full" = child actions + text; "compact" = status + actions only
+function renderSubagentView(host, details, density) {
+	if (!details || !details.results || !details.results.length) {
+		host.textContent = "";
+		return;
+	}
+	const mode = details.mode || "single";
+	let html = `<div class="sa sa-${esc(mode)}">`;
+	if (mode === "parallel") {
+		const done = details.results.filter((r) => r.exitCode !== -1).length;
+		const run = details.results.length - done;
+		html += `<div class="sa-sum">${done}/${details.results.length} done${run ? `, ${run} running` : ""}</div>`;
+	} else if (mode === "chain") {
+		const ok = details.results.filter((r) => r.exitCode === 0).length;
+		html += `<div class="sa-sum">chain ${ok}/${details.results.length} steps</div>`;
+	}
+	const itemLimit = density === "compact" ? 4 : 8;
+	for (const r of details.results) {
+		const t = tierOf(r.model);
+		const tier = t
+			? ` <span class="sa-tier" style="color:${t.color}">${esc(t.label)}</span>`
+			: "";
+		const model = r.model
+			? ` <span class="sa-model">${esc(r.model.split("/").pop())}</span>`
+			: "";
+		const turns = r.turns ? ` <span class="sa-turns">${r.turns}t</span>` : "";
+		html += `<div class="sa-row"><span class="sa-ic">${statusIcon(r)}</span><span class="sa-agent">${esc(r.agent)}</span>${tier}${model}${turns}</div>`;
+		html += `<div class="sa-items">${childItems(r.messages, itemLimit)}</div>`;
+	}
+	html += "</div>";
+	host.innerHTML = html;
+}
+// parse the agent/mode from a subagent tool's args for the live head
+function subagentHead(args) {
+	if (!args) return null;
+	if (args.agent) return args.agent;
+	if (Array.isArray(args.tasks) && args.tasks.length)
+		return `parallel (${args.tasks.length})`;
+	if (Array.isArray(args.chain) && args.chain.length)
+		return `chain (${args.chain.length})`;
+	return null;
 }
 
 // ---- edit diff: LCS line diff from oldText/newText args ----
@@ -636,6 +823,13 @@ let modalFree = false; // true = no pi latch pending; safe to close freely (Usag
 // card. Focus moves into the modal on open and back to the trigger on close.
 function onModalKey(e) {
 	if (e.key === "Escape") {
+		// settings drawer closes first (it's non-latching); only if it's closed do
+		// we hand Escape to the modal's pi-latch dismiss path.
+		if (settingsEl.classList.contains("open")) {
+			e.preventDefault();
+			closeSettings();
+			return;
+		}
 		e.preventDefault();
 		dismissModal();
 		return;
@@ -1793,24 +1987,11 @@ function renderMessage(msg) {
 				.join("\n");
 		addUser(txt);
 	} else if (msg.role === "assistant") {
-		newAssistantBubble();
-		for (const b of msg.content || []) {
-			if (b.type === "text") {
-				cur.textBuf = b.text;
-				ensureTextPar();
-				renderText();
-				cur.textPar = null;
-				cur.textBuf = "";
-			} else if (b.type === "thinking") {
-				cur.thinkBuf = b.thinking || "";
-				ensureThink(false);
-				renderThink(true);
-				cur.thinkDetails = null;
-				cur.thinkLabel = null;
-				cur.thinkCount = null;
-				cur.thinkEl = null;
-				cur.thinkBuf = "";
-			}
+		// suppress empty assistant messages (tool-only / blank) — parity with the
+		// live path's finalizeBubble, which also drops them. No bubble = no label.
+		if (nonEmptyContent(msg.content).length) {
+			newAssistantBubble();
+			renderAssistantContent(msg.content);
 		}
 		cur = null;
 	} else if (msg.role === "toolResult") {
@@ -1862,24 +2043,34 @@ function handle(payload) {
 			curToolArgs = null;
 			break;
 		case "agent_end":
+			// safety net: render if message_end never fired (broken stream).
+			// finalizeBubble drops an empty bubble, so this can't leave a stray label.
+			// setStreaming(false) below then nulls cur.
+			if (cur) finalizeBubble();
 			setStreaming(false);
 			setActivity("ready", false);
+			awaitingTurnStats = true; // O3-MEASUREMENT: log cache rate for this turn
 			break;
 
 		case "message_start":
-			if (payload.message && payload.message.role === "assistant")
-				cur = newAssistantBubble();
-			else if (payload.message && payload.message.role === "user") {
-				/* server echoes? skip */
-			}
+			// ponytail: do NOT create the bubble eagerly. A turn that goes straight to
+			// tool calls (or ends empty) would leave a bare "assistant" label.
+			// Creation is lazy: message_update only builds one when real text/thinking
+			// arrives (the !cur guard there). User-role echoes are ignored too.
 			break;
 		case "message_end":
-			// finalize current text/think buffers
-			if (cur) {
-				commitText(); // safety paint in case text_end didn't fire
-				renderThink(true);
-				finalizeThink();
-			}
+			// authoritative render: payload.message is pi's final, server-assembled
+			// AssistantMessage — identical to what get_messages returns (reload).
+			// Render from IT, not the browser-re-accumulated deltas (lossy in the SSE
+			// transport): live and reload now read the same bytes and can't diverge.
+			// The live thinking <details> is swapped for a finalized one here too
+			// (collapsed by default → invisible).
+			if (cur)
+				finalizeBubble(
+					payload.message && Array.isArray(payload.message.content)
+						? payload.message.content
+						: null,
+				);
 			cur = null;
 			break;
 
@@ -1895,50 +2086,47 @@ function handle(payload) {
 			)
 				cur = newAssistantBubble();
 			if (e.type === "text_start") {
-				// ponytail: a message can carry SEVERAL text blocks (text →
-				// thinking → text). Mirror renderMessage, which renders EVERY
-				// stored text block — that's why a reload "fixes" md that streamed
-				// in broken. Two guarantees:
-				//  1) FLUSH any uncommitted prior block first. The deferred render
-				//     parks a block's text in cur.textBuf until text_end commits it;
-				//     if a block never gets a text_end (some providers drop it
-				//     between consecutive blocks), its text is still sitting here and
-				//     the reset below would throw it away. message_end's safety
-				//     commit only rescues the LAST dangling block — one wiped by an
-				//     intervening text_start was lost until reload. No-op for an
-				//     already-committed block (re-paints the same node); skipped for
-				//     the first block (empty buf).
-				//  2) Drop the prior paragraph so this block gets its own node —
-				//     else its commit overwrites the earlier one in place and its
-				//     words vanish until a reload.
-				if (cur.textBuf) commitText();
-				if (cur.textPar) cur.textPar = null;
-				cur.textBuf = "";
+				// ponytail: text does NOT render live (user doesn't need it; only
+				// thinking streams). Accumulate raw blocks; the ONE definitive md()
+				// render happens at message_end via renderAssistantContent —
+				// identical to reload, so they can't diverge. cur._blk is the block
+				// currently being filled; survives a missing text_end.
+				cur._blk = { type: "text", text: "" };
+				cur.content.push(cur._blk);
 				setActivity("writing…", true);
 			} else if (e.type === "text_delta") {
-				cur.textBuf += e.delta || "";
-				// deferred render: assistant text paints only once fully received
-				// (text_end / message_end). The thinking block still streams live.
+				if (!cur._blk || cur._blk.type !== "text") {
+					cur._blk = { type: "text", text: "" };
+					cur.content.push(cur._blk);
+				}
+				cur._blk.text += e.delta || "";
 			} else if (e.type === "text_end") {
-				if (e.content != null) cur.textBuf = e.content;
-				commitText();
+				if (cur._blk && cur._blk.type === "text" && e.content != null)
+					cur._blk.text = e.content;
+				cur._blk = null;
 			} else if (e.type === "thinking_start") {
-				// multiple thinking blocks: each gets its own <details> (same
-				// multi-block fix as text_start — don't overwrite a finalized one).
+				// multiple thinking blocks: each gets its own live <details>.
 				if (cur.thinkEl) {
 					cur.thinkEl = null;
 					cur.thinkDetails = null;
 					cur.thinkLabel = null;
 					cur.thinkCount = null;
 				}
+				cur._blk = { type: "thinking", thinking: "" };
+				cur.content.push(cur._blk);
 				ensureThink(true);
 				cur.thinkBuf = "";
 				setActivity("thinking…", true);
 			} else if (e.type === "thinking_delta") {
 				ensureThink(true);
 				cur.thinkBuf += e.delta || "";
+				if (cur._blk && cur._blk.type === "thinking")
+					cur._blk.thinking += e.delta || "";
 				scheduleRender();
 			} else if (e.type === "thinking_end") {
+				if (cur._blk && cur._blk.type === "thinking" && e.content != null)
+					cur._blk.thinking = e.content;
+				cur._blk = null;
 				if (e.content != null) {
 					ensureThink(true);
 					cur.thinkBuf = e.content;
@@ -1954,6 +2142,17 @@ function handle(payload) {
 
 		case "tool_execution_start": {
 			toolBlock(payload.toolCallId, payload.toolName, payload.args, true);
+			// subagent: show the agent/mode + an empty live view immediately, so the
+			// box reads as "running scout (lookup)" before the first update lands.
+			if (payload.toolName === "subagent") {
+				const w = toolBlocks.get(payload.toolCallId);
+				if (w)
+					renderSubagentView(
+						w.out,
+						{ mode: "single", results: [] },
+						subagentDensity,
+					);
+			}
 			// record the current tool for the permission-modal diff — fires right
 			// before THIS tool's safeguard select, so it's always the right one.
 			curToolName = payload.toolName || null;
@@ -1974,13 +2173,21 @@ function handle(payload) {
 		}
 		case "tool_execution_update": {
 			const w = toolBlocks.get(payload.toolCallId);
-			if (w && payload.partialResult) {
-				const t = (payload.partialResult.content || [])
-					.filter((b) => b.type === "text")
-					.map((b) => b.text)
-					.join("\n");
-				w.out.textContent = t;
-			}
+			if (!w || !payload.partialResult) break;
+			// subagent: render the live details (child tool calls, parallel/chain
+			// progress, per-result status). The generic text path below still fills
+			// in the final "(running…)" / partial text as a fallback.
+			if (payload.toolName === "subagent" && payload.partialResult.details)
+				renderSubagentView(
+					w.out,
+					payload.partialResult.details,
+					subagentDensity,
+				);
+			const t = (payload.partialResult.content || [])
+				.filter((b) => b.type === "text")
+				.map((b) => b.text)
+				.join("\n");
+			if (payload.toolName !== "subagent") w.out.textContent = t;
 			break;
 		}
 		case "tool_execution_end": {
@@ -2040,8 +2247,25 @@ function handle(payload) {
 						w.out.appendChild(rt);
 					}
 				} else {
-					w.out.textContent = t;
-					if (t.length > 500) w.el.open = false;
+					// subagent: render the final details (per-task status + usage). The
+					// text `t` is the parent-facing summary (already in details for
+					// single/parallel); show it as a footnote below the live view.
+					if (
+						payload.toolName === "subagent" &&
+						payload.result &&
+						payload.result.details
+					) {
+						renderSubagentView(w.out, payload.result.details, subagentDensity);
+						if (t) {
+							const rt = document.createElement("div");
+							rt.className = "sa-foot";
+							rt.textContent = t;
+							w.out.appendChild(rt);
+						}
+					} else {
+						w.out.textContent = t;
+						if (t.length > 500) w.el.open = false;
+					}
 				}
 			}
 			// clear the per-tool snapshot now that this tool is done — prevents a
@@ -2175,6 +2399,12 @@ function refreshHealth() {
 function refreshStats() {
 	api({ type: "get_session_stats", id: "sb-stats" });
 }
+// O3-MEASUREMENT: per-turn cache-rate logger. awaitingTurnStats is armed at
+// agent_end (turn boundary); the next sb-stats snapshot logs cacheRead as a % of
+// input tokens, then clears. Run a steady multi-turn conversation with an active
+// todo list, read [O3] lines in the console, apply the discipline.ts fix, then
+// compare. Remove this block once the A/B is done. See docs/plans.md §O3.
+let awaitingTurnStats = false;
 // ---- SSE ----
 const es = new EventSource("/api/events");
 es.onopen = () => {
@@ -2267,6 +2497,16 @@ es.onmessage = (ev) => {
 				populateModels(p.data.models);
 			} else if (p.id === "sb-stats" && p.data) {
 				const t = p.data.tokens || {};
+				if (awaitingTurnStats) {
+					// O3-MEASUREMENT: post-turn cache snapshot (baseline vs post-fix).
+					awaitingTurnStats = false;
+					if (o3LogEnabled) {
+						const inp = t.input || 0;
+						console.log(
+							`[O3] turn-end: input=${inp} cacheRead=${t.cacheRead || 0} cacheWrite=${t.cacheWrite || 0} cacheHit=${inp ? Math.round(((t.cacheRead || 0) / inp) * 100) : 0}%`,
+						);
+					}
+				}
 				sb.tok.textContent = `${fmt(t.input)}↓ ${fmt(t.output)}↑`;
 				sb.cache.textContent = `${fmt(t.cacheRead)}↓ ${fmt(t.cacheWrite)}↑`;
 				sb.cost.textContent =
@@ -2340,20 +2580,22 @@ function applyCurrentModel() {
 	refreshSbModel();
 }
 function populateModels(models) {
+	availableModels = Array.isArray(models) ? models : [];
 	modelSel.innerHTML = "";
-	if (!models.length) {
+	if (!availableModels.length) {
 		const o = document.createElement("option");
 		o.textContent = "no models";
 		modelSel.appendChild(o);
 		return;
 	}
-	models.forEach((m) => {
+	availableModels.forEach((m) => {
 		const o = document.createElement("option");
 		o.value = JSON.stringify({ provider: m.provider, modelId: m.id });
 		o.textContent = (m.name || m.id) + " · " + m.provider;
 		modelSel.appendChild(o);
 	});
 	applyCurrentModel();
+	populateTierSelects();
 }
 modelSel.onchange = () => {
 	refreshSbModel();
@@ -2366,6 +2608,106 @@ modelSel.onchange = () => {
 };
 $("models-btn").onclick = () =>
 	api({ type: "get_available_models", id: "init-models" });
+
+// ---- settings sidebar ----
+// ponytail: fixed right drawer + backdrop. Open via ⚙; close via ✕, backdrop
+// click, or Esc. The relocated selects keep their IDs, so their onchange
+// handlers (model/think/pony) work unchanged from the old header position.
+const settingsEl = $("settings");
+const settingsBack = $("settings-back");
+function openSettings() {
+	settingsEl.classList.add("open");
+	settingsBack.classList.add("open");
+	settingsEl.setAttribute("aria-hidden", "false");
+}
+function closeSettings() {
+	settingsEl.classList.remove("open");
+	settingsBack.classList.remove("open");
+	settingsEl.setAttribute("aria-hidden", "true");
+}
+$("settings-btn").onclick = openSettings;
+$("settings-close").onclick = closeSettings;
+settingsBack.onclick = closeSettings;
+// density toggle → drives renderSubagentView; persist as a hint.
+const saDensitySel = $("sa-density");
+if (subagentDensity) saDensitySel.value = subagentDensity;
+saDensitySel.onchange = () => {
+	subagentDensity = saDensitySel.value;
+	localStorage.setItem("pi:sa-density", subagentDensity);
+};
+
+// ---- subagent tier-model selects ----
+// Defaults mirror subagent.ts TIERS exactly. The server holds the truth
+// (~/.pi/agent/subagent-tiers.json, re-read by the extension each call); we load
+// it, preselect, and POST on change. localStorage is only a reload hint.
+const TIER_DEFAULTS = {
+	capable: "zai/glm-5.2",
+	implement: "zai/glm-5-turbo",
+	lookup: "zai/glm-4.5-air",
+};
+const tierSels = {
+	capable: $("tier-capable"),
+	implement: $("tier-implement"),
+	lookup: $("tier-lookup"),
+};
+// build each select from availableModels once that list arrives; preselect the
+// current config value (or the default). Called from populateModels().
+function populateTierSelects() {
+	for (const tier of Object.keys(tierSels)) {
+		const sel = tierSels[tier];
+		const cur = sel.dataset.model || TIER_DEFAULTS[tier];
+		sel.innerHTML = "";
+		for (const m of availableModels) {
+			const id = m.provider + "/" + m.id;
+			const o = document.createElement("option");
+			o.value = id;
+			o.textContent = (m.name || m.id) + " · " + m.provider;
+			if (id === cur) o.selected = true;
+			sel.appendChild(o);
+		}
+		if (!availableModels.length) {
+			const o = document.createElement("option");
+			o.textContent = TIER_DEFAULTS[tier];
+			sel.appendChild(o);
+		}
+	}
+}
+async function loadTierConfig() {
+	try {
+		const r = await fetch("/api/subagent-tiers").then((r) => r.json());
+		if (!r || !r.ok || !r.tiers) return;
+		for (const tier of Object.keys(tierSels)) {
+			const m = r.tiers[tier] || TIER_DEFAULTS[tier];
+			tierSels[tier].dataset.model = m;
+			localStorage.setItem("pi:tier-" + tier, m);
+		}
+		populateTierSelects();
+	} catch {
+		/* non-fatal — selects keep defaults */
+	}
+}
+loadTierConfig();
+function saveTierConfig() {
+	const tiers = {};
+	for (const tier of Object.keys(tierSels)) {
+		const m = tierSels[tier].value;
+		tiers[tier] = m;
+		localStorage.setItem("pi:tier-" + tier, m);
+	}
+	fetch("/api/subagent-tiers", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(tiers),
+	}).catch(() => {}); // fire-and-forget; the extension re-reads on next call
+}
+for (const tier of Object.keys(tierSels))
+	tierSels[tier].onchange = saveTierConfig;
+// O3 cache-logger toggle: gates the per-turn [O3] console log.
+const o3LogSel = $("o3-log");
+o3LogSel.checked = localStorage.getItem("pi:o3-log") === "1";
+o3LogSel.onchange = () =>
+	localStorage.setItem("pi:o3-log", o3LogSel.checked ? "1" : "0");
+const o3LogEnabled = o3LogSel.checked;
 
 // ---- composer ----
 function autosize() {

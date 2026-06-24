@@ -86,6 +86,23 @@ is the dev loop. Don't introduce a build step without strong reason.
   args verbatim), browser→tool via `extension_ui_response{value}`.
 - `safeguard.ts` — **Per-tool allow/ask/deny gate** for *every* tool call.
   Config at `~/.pi/agent/safeguard.json` (re-read every call). First match wins.
+- `subagent.ts` — **Tier-based subagent tool** (`subagent`). Ports pi's
+  `examples/extensions/subagent` core, stripped to what `--mode rpc` uses: no
+  TUI rendering (the webui renders the live `details` itself — see gotcha #14),
+  no filesystem agent discovery (tiers are in-code config). Registers a
+  `subagent` tool the parent LLM calls to delegate; each call spawns an isolated
+  `pi --mode json -p --no-session --model <tier>` subprocess. Two wins at once:
+  cost routing (tier→model) + context savings (the parent never ingests the
+  subagent's tool I/O — only its capped ≤50KB final text = roadmap O2,
+  structurally). Modes: single / parallel / chain (`{previous}`). **Tier models
+  are user-tunable from the sidebar**: `execute()` re-reads
+  `~/.pi/agent/subagent-tiers.json` (`{capable,implement,lookup}`) each call
+  (safeguard pattern) and overrides the `TIERS` defaults — no restart needed.
+  Server endpoint `GET/POST /api/subagent-tiers` reads/writes that file. Default
+  tiers: capable `zai/glm-5.2` (planner/reviewer/debugger), implement
+  `zai/glm-5-turbo` (implementer), lookup `zai/glm-4.5-air` (scout/summarizer).
+  Edit the `TIERS` table in-file to change agents/tools/prompts; use the
+  sidebar to change models. Wired from `index.ts`.
 - `webui.ts` — The `/webui` + `/webui-stop` launcher commands. Spawns
   `server.js` detached; kills the whole tree (POSIX process group / Windows
   `taskkill /T`). `session_shutdown` tears it down.
@@ -176,28 +193,58 @@ is the dev loop. Don't introduce a build step without strong reason.
 
 11. **`md.js` must load before `app.js`.** Both `index.html` (`<script src="md.js">` then `app.js`) and `server.js` (`STATIC` whitelist) must list `md.js`. app.js calls `md()`/`esc()` at runtime with no local definitions — they're globals set by md.js's IIFE. md.js is `require`-able in Node (exports `{md, esc}`); exercise it with `node -e "const{md}=require('./md.js');console.log(md('**x**'))"` after touching the parser.
 12. **`esc()` is shared, not duplicated.** It lives ONLY in `md.js` (static entity map, null-safe). app.js has ~40 call sites that use the global. Don't re-add a local `esc` to app.js — it would silently shadow and drift (the old copy returned `"null"` for null input; the shared one returns `""`).
-13. **Assistant text is deferred-render; the `text_start` flush is load-bearing**
-    (`app.js` `handle()` → `message_update`, ~L1926). md renders broken *sometimes*
-    live but always fine after reload = a deferred-render gap, not a parser bug
-    (`md.js` is deterministic and resets `DEFS`/`fenceInfo` per call). Design:
-    each text block parks its content in `cur.textBuf` and commits once on
-    `text_end` (with a `message_end` safety net); thinking streams live via the
-    rAF-coalesced `renderThink`. The trap: `text_start` used to reset
-    `cur.textBuf = ""` unconditionally, so a block whose `text_end` never fired
-    (some providers drop it between consecutive `text → … → text` blocks) was
-    silently wiped — and `message_end` only rescues the *last* dangling block.
-    Reload "fixed" it because `renderMessage` renders **every** stored block
-    unconditionally. Fix (2026-06-24): `if (cur.textBuf) commitText();` *before*
-    the reset — no-op for an already-committed block (overwrites same node),
-    skipped for the first. **If md still renders broken after this fix**, the
-    next suspects, in order: (a) a provider emits `text_end.content` carrying
-    *whole-message* text rather than per-block text (provider quirk — log the
-    `message_update` stream to confirm); (b) `text_delta` arriving with no
-    preceding `text_start` after `cur` was nulled mid-message; (c) a new
-    assistantMessageEvent type not handled in the `message_update` switch.
-    Debug: `console.log` the raw `payload.assistantMessageEvent` sequence around
-    the broken message and compare `cur.textBuf` state to the persisted
-    `msg.content` blocks from `get_messages`.
+13. **Assistant text renders from pi's AUTHORITATIVE message, not re-accumulated
+    deltas.** (`app.js`: `finalizeBubble(payload.message.content)` at `message_end`;
+    `renderAssistantContent` shared with `renderMessage`/reload.) History: md used
+    to render broken *sometimes* live but always fine after reload. Two layers of
+    cause, fixed in two steps:
+    - **Render path (2026-06-24, first fix):** text stopped streaming live; it
+      accumulates raw blocks into `cur.content` and renders once at `message_end`
+      via `renderAssistantContent` — the same function reload uses. Killed the
+      live-vs-reload *path* divergence (missing `text_end`, whole-message
+      `text_end.content`, stray `text_delta` after `cur` nulled, …).
+    - **Data source (2026-06-24, decisive fix):** the live path still read
+      browser-re-accumulated `text_delta`s, which are LOSSY/CORRUPTIBLE in the
+      SSE transport (dropped/merged deltas → missing words; stripped spaces/
+      parens/digits → words jammed). Reload reads pi's stored message via
+      `get_messages`, so it was always clean. Root fix: `message_end` carries
+      the full final `message` (`agent-session.js` L390-410 relays it; every
+      `AssistantMessageEvent` also carries `partial` — pi-ai `types.d.ts`
+      L330-374), the SAME object pi persists. `finalizeBubble(payload.message.content)`
+      renders from THAT, so live and reload read byte-identical input and can no
+      longer diverge regardless of transport hiccups. The hand-accumulated
+      `cur.content` survives only as the `agent_end` safety-net fallback (when
+      `message_end` never fired).
+    Design notes: `finalizeBubble(content)` clears the bubble, RESETS the
+    per-block cursors (`textPar`/`thinkEl`/…) so re-render creates fresh nodes
+    instead of painting into the detached live-streamed ones, then calls
+    `renderAssistantContent`. Thinking STILL streams live (`renderThink` via the
+    rAF-coalesced `scheduleRender`) and is just re-rendered finalized at
+    `message_end` (collapsed `<details>` → invisible swap). `md.js` itself is
+    deterministic and innocent — verified by feeding it the full reload text
+    (zero words lost). **If md ever renders broken again**, it must now ALSO be
+    broken after reload (same input); if not, suspect `payload.message` being
+    absent/empty at `message_end` (check the raw event) — the `cur.content`
+    fallback would then kick in and reintroduce the old symptom.
+14. **Subagent live view reads `partialResult.details`, not `.content`.** When
+    the `subagent` tool runs it streams its whole live state
+    (`{mode, results:[{agent, model, turns, exitCode, messages:[…child tool
+    calls + partial output…], usage}]}`) via `onUpdate` → `partialResult.details`.
+    `agent-session.js` forwards `partialResult` whole, so it arrives on every
+    `tool_execution_update` — but the generic update handler used to read only
+    `.content` (the `"(running…)"` string) and discard `.details`. `app.js`
+    `renderSubagentView` now renders details at start/update/end instead.
+    **Density** is a sidebar toggle (`pi:sa-density`): `full` shows child tool
+    calls + text, `compact` trims to status + calls. If a subagent box shows only
+    text, `details` was absent (the tool isn't `subagent`, or a pi build that
+    doesn't relay `partialResult.details`).
+15. **Settings sidebar holds model/behavior + subagent tiers + dev toggles.**
+    `<aside id="settings">` (fixed right drawer; ⚙ opens, ✕/backdrop/Esc
+    closes). The model/thinking/pony selects were MOVED here from the header —
+    they keep their IDs so the existing `onchange` handlers work unchanged. The
+    3 tier selects POST to `/api/subagent-tiers` → `~/.pi/agent/subagent-tiers.json`,
+    which `subagent.ts` re-reads each call (no restart). `o3LogEnabled` /
+    `subagentDensity` are module-scope `let`s set from these toggles.
 
 ## RPC coverage (verified 2026-06-23)
 

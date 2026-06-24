@@ -9,15 +9,84 @@
   <body>
     <header>
       <span class="logo">◆ pi</span>
-      <select id="model" title="model"></select>
-      <button id="models-btn" title="reload models">↻</button>
-      <select id="think-sel" title="thinking level"></select>
-      <select id="pony-sel" title="ponytail mode"></select>
       <div id="usagebar" aria-hidden="true"></div>
       <span id="status"
         ><span id="dot"></span><span id="status-text">connecting…</span></span
       >
+      <button id="settings-btn" title="settings" aria-label="settings">
+        ⚙
+      </button>
     </header>
+
+    <aside id="settings" aria-hidden="true">
+      <div class="set-head">
+        <h3>settings</h3>
+        <button
+          id="settings-close"
+          class="set-x"
+          type="button"
+          aria-label="close settings"
+        >
+          &times;
+        </button>
+      </div>
+      <section class="set-sec">
+        <h4>model &amp; behavior</h4>
+        <label class="set-row"
+          >model
+          <span class="set-inline"
+            ><select id="model" title="model"></select
+            ><button id="models-btn" title="reload models">↻</button></span
+          >
+        </label>
+        <label class="set-row"
+          >thinking
+          <select id="think-sel" title="thinking level"></select
+        ></label>
+        <label class="set-row"
+          >ponytail
+          <select id="pony-sel" title="ponytail mode"></select
+        ></label>
+      </section>
+      <section class="set-sec">
+        <h4>subagent tiers</h4>
+        <p class="set-hint">model used per delegation tier.</p>
+        <label class="set-row"
+          >capable
+          <select
+            id="tier-capable"
+            title="model for planner/reviewer/debugger"
+          ></select
+        ></label>
+        <label class="set-row"
+          >implement
+          <select id="tier-implement" title="model for implementer"></select
+        ></label>
+        <label class="set-row"
+          >lookup
+          <select id="tier-lookup" title="model for scout/summarizer"></select
+        ></label>
+      </section>
+      <section class="set-sec">
+        <h4>developer</h4>
+        <label class="set-row"
+          >subagent view
+          <select id="sa-density" title="subagent live-view density">
+            <option value="full">full</option>
+            <option value="compact">compact</option>
+          </select>
+        </label>
+        <label class="set-row"
+          >cache logger
+          <input
+            id="o3-log"
+            type="checkbox"
+            title="log per-turn cache hit % to console (O3)"
+          />
+        </label>
+      </section>
+    </aside>
+    <div id="settings-back" aria-hidden="true"></div>
 
     <main id="transcript"></main>
     <details id="todopanel" open>

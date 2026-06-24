@@ -71,6 +71,32 @@ function broadcast(obj) {
 	}
 }
 
+// ponytail: persist the per-turn cache snapshot to a file, not just the browser
+// console (which evaporates on reload). The numbers originate in pi (it owns the
+// model API); this sniffs the get_session_stats response (id "sb-stats") as it
+// already flows through the framing loop as a parsed object — no browser POST,
+// logs even with no tab open. Same fields app.js console.logs, + ISO timestamp.
+// Ceiling: appendFileSync is one sync write per stats refresh (~1/turn); fine
+// at this cadence — switch to a write stream if it ever batches at hundreds/s.
+// File: ~/.pi/agent/o3-cache.log.
+const O3_LOG = path.join(AGENT_DIR, "o3-cache.log");
+function logO3Cache(obj) {
+	const t = obj && obj.id === "sb-stats" && obj.data && obj.data.tokens;
+	if (!t) return;
+	const inp = t.input || 0;
+	const line =
+		new Date().toISOString() +
+		" " +
+		`[O3] turn-end: input=${inp} cacheRead=${t.cacheRead || 0} ` +
+		`cacheWrite=${t.cacheWrite || 0} ` +
+		`cacheHit=${inp ? Math.round(((t.cacheRead || 0) / inp) * 100) : 0}%\n`;
+	try {
+		fs.appendFileSync(O3_LOG, line, "utf8");
+	} catch {
+		/* best-effort; a missing agent dir or perms issue shouldn't kill pi IO */
+	}
+}
+
 // ponytail: buffer _piQ until the socket drains, then flush; re-pause if it
 // saturates again mid-flush. Recurses safely — once('drain') fires per saturation.
 function pause(res) {
@@ -148,6 +174,7 @@ function startPi() {
 				continue;
 			} // ignore non-JSON noise
 			broadcast({ source: "pi", payload: obj });
+			logO3Cache(obj);
 		}
 	});
 
@@ -657,6 +684,48 @@ const server = http.createServer(async (req, res) => {
 			ponySessionMode(url.searchParams.get("session")) || ponyDefaultMode();
 		res.writeHead(200, { "Content-Type": "application/json" });
 		return res.end(JSON.stringify({ ok: true, mode }));
+	}
+
+	if (req.method === "GET" && url.pathname === "/api/subagent-tiers") {
+		// subagent tier-model config, shared with the extension: reads/writes
+		// ~/.pi/agent/subagent-tiers.json ({capable,implement,lookup}→"provider/model").
+		// ponytail: GET returns {} when absent so the sidebar shows defaults. No
+		// client-controlled path (fixed to AGENT_DIR), so no traversal surface.
+		const file = path.join(AGENT_DIR, "subagent-tiers.json");
+		try {
+			const raw = fs.readFileSync(file, "utf8");
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true, tiers: JSON.parse(raw) }));
+		} catch {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end('{"ok":true,"tiers":{}}');
+		}
+	}
+	if (req.method === "POST" && url.pathname === "/api/subagent-tiers") {
+		// validate then persist the three tier models. Only the known keys are kept;
+		// values must be non-empty strings (provider/model). isAllowed already
+		// gated the POST (CSRF + DNS-rebinding); readBody caps at 1MB.
+		let body;
+		try {
+			body = await readBody(req);
+			const obj = JSON.parse(body || "{}");
+			const clean = {};
+			for (const k of ["capable", "implement", "lookup"]) {
+				const v = obj && obj[k];
+				if (typeof v === "string" && v.trim()) clean[k] = v.trim();
+			}
+			fs.mkdirSync(AGENT_DIR, { recursive: true });
+			fs.writeFileSync(
+				path.join(AGENT_DIR, "subagent-tiers.json"),
+				JSON.stringify(clean),
+				"utf8",
+			);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true, tiers: clean }));
+		} catch (e) {
+			res.writeHead(500, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
 	}
 
 	if (req.method === "GET" && url.pathname === "/api/sessions") {

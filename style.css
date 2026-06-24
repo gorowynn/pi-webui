@@ -1603,3 +1603,175 @@ textarea:focus-visible,
 	overflow: auto;
 	color: var(--text);
 }
+
+/* ---- subagent live view (in-tool) ---- */
+.sa {
+	border-top: 1px solid var(--border);
+	margin-top: 6px;
+	padding-top: 6px;
+	font-size: 12px;
+}
+.sa-sum {
+	color: var(--cyan);
+	margin-bottom: 6px;
+	font-weight: 600;
+}
+.sa-row {
+	display: flex;
+	gap: 6px;
+	align-items: baseline;
+	margin-bottom: 2px;
+}
+.sa-ic {
+	width: 1.2em;
+	color: var(--muted);
+}
+.sa-row > .sa-agent {
+	font-weight: 600;
+	color: var(--text);
+}
+.sa-tier {
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.4px;
+}
+.sa-model,
+.sa-turns {
+	color: var(--muted);
+	font-size: 11px;
+}
+.sa-items {
+	margin: 0 0 6px 1.2em;
+	padding-left: 6px;
+	border-left: 1px solid var(--border);
+}
+.sa-call {
+	color: var(--muted);
+	font-family: var(--mono, monospace);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+.sa-text {
+	color: var(--text);
+	opacity: 0.85;
+	margin: 1px 0;
+}
+.sa-foot {
+	margin-top: 6px;
+	padding-top: 6px;
+	border-top: 1px dashed var(--border);
+	color: var(--text);
+}
+
+/* ---- collapsible settings sidebar ---- */
+#settings-btn {
+	margin-left: 8px;
+	font-size: 15px;
+	line-height: 1;
+}
+#settings {
+	position: fixed;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	width: min(340px, 86vw);
+	background: var(--panel);
+	border-left: 1px solid var(--border);
+	box-shadow: -8px 0 24px rgba(0, 0, 0, 0.4);
+	transform: translateX(100%);
+	transition: transform 0.18s ease;
+	overflow-y: auto;
+	z-index: 40;
+	padding: 14px 16px 28px;
+}
+#settings.open {
+	transform: translateX(0);
+}
+.set-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 12px;
+}
+.set-head h3 {
+	margin: 0;
+	font-size: 13px;
+	text-transform: uppercase;
+	letter-spacing: 0.6px;
+	color: var(--accent);
+}
+.set-x {
+	background: none;
+	border: none;
+	color: var(--muted);
+	font-size: 20px;
+	cursor: pointer;
+	line-height: 1;
+}
+.set-x:hover {
+	color: var(--text);
+}
+.set-sec {
+	border-top: 1px solid var(--border);
+	padding-top: 10px;
+	margin-top: 10px;
+}
+.set-sec:first-of-type {
+	border-top: none;
+	margin-top: 0;
+}
+.set-sec h4 {
+	margin: 0 0 8px;
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	color: var(--muted);
+}
+.set-hint {
+	margin: 0 0 8px;
+	font-size: 11px;
+	color: var(--muted);
+}
+.set-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	font-size: 13px;
+	color: var(--text);
+	margin-bottom: 8px;
+}
+.set-inline {
+	display: flex;
+	gap: 4px;
+	align-items: center;
+}
+#settings select,
+#settings button {
+	background: var(--panel2);
+	color: var(--text);
+	border: 1px solid var(--border);
+	border-radius: var(--r);
+	padding: 4px 6px;
+	font-size: 12px;
+	cursor: pointer;
+	max-width: 180px;
+}
+#settings input[type="checkbox"] {
+	width: 16px;
+	height: 16px;
+	accent-color: var(--accent);
+}
+#settings-back {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.45);
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.18s ease;
+	z-index: 39;
+}
+#settings-back.open {
+	opacity: 1;
+	pointer-events: auto;
+}

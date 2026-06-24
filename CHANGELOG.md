@@ -9,6 +9,206 @@
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-06-24 — fix(extension): subagent returned "(no output)" for reasoning-model tiers (thinking-only answers)
+
+- **Bug:** `subagent` on the lookup tier (zai/glm-4.5-air, provider-aliased to
+  **glm-4.7**, a reasoning model) returned `(no output)` even though the model
+  answered — wasted tokens, no result to the parent. Reproduced on a no-tool
+  "reply pong" task (scout spent 3 output tokens, returned empty).
+- **Root cause (`subagent.ts` `getFinalOutput`):** it only matched assistant
+  content parts of `type:"text"`. glm-4.7 on a trivial prompt puts the answer
+  ENTIRELY in a `thinking` block and emits **no `text` part at all**. Verified
+  via raw `pi --mode json` capture: the assistant `message_end` content was
+  `[thinking:"\npong"]` only (the capable tier glm-5.2 emits a proper `text`
+  part, so it was unaffected — tier-specific). The stream completed normally
+  (`turn_end`/`agent_end` present); it wasn't a truncation/capture-pipeline bug.
+  (Earlier "no assistant message_end" reading was a `head -c` SIGPIPE truncating
+  the capture file — re-verified without a truncating pipe.)
+- **Fix:** `getFinalOutput` now falls back to the last `thinking` block's content
+  (trimmed) when no `text` part exists. Text still takes priority; thinking is
+  fallback only. Single point of change — `getResultOutput` / parallel summary /
+  chain / single all route through it. Verified standalone over 4 cases (lookup
+  thinking-only → "pong"; capable text → "pong"; both → text wins; empty → "").
+- **Type-cleanups in the same file (pre-existing blockers surfaced by the edit):**
+  added `thinking?: string` to `ContentPart`; added ambient `declare const` for
+  the node globals `Buffer`/`process` (the file has no `@types/node` — jiti
+  strips types; index.ts used per-line `@ts-expect-error` for its single
+  `process.env`, but subagent.ts touches 7 global refs so a 2-line ambient
+  declare is less noise); annotated 3 implicit-any callback params. All 12
+  prior diagnostics cleared.
+- **NOT live-verified yet:** the running pi cached the old extension at session
+  start (no hot-reload). After a webui restart, `subagent scout "reply pong"`
+  should return `pong`. Extension loads project-local from `./extensions/`
+  (no installed copy under `~/.pi/agent/extensions/`), so the repo edit is the
+  right file.
+
+### 2026-06-24 — feat(webui): log O3 cache snapshots to a file (server-side sniff)
+
+- **Why server, not browser.** The `[O3]` cache-rate numbers originate in **pi**
+  (it owns the model API). They flow back as the `get_session_stats` response
+  (id `sb-stats`), and `server.js` already `JSON.parse`s every pi line at the
+  framing point (L146) before broadcasting — so the parsed payload is right
+  there. A browser→POST→file round trip would be redundant (CSRF, double
+  computation, dies when the tab closes). The sniff logs even with no browser
+  open.
+- **`server.js`:** `logO3Cache(obj)` helper after `broadcast()`. Matches the
+  `sb-stats` response, formats the SAME fields `app.js` console.logs
+  (`input`/`cacheRead`/`cacheWrite`/`cacheHit%`) plus an ISO timestamp, and
+  `appendFileSync`es to `~/.pi/agent/o3-cache.log`. Called in the stdout
+  framing loop right after `broadcast`. The `try/catch` is best-effort — a
+  missing agent dir or perms issue must never stall pi IO.
+- **Left in place:** the gated browser `console.log` (`o3LogEnabled`, sidebar
+  toggle) — still useful as a live mirror during a session; flip the toggle off
+  if you only want the file. The file is the durable record.
+- **Verified:** standalone node self-check reproduces both real logged lines
+  (540% / 658%) and skips the three negative shapes (wrong id, no tokens, null).
+
+### 2026-06-24 — perf(webui): coalesce autoscroll to one rAF (kill forced reflows)
+
+- **Root cause of the `[Violation] forced reflow` + slow `'message' handler`
+  logs.** `autoscroll()` called `scrollDown()` synchronously, which reads
+  `transcript.scrollHeight` (forces layout) then writes `scrollTop`. It's hit
+  from four streaming-hot sites — `renderText` (L140), `renderThink` (L279),
+  `toolBlock` (L309), `tool_execution_end` (L2265). During a burst (a long
+  reasoning trace = hundreds of `thinking_delta`, or a subagent turn rendering
+  many tool boxes) all those `onmessage` tasks run back-to-back before the next
+  paint, so N autoscrolls = N forced layouts in one frame. Also fed the ~100ms
+  `requestAnimationFrame` violations (renderThink's force paint does
+  `textContent=buf` then `autoscroll()` — read-after-write on a huge node).
+- **Fix (`app.js` `autoscroll`):** coalesce to a single rAF — the pinned check
+  moves inside the callback, N synchronous calls/frame collapse to ONE layout.
+  `scrollDown()` (the unconditional immediate snap used by `addUser`, `note`,
+  `init-msgs`) stays synchronous — it's one-off, never in a burst.
+- **Not changed:** the thinking body paint itself stays throttled (300ms) and
+  only paints when the `<details>` is open or on the single `thinking_end`
+  force paint — bounded and user-initiated; the `textContent` rewrite cost is
+  unavoidable. The O3 cache-hit logs (540%→658%) were never a problem — that's
+  the measurement feature reporting healthy cache reuse.
+
+### 2026-06-24 — feat(webui): subagent live view + collapsible settings sidebar + tier-model config
+
+- **Subagent live view** (`app.js`): the `subagent` tool streams its full live
+  state via `partialResult.details` (agent, model, turns, exitCode, the child's
+  tool calls + partial output, parallel/chain progress). `agent-session.js`
+  forwards `partialResult` whole, so it was already arriving — the update
+  handler just discarded `.details` for the `"(running…)"` text. New
+  `renderSubagentView` renders it at start/update/end: per-row agent + tier
+  color + status icon (✓/✗/⏳), the child's recent tool calls (`→ ls src/`),
+  parallel `2/3 done` / chain `step 2/3` summaries. Density toggle (sidebar):
+  `full` vs `compact`.
+- **Collapsible settings sidebar** (`index.html` + `style.css` + `app.js`):
+  `<aside id="settings">` fixed right drawer (⚙ opens; ✕ / backdrop / Esc
+  closes). Relocated model + reload / thinking / ponytail selects here from the
+  header (IDs unchanged, handlers intact). Also hosts two new sections:
+- **Subagent tier-model config** (end-to-end): three selects in the sidebar
+  (capable / implement / lookup) → `POST /api/subagent-tiers`
+  (`server.js`, sandboxed to `~/.pi/agent`, guarded by `isAllowed`) → writes
+  `subagent-tiers.json`. `subagent.ts` re-reads that file each `execute()`
+  (safeguard pattern) and overrides `TIERS[].model` by tier — so a sidebar
+  change routes the next subagent call to the new model, no restart.
+- **Dev toggles**: subagent view density (`pi:sa-density`) + O3 cache-logger
+  on/off (`pi:o3-log`, gates the `[O3]` console log).
+- Verified: `node --check` clean on `app.js`/`server.js`; `subagent.ts` and
+  `server.js` carry only baseline node-type noise (no new errors). HTML has all
+  6 settings elements. Smoke test pending.
+
+### 2026-06-24 — feat(ext): tier-based subagent routing (O5, rebuilt) + revert per-turn switch + cache logger (O3)
+
+- **O5 pivot:** the per-message `set_model` override (shipped earlier today)
+  caused errors (a `modeSel` mis-bind bug I introduced) and was the wrong shape
+  — **reverted** (`index.html` + `app.js` clean; `modeSel` back to `$("mode")`).
+  Routing is now **subagent-based**, per pi's `examples/extensions/subagent`.
+- **O5 — subagent tool** (`extensions/pi_minimal_webui/subagent.ts`, wired from
+  `index.ts`): ports the upstream core stripped to what `--mode rpc` uses (no
+  TUI rendering — the webui shows `result.content`; no filesystem agent
+  discovery — the tiers are in-code config). Registers a `subagent` tool the
+  parent LLM calls to delegate; each call spawns an isolated
+  `pi --mode json -p --no-session --model <tier>` subprocess. Two wins at once:
+  cost routing (tier→model) + context savings (the parent never ingests the
+  subagent's tool I/O — only its capped ≤50KB final text = roadmap O2,
+  structurally). Modes: single / parallel / chain (`{previous}` placeholder).
+  Tiers (from `pi --list-models`):
+  - capable `zai/glm-5.2` → planner, reviewer, debugger
+  - implement `zai/glm-5-turbo` → implementer (bump to glm-5.1 if quality dips)
+  - lookup `zai/glm-4.5-air` → scout, summarizer
+- **O3 — cache-rate instrumentation** (`app.js`): unchanged; `awaitingTurnStats`
+  arms at `agent_end`, `sb-stats` prints `[O3] turn-end: … cacheHit=N%`. The
+  `discipline.ts` fix is still pending the baseline A/B.
+- Verified: `node --check` on `app.js`/`server.js`; `subagent.ts` carries only
+  the baseline node-type noise (Buffer/process/implicit-any) every sibling
+  extension ships with (zero-dep, no @types/node). Smoke test pending: invoke
+  `subagent` in the webui and confirm a delegated task runs on the pinned model.
+
+### 2026-06-24 — fix(webui): render assistant text from pi's authoritative message (root cause of broken-until-reload)
+
+- **Why:** despite the earlier render-path fix, assistant text STILL rendered
+  broken live but clean after reload. A diff of the user's before/after capture
+  showed the "before" text had words/fragments MISSING and spaces/parens/digits
+  STRIPPED (e.g. "SSE set_model echo (line 2308)" → "SSEset_modelecholine 8)").
+  That's not md mis-rendering and not a missing suffix — it's transport
+  corruption/loss of `text_delta` events.
+- **Root cause:** the live path rendered from `text_delta`s RE-ACCUMULATED in
+  the browser, which are lossy/corruptible over the pi→SSE→browser pipe. Reload
+  reads pi's stored message via `get_messages` — always clean. Same render fn,
+  different DATA.
+- **Decisive fix** (`app.js`): `message_end` carries the full final `message`
+  (verified in `agent-session.js` L390-410; every `AssistantMessageEvent` also
+  carries `partial` — pi-ai `types.d.ts` L330-374) — the SAME object pi
+  persists and `get_messages` returns. `finalizeBubble(payload.message.content)`
+  now renders from THAT authoritative content, so live and reload read
+  byte-identical input and can't diverge regardless of transport hiccups. The
+  hand-accumulated `cur.content` survives only as the `agent_end` safety-net
+  fallback.
+- **`finalizeBubble(content)`** also resets the per-block cursors
+  (`textPar`/`thinkEl`/…) after clearing the bubble, so the re-render creates
+  fresh nodes instead of painting into the detached live-streamed ones.
+- **md.js is innocent:** verified by feeding it the full reload text — zero
+  words lost. Documented in AGENTS.md gotcha #13 (two-layer history).
+
+### 2026-06-24 — fix(webui): suppress empty assistant messages
+
+- **Why:** empty assistant bubbles (just the "assistant" label, nothing else)
+  appeared on turns that went straight to tool calls or ended with no text/
+  thinking. Root cause: `message_start` eagerly created the bubble via
+  `newAssistantBubble()`, and `message_end` rendered `cur.content` even when it
+  was empty. Reload did the same (`renderMessage` also created eagerly).
+- **Shared filter** (`app.js` `nonEmptyContent`): drops text blocks with no text
+  and thinking blocks with no thinking. Used by BOTH the live path
+  (`finalizeBubble`) and reload (`renderMessage`), so live and reload suppress
+  empty messages identically (consistent with the text-render fix above).
+- **Live path:** `message_start` no longer creates the bubble eagerly —
+  creation is lazy (the existing `!cur` guard in `message_update` builds one
+  only when real text/thinking arrives). `finalizeBubble` drops the whole `.msg`
+  node when `nonEmptyContent` is empty, so a tool-only / blank turn leaves no
+  label. `agent_end`'s safety net simplified to `if (cur) finalizeBubble();`
+  (finalizeBubble handles empty → remove).
+- **Reload:** `renderMessage` only creates the bubble when `nonEmptyContent` is
+  non-empty — parity with live.
+
+### 2026-06-24 — fix(webui): render assistant text once at message_end (no live text streaming)
+
+- **Why:** md kept rendering broken *live* but always fine after reload — the
+  live text path and `renderMessage` (reload) kept diverging on provider quirks
+  (missing `text_end`, whole-message `text_end.content`, stray `text_delta`
+  after `cur` nulled). Today's earlier per-block `text_start` flush fixed one
+  case but the user reported it still broke. User doesn't need live answer text
+  (only thinking streams), so the root fix is to **stop rendering text live**.
+- **Single render path** (`app.js`): `message_update` now only *accumulates*
+  raw blocks into `cur.content` (`{type:"text",text}` / `{type:"thinking",thinking}`;
+  `cur._blk` = block being filled, survives a missing `text_end`). The ONE
+  md() paint happens at `message_end` via `finalizeBubble()` →
+  `renderAssistantContent(cur.content)` — the **same function** reload's
+  `renderMessage` now calls. Identical path ⇒ identical md() input ⇒ live can
+  no longer diverge from reload. `agent_end` re-runs it as a safety net if
+  `message_end` never fired.
+- **Thinking unchanged** in feel: still streams live (`renderThink` via the
+  rAF-coalesced `scheduleRender`); just re-rendered finalized at `message_end`
+  (collapsed by default → invisible swap).
+- **Dead code removed:** `commitText` and the `renderText()` call inside
+  `scheduleRender` (text no longer renders per-token/`text_end`). `renderText`
+  survives — called only from `renderAssistantContent`.
+- Docs: AGENTS.md gotcha #13 rewritten for the new design.
+
 ### 2026-06-24 — feat(webui): peak-hours usage indicator, drop redundant Usage button
 
 - **Why:** z.ai tokencost is higher during peak hours (14:00–18:00 UTC+8 =
