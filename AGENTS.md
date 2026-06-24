@@ -14,24 +14,6 @@
 
 ---
 
-## 🚧 In progress
-
-- **Usage bar redesign (uncommitted):** the inline `#usagebar` next to the
-  **Usage** button is now full-width — two rows: token usage (bar +
-  `used / total · %`) and a reset countdown (bar + "in 46m"). `app.js`
-  (`renderUsageInline`, `fmtTokens`, `fmtDur`, `windowMs`, carried through
-  `zaiLimits`) + `style.css` (`.ub-row`, `.ub-fill.time`). Polls every 60s via
-  the existing `refreshUsageBar`; click either bar → usage modal. Not yet logged
-  in `CHANGELOG.md` — add an entry when you commit.
-- **Process-discipline nudges (uncommitted):** new `extensions/pi_minimal_webui/discipline.ts`
-  injects a per-turn `before_agent_start` nudge — keeps the todo list current
-  (names started tasks, prompts `clear` when all finished) and reminds about
-  `ask_user_question` on fresh ambiguous requests. Wired in `index.ts`. Soft
-  enforcement (system-prompt append), verified against 11 scenarios. Not yet in
-  `CHANGELOG.md`.
-
----
-
 ## Single source of truth
 
 Project knowledge lives in three places, and **only** these three:
@@ -92,7 +74,7 @@ is the dev loop. Don't introduce a build step without strong reason.
 | `app.js` | The entire frontend (vanilla JS). SSE handling, rendering, modals, diffs, commands palette. Uses `md()` + `esc()` globals from md.js. |
 | `docs/` | Durable specs: [`design.md`](docs/design.md) (UI/UX, visual source of truth) and [`README.md`](docs/README.md) (index + SSOT charter). |
 | `extensions/pi_minimal_webui/` | The pi extension shipped with the package. See below. |
-| `package.json` | `keywords:["pi-package"]` makes it `pi install`-able. `files:` whitelist = `server.js`, `index.html`, `extensions`. |
+| `package.json` | `keywords:["pi-package"]` makes it `pi install`-able. `files:` whitelist = `server.js`, `index.html`, `md.js`, `extensions`. |
 
 ### The extension (`extensions/pi_minimal_webui/`)
 
@@ -121,16 +103,25 @@ is the dev loop. Don't introduce a build step without strong reason.
   `discipline.ts` reads. Reload-safe via a `pi:todos` localStorage hint
   (mirrors the `pi:model` idiom); a new session clears it through
   `setTodos([])`. Tool name matches the webui's UI hooks — don't rename.
-- `discipline.ts` — **Process-discipline nudges** (soft enforcement). Reads
-  the live todo mirror from `todo.ts` via `getTodos()` (single source of
-  truth — it keeps NO mirror of its own), then at `before_agent_start`
-  appends a one-line nudge to the system prompt: todos active → "keep it
-  current" (names started tasks); all finished → "`clear` it"; no todos +
-  fresh prompt → "consider `ask_user_question` if ambiguous, or plan a todo
-  list if 3+ steps". Composes with `ponytail.ts` (both append to
-  `event.systemPrompt`, pi chains them). Soft by design — hard `tool_call`
-  blocking stays in `safeguard.ts`; there's no reliable signal for "3+ steps" or
-  "ambiguous", so gating work tools would just annoy. Wired from `index.ts`.
+- `discipline.ts` — **Process-discipline enforcement** for the todo list —
+  TWO layers (a soft nudge alone couldn't stop mid-turn drift):
+  - *Hard `tool_call` gate* (the strict one): blocks any **work** tool
+    (everything except `todo` + `ask_user_question`) when the list is active
+    with unfinished work but **zero** tasks `started`. Forces the documented
+    "one started at a time" rhythm so every `started`/`finished` transition
+    shows in the panel: `plan` → `update(1:started)` before any work → work →
+    `update(1:finished)` → `update(2:started)` before more work → … →
+    `update(last:finished)` (all-done, allowed) → `clear`. Reads `getTodos()`.
+    Composes with `safeguard.ts` (both hook `tool_call`; both must allow).
+    Ceiling: a correctly-batched `[update(1:started), read(...)]` right after
+    `plan` preflights `read` before the sibling `update` executes (parallel
+    mode) → one false-positive retry, self-correcting.
+  - *Soft `before_agent_start` nudge*: handles the cases the gate can't see —
+    no list yet ("plan one if 3+ steps / `ask_user_question` if ambiguous"),
+    and all-finished-but-not-cleared ("`clear` it"). Composes with `ponytail.ts`
+    (both append to `event.systemPrompt`).
+  Safety (deny/ask) stays in `safeguard.ts`; this gate only ever blocks on the
+  stale-list invariant. Wired from `index.ts`.
 
 > **Naming:** the folder is still called `pi_minimal_webui` (open TODO P3 to
 > rename to something like `pi-webui-ask-bridge`). It does NOT contain a second
@@ -160,12 +151,19 @@ is the dev loop. Don't introduce a build step without strong reason.
    fire-and-forget fetches.
 6. **Diff LCS has a guard at 4M cells** — skip the O(n·m) path above that to
    avoid locking the UI. Manual Apply bails on non-unique hunks.
-7. **`toolcall_end` must carry `toolCall.arguments`** or the permission-modal
-   diff preview breaks (`pendingEditCalls` won't populate).
-8. **Mutable top-level closure state in app.js** (~12 pieces: `cur`, `pinned`,
-   `askId`, `pendingAsk`, `pendingEditCalls`, `compacting`, `todos`, `commands`,
-   `currentModelId`, `curSessionFile`, `lastThinkPaint`, `renderRaf`). Fine at
-   current size; flag if it grows.
+7. **The permission-modal diff preview reads `curToolName`/`curToolArgs`**
+   (`app.js` `renderEditDiffPreviews`) — the snapshot set at `tool_execution_start`
+   and cleared at `tool_execution_end`. If `tool_execution_start` doesn't carry
+   `args`, or the tool isn't `edit`/`write`, the preview bails. (Earlier docs
+   blamed `toolcall_end`/`pendingEditCalls` — that mechanism is gone: `toolcall_start`/`toolcall_end`
+   are intentionally not handled now; tool boxes + diff previews render from
+   `tool_execution_*` only.)
+8. **Mutable top-level closure state in app.js** (~23 module-scope `let`s:
+   `cur`, `curToolName`/`curToolArgs`, `streaming`, `pinned`, `lastScrollTop`,
+   `todos`, `askId`, `pendingAskArgs`, `compacting`, `commands`, `currentModelId`,
+   `curSessionFile`, `modalFree`, `palSel`/`palItems`, `lastThinkPaint`,
+   `renderRaf`, `lastActivity`, `lastFocus`, …). Grew from ~12 — fine at this
+   size, but it's the one to watch before adding more (see open work #2).
 9. **One live pi session at a time, but you can resume history.** There's one
    shared pi process for all tabs; the **⏱ Sessions** button (`GET /api/sessions`
    on the server, `switch_session` RPC to resume) swaps that single process to a
@@ -177,7 +175,29 @@ is the dev loop. Don't introduce a build step without strong reason.
     (blocks `javascript:`/`data:`), 1MB body cap. Don't regress these.
 
 11. **`md.js` must load before `app.js`.** Both `index.html` (`<script src="md.js">` then `app.js`) and `server.js` (`STATIC` whitelist) must list `md.js`. app.js calls `md()`/`esc()` at runtime with no local definitions — they're globals set by md.js's IIFE. md.js is `require`-able in Node (exports `{md, esc}`); exercise it with `node -e "const{md}=require('./md.js');console.log(md('**x**'))"` after touching the parser.
-12. **`esc()` is shared, not duplicated.** It lives ONLY in `md.js` (static entity map, null-safe). app.js has ~22 call sites that use the global. Don't re-add a local `esc` to app.js — it would silently shadow and drift (the old copy returned `"null"` for null input; the shared one returns `""`).
+12. **`esc()` is shared, not duplicated.** It lives ONLY in `md.js` (static entity map, null-safe). app.js has ~40 call sites that use the global. Don't re-add a local `esc` to app.js — it would silently shadow and drift (the old copy returned `"null"` for null input; the shared one returns `""`).
+13. **Assistant text is deferred-render; the `text_start` flush is load-bearing**
+    (`app.js` `handle()` → `message_update`, ~L1926). md renders broken *sometimes*
+    live but always fine after reload = a deferred-render gap, not a parser bug
+    (`md.js` is deterministic and resets `DEFS`/`fenceInfo` per call). Design:
+    each text block parks its content in `cur.textBuf` and commits once on
+    `text_end` (with a `message_end` safety net); thinking streams live via the
+    rAF-coalesced `renderThink`. The trap: `text_start` used to reset
+    `cur.textBuf = ""` unconditionally, so a block whose `text_end` never fired
+    (some providers drop it between consecutive `text → … → text` blocks) was
+    silently wiped — and `message_end` only rescues the *last* dangling block.
+    Reload "fixed" it because `renderMessage` renders **every** stored block
+    unconditionally. Fix (2026-06-24): `if (cur.textBuf) commitText();` *before*
+    the reset — no-op for an already-committed block (overwrites same node),
+    skipped for the first. **If md still renders broken after this fix**, the
+    next suspects, in order: (a) a provider emits `text_end.content` carrying
+    *whole-message* text rather than per-block text (provider quirk — log the
+    `message_update` stream to confirm); (b) `text_delta` arriving with no
+    preceding `text_start` after `cur` was nulled mid-message; (c) a new
+    assistantMessageEvent type not handled in the `message_update` switch.
+    Debug: `console.log` the raw `payload.assistantMessageEvent` sequence around
+    the broken message and compare `cur.textBuf` state to the persisted
+    `msg.content` blocks from `get_messages`.
 
 ## RPC coverage (verified 2026-06-23)
 
@@ -209,8 +229,9 @@ to change — don't re-audit without a pi version bump.
 - **Editable transcript diff** — ask for a small edit; edit the right pane →
   Apply → file updates, button reads `Applied ✓`.
 - **Permission-modal preview** — trigger an edit/write needing approval; modal
-  shows a read-only old|new hunk diff. No diff = `pendingEditCalls` not
-  populated (see gotcha #7).
+  shows a read-only old|new hunk diff. No diff = `tool_execution_start` didn't
+  carry `args` (or the tool isn't `edit`/`write`) so `curToolArgs` was empty
+  (see gotcha #7).
 - **Health** — `GET /api/health`; SSE at `GET /api/events`; commands via
   `POST /api/cmd`.
 

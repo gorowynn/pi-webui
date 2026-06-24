@@ -9,6 +9,78 @@
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-06-24 — feat(webui): hard tool_call gate forces intermediate todo updates
+
+- **Symptom:** the todo panel showed `plan` (task 1 started) and then `all
+  finished` — nothing in between. The intermediate `update` calls never happened.
+- **Root cause** (`extensions/pi_minimal_webui/discipline.ts`): the existing
+  enforcement was a *soft* `before_agent_start` system-prompt nudge. That fires
+  **once per turn**, but the drift happens **mid-turn** — the agent plans, marks
+  task 1 `started`, then runs a burst of work for tasks 2..N and only marks
+  everything `finished` at the end. The per-turn nudge can't re-fire during that
+  burst, so it never caught the drift. (Browser-side `applyTodoOp("update")` in
+  `app.js` was correct — the agent simply wasn't emitting updates.)
+- **Fix:** added a **hard `tool_call` gate** in `discipline.ts` (alongside the
+  soft nudge, which still handles no-list / all-finished-clear cases the gate
+  can't see). Rule: block any *work* tool (everything except `todo` +
+  `ask_user_question`) when the list is active with unfinished work but **zero**
+  tasks `started`. This enforces the "one started at a time" contract the
+  `todo` tool already documents, forcing the rhythm `plan → update(1:started) →
+  work → update(1:finished) → update(2:started) → work → … → update(last:finished)
+  → clear` — so every transition is now visible in the panel. Reads the live
+  mirror via `getTodos()`. Composes with `safeguard.ts` (both hook `tool_call`,
+  both must allow; this gate only ever blocks on the stale-list invariant,
+  never on the tool's own merits).
+- **Ceiling** (documented in-file): a correctly-batched
+  `[update(1:started), read(...)]` right after `plan` preflights the `read`
+  before the sibling `update` executes (parallel tool mode), so it false-
+  positives once — self-correcting on retry. Upgrade path if it bites: inspect
+  `ctx.sessionManager` for in-flight sibling `todo` updates.
+- **Verified:** 12-case exhaustive simulation of the gate's decision logic
+  (forces started-before-work; never blocks `todo`/`ask_user_question`, an empty
+  list, or an all-finished list) — 12/12 pass. `tsc`/LSP clean.
+
+### 2026-06-24 — fix(webui): recover assistant text blocks whose text_end was dropped
+
+- **Symptom:** assistant markdown rendered broken/garbled *sometimes* during a
+  live stream, but a page reload always fixed it.
+- **Root cause** (`app.js` `handle()` → `message_update` → `text_start`): the
+  deferred render parks each text block's content in `cur.textBuf` and only
+  commits on `text_end` (with a `message_end` safety net). `text_start` did
+  `cur.textBuf = ""` *unconditionally*, so when a text block never received a
+  `text_end` (some providers drop it between consecutive `text → … → text`
+  blocks), its still-uncommitted text was silently wiped. `message_end`'s
+  safety net only rescues the *last* dangling block; any block wiped by an
+  intervening `text_start` was gone for the turn.
+- **Why reload fixed it:** `renderMessage` iterates stored `msg.content` and
+  renders **every** text block unconditionally — so the missing block shows up.
+  Live render was conditional on `text_end`; reload wasn't. That asymmetry *is*
+  the bug.
+- **Fix:** flush any pending uncommitted buffer *before* the reset at
+  `text_start` (`if (cur.textBuf) commitText();`), mirroring `renderMessage`'s
+  per-block guarantee. No-op for an already-committed prior block (overwrites
+  the same node — no extra DOM node); skipped for the first block (empty buf).
+- **Verified** with a DOM-free state-machine simulation of the event sequence:
+  OLD lost block A when its `text_end` was dropped (`"B"` vs truth `"A | B"`);
+  NEW keeps it. Zero regression on single-block and normal two-block paths.
+  (Simulation kept inline in the session, not committed — `app.js` needs a DOM.)
+
+### 2026-06-23 — feat(webui): process-discipline nudges (backfilled entry)
+
+> Backfilled: shipped in commit `ba3c6c5` but never logged at the time (the
+> old AGENTS.md "In progress" note tracked it as uncommitted/undocumented).
+
+- New `extensions/pi_minimal_webui/discipline.ts` injects a per-turn
+  `before_agent_start` nudge appended to `event.systemPrompt`: todos active →
+  "keep the list current" (names the started task); all finished → "`clear` it";
+  no todos + fresh prompt → "consider `ask_user_question` if ambiguous, or plan
+  a todo list if 3+ steps". Reads the live todo mirror from `todo.ts`
+  `getTodos()` (single owner — keeps no mirror of its own). Composes with
+  `ponytail.ts` (both append to `event.systemPrompt`; pi chains them). Wired in
+  `index.ts` (`import discipline` + `discipline(pi)`). Soft by design — hard
+  `tool_call` blocking stays in `safeguard.ts`; there's no reliable signal for
+  "3+ steps" or "ambiguous", so gating work tools would just annoy.
+
 ### 2026-06-23 — docs: verify RPC/SDK coverage + tidy design spec
 
 Audited the implementation against the official pi docs and recorded the

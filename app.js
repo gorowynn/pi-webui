@@ -1887,11 +1887,23 @@ function handle(payload) {
 			)
 				cur = newAssistantBubble();
 			if (e.type === "text_start") {
-				// ponytail: a message can carry SEVERAL text blocks (text → thinking
-				// → text). Drop the previous block's paragraph so this one gets its
-				// own — without this, a later block overwrites the earlier one's
-				// committed node in place and its words vanish until a reload
-				// (reload's renderMessage already resets per block).
+				// ponytail: a message can carry SEVERAL text blocks (text →
+				// thinking → text). Mirror renderMessage, which renders EVERY
+				// stored text block — that's why a reload "fixes" md that streamed
+				// in broken. Two guarantees:
+				//  1) FLUSH any uncommitted prior block first. The deferred render
+				//     parks a block's text in cur.textBuf until text_end commits it;
+				//     if a block never gets a text_end (some providers drop it
+				//     between consecutive blocks), its text is still sitting here and
+				//     the reset below would throw it away. message_end's safety
+				//     commit only rescues the LAST dangling block — one wiped by an
+				//     intervening text_start was lost until reload. No-op for an
+				//     already-committed block (re-paints the same node); skipped for
+				//     the first block (empty buf).
+				//  2) Drop the prior paragraph so this block gets its own node —
+				//     else its commit overwrites the earlier one in place and its
+				//     words vanish until a reload.
+				if (cur.textBuf) commitText();
 				if (cur.textPar) cur.textPar = null;
 				cur.textBuf = "";
 				setActivity("writing…", true);
