@@ -9,6 +9,21 @@
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-06-24 — feat(webui): peak-hours usage indicator, drop redundant Usage button
+
+- **Why:** z.ai tokencost is higher during peak hours (14:00–18:00 UTC+8 =
+  06:00–10:00 UTC). Surfaced as a subtle signal on the inline usage bar.
+- **Peak signal** (`style.css` + `app.js`): during peak hours the `#usagebar`
+  gets a thin warn-colored border (`.peak` class, toggled in `refreshUsageBar`).
+  Base bar carries a transparent border so only the color shifts — no layout
+  jump. Minute-accurate: recomputed on the existing 60s poll, appears/disappears
+  on its own. (First attempt was a flashing yellow badge — made subtle per
+  feedback: just the border, no animation, no extra element.)
+- **Drop Usage button** (`index.html`, `app.js`): the button duplicated the
+  bar's own `onclick = showUsage`, so it's removed; the bar is now the sole
+  entry point to the usage modal. `#usagebar` gains padding/border-radius so
+  the peak border reads cleanly.
+
 ### 2026-06-24 — feat(webui): hard tool_call gate forces intermediate todo updates
 
 - **Symptom:** the todo panel showed `plan` (task 1 started) and then `all

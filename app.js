@@ -826,6 +826,12 @@ function fmtDur(ms) {
 	if (m > 0) return `${m}m`;
 	return `${s}s`;
 }
+// tokencost is higher 14:00–18:00 UTC+8 (= 06:00–10:00 UTC). Surfaced as a
+// badge on the usage bar; recomputed on each 60s poll so it's minute-accurate.
+function inPeakHours() {
+	const h = new Date().getUTCHours();
+	return h >= 6 && h < 10;
+}
 // Full-width inline bar: token usage (bar + %) and reset countdown (bar +
 // time remaining). Tokens row colors by how close to the limit; the reset row
 // is a calm accent (it just tracks progress toward the next window).
@@ -929,12 +935,12 @@ async function showUsage() {
 		};
 }
 
-// ---- usage bar: inline next to the Usage button, polls every 60s ----
+// ---- usage bar: inline in header, polls every 60s ----
 // Compact glance of the same z.ai data; click for the full modal. The server
 // resolves the key (ZAI_API_KEY -> auth.json zai.key -> X-ZAI-Key header), so we
 // must NOT pre-gate on a local key — a key in auth.json (where pi itself reads
-// it) would otherwise hide the bar while the Usage button still works. Let the
-// server's "no API key" response be the only gate (same shape the modal uses).
+// it) would otherwise hide the bar. Let the server's "no API key" response be
+// the only gate (same shape the modal uses).
 const usageBar = $("usagebar");
 async function refreshUsageBar() {
 	let u;
@@ -956,6 +962,8 @@ async function refreshUsageBar() {
 	}
 	usageBar.innerHTML = renderUsageInline(bars);
 	usageBar.style.display = "flex";
+	// peak-hours signal: subtle warn-colored border on the bar itself.
+	usageBar.classList.toggle("peak", inPeakHours());
 }
 usageBar.onclick = showUsage;
 usageBar.title = "z.ai usage — click for details";
@@ -2358,7 +2366,6 @@ modelSel.onchange = () => {
 };
 $("models-btn").onclick = () =>
 	api({ type: "get_available_models", id: "init-models" });
-$("usage-btn").onclick = showUsage;
 
 // ---- composer ----
 function autosize() {

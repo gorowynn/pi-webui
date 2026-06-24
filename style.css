@@ -1397,7 +1397,7 @@ textarea:focus-visible,
 	}
 }
 
-/* ---- z.ai usage bar (inline in header, next to Usage button) ---- */
+/* ---- z.ai usage bar (inline in header, click for details) ---- */
 #usagebar {
 	display: none;
 	flex: 1 1 auto;
@@ -1405,10 +1405,18 @@ textarea:focus-visible,
 	flex-direction: row;
 	gap: 24px;
 	margin: 0 12px;
+	padding: 3px 8px;
+	border: 1px solid transparent;
+	border-radius: var(--r);
 	cursor: pointer;
 }
 #usagebar:hover {
 	opacity: 0.8;
+}
+/* peak-hours signal: subtle warn-colored border (tokencost higher 14–18
+   UTC+8); toggled on refreshUsageBar's 60s poll, so minute-accurate. */
+#usagebar.peak {
+	border-color: var(--warn);
 }
 .ub-row {
 	flex: 1 1 0;
