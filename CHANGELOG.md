@@ -9,6 +9,107 @@
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-06-24 — feat(extension): solid default safeguard.json + subagent nudge/integration
+
+- **Solid default (`safeguard.ts` `DEFAULT_CONFIG`):** the default WAS just `{"*":"ask",
+  nonInteractive:"allow"}` — minimal but noisy (asked on every `read`/`grep`, no
+  secrets handling, no safe-bash fast-paths). Replaced with a trust ladder that
+  auto-writes on first run AND serves as the floor `loadConfig` overlays a user's
+  partial config onto (so unlisted tools keep sane rules):
+  - **allow** agent coordination (`ask_user_question`, `todo`) — no side effects.
+  - **allow** read-only recon (`grep`, `find`, `ls`, `glob`).
+  - **read** allow by default, but **ask** on secrets (`.env*`, `*.pem`, `*.key`,
+    `*.pfx`, `.npmrc`, `.pypirc`, `*credentials*`) and **deny** SSH private keys
+    (`id_rsa`, `id_ed25519`, `id_ecdsa`) — those are almost never wanted
+    in-context.
+  - **ask** on mutation (`edit`, `write`).
+  - **bash**: anchored-regex **allow** for safe recon (`^git status/log/diff/
+    show/blame/branch/remote/ls-files`, `^pwd`, `^ls`, `^echo`, version/help
+    probes); **deny** catastrophic `rm -rf / ~ /usr /etc /var /boot` (incl.
+    `rm -r` without `-f`); **ask** everything else. Every bash allow is
+    `re:^...(\s|$)` anchored — never a bare substring (which would let `ls`
+    match `false`/`curls`).
+  - **subagent** delegation: allow read-only tiers, **ask** the bash-capable
+    ones (`implementer`, `debugger`).
+  - `*` stays `ask` (fail-safe fallback).
+- **Hardening detail:** private keys hard-**deny** (you almost never want them
+  read), secrets **ask** (you legitimately read `.env`). deny patterns are
+  best-effort (documented inline: a determined agent can obfuscate; the prompt
+  is the real gate — deny just fails closed on the obvious catastrophes so a
+  reflexive "allow" click can't reach them).
+- **Self-check:** 29-case matcher test (bash anchoring, rm-deny boundaries,
+  secret/private-key glob+plain matching) — all pass. Catches the regression
+  that DID slip in during this change.
+- **Bug fixed mid-change:** the biome auto-fix run stripped backslashes from the
+  bash regex literals (`(\s|$)` → `(s|$)`, `\brm\s+` → `brms+`), which at JS
+  runtime drops the escapes entirely (`\s` is an unrecognized escape → `s`),
+  breaking every anchored allow + the rm deny. Rewrote via Python `chr(92)` to
+  avoid the edit-tool/heredoc double-escaping trap; verified each line via
+  `repr()` (source `\\s` = runtime `\s`). LESSON: when editing regex string
+  literals through the edit tool, verify backslash counts with a repr/hexdump
+  afterward — the transport collapses `\\`→`\` unpredictably.
+
+- **Goal:** the parent's `tool_call` gate already fired on `subagent`, but bash
+  *inside* the spawned `pi --mode json --no-session` subprocess is ungated
+  (headless, `hasUI=false`, auto-allows under `nonInteractive`). Decided on a
+  hybrid: ship the coarse per-delegation gate (B) now; defer the fine per-command
+  IPC gate (A) as open work until B proves too coarse.
+- **Option B shipped (`safeguard.ts`):**
+  - `selectorFor` `subagent` branch: single mode → agent name; parallel/chain →
+    `<mode>(agent1,agent2,...)` (distinct agents, order-independent) so
+    `"subagent": { "implementer": "ask", "*": "allow" }` and allow-always
+    key meaningfully by delegation shape.
+  - Ask-preview enriched for `subagent`: shows `<selector> — <task>` (truncated),
+    so the approval is readable, not just a bare agent name.
+  - Default `*:ask` already prompts once per delegation; the user tightens by
+    agent in `~/.pi/agent/safeguard.json` (read-only tiers allow, bash-capable
+    ask). One approval covers the whole task — maps to how trust is reasoned
+    about; avoids 5 prompts for 5 `npm test` calls in one implementer run.
+- **Two-layer model (documented inline + AGENTS.md):** parent safeguard decides
+  IF the delegation happens; the subagent's `--tools` allowlist (subagent.ts
+  TIERS) decides WHAT the delegate can do — the allowlist is the capability wall.
+- **Option A deferred (open work, AGENTS.md):** per-command IPC gate — subprocess
+  safeguard (env-gated `PI_SUBAGENT=1`) emits `safeguard_request` on stdout,
+  `runSingle` relays to the browser via parent `ctx.ui.select`, answer flows back
+  on `proc.stdin`. Linchpin to de-risk first: confirm json-mode subprocess loads
+  the extension + fires `tool_call`. ~150-250 lines. Revisit if B is too coarse.
+
+### 2026-06-24 — feat(extension): subagent nudge rewrite + safeguard integration
+
+- **Nudge rewrite (`subagent.ts` `promptGuidelines`):** the old 3 bullets said
+  "keep context lean" and listed agents but gave no decision rule, so the agent
+  guessed when to delegate. Replaced with 4 rule-bullets: (1) delegate when input
+  is large but the answer is small (3+ files → one question, multi-file trace,
+  planning, review, well-specified impl); (2) DON'T delegate a single read/grep
+  or anything answerable inline — the subprocess round-trip isn't worth it;
+  (3) prefer **context-mode** (`ctx_execute_file`) over subagent for deriving a
+  fact from ONE large file/log in-sandbox, use subagent for multi-file /
+  reasoning / edits — disambiguates the two context-savings mechanisms that were
+  silently colliding; (4) `tasks[]` for parallel, `chain[]` with `{previous}`
+  for sequential (debugger→implementer turns a root-cause into an applied fix).
+  Per pi docs every bullet names `subagent` (flat list, no tool prefix).
+- **Safeguard integration (`safeguard.ts` `selectorFor`):** the parent's
+  `tool_call` gate already fired on the `subagent` tool, but the selector fell
+  to `JSON.stringify(input)`, so per-target rules like `"subagent": {
+  "implementer": "ask" }` could never match. Added a `subagent` branch:
+  selector = agent name (single mode), or `"parallel"`/`"chain"` for multi-agent
+  modes. Users can now gate delegation by agent: `"subagent": { "*": "allow",
+  "implementer": "ask", "debugger": "ask" }`, and "allow always" saves by
+  agent name. Two-layer model documented inline: parent safeguard decides IF the
+  delegation happens; the subagent's `--tools` allowlist (subagent.ts TIERS)
+  decides WHAT the delegate can do — the allowlist is the real capability wall,
+  since the spawned subprocess runs headless (hasUI=false) and auto-allows under
+  nonInteractive.
+- **Debugger safety comment (`subagent.ts`):** the debugger tier's `bash` tool is
+  NOT read-only despite the system prompt asking for grep/git only — the
+  `--tools` allowlist is a capability wall, not a behavioral one. Added a
+  `ponytail:` comment naming the ceiling and the harden path (drop `bash`).
+- **Type hygiene (`safeguard.ts`):** normalized to the sibling zero-dep pattern
+  (`@ts-expect-error` on `node:` imports + local minimal types for the pi
+  surface) — safeguard.ts was the lone holdout still importing `node:fs` /
+  `node:path` / `@earendil-works/pi-coding-agent` directly, producing 8 latent
+  type errors. Now clean.
+
 ### 2026-06-24 — fix(extension): subagent returned "(no output)" for reasoning-model tiers (thinking-only answers)
 
 - **Bug:** `subagent` on the lookup tier (zai/glm-4.5-air, provider-aliased to

@@ -2702,11 +2702,23 @@ function saveTierConfig() {
 }
 for (const tier of Object.keys(tierSels))
 	tierSels[tier].onchange = saveTierConfig;
-// O3 cache-logger toggle: gates the per-turn [O3] console log.
+// O3 cache-logger toggle: gates the per-turn [O3] console log AND the server-
+// side file log (~/.pi/agent/o3-cache.log). Server default is off; the sidebar
+// POSTs the toggle so the file is only ever written when the user opts in.
 const o3LogSel = $("o3-log");
 o3LogSel.checked = localStorage.getItem("pi:o3-log") === "1";
-o3LogSel.onchange = () =>
-	localStorage.setItem("pi:o3-log", o3LogSel.checked ? "1" : "0");
+const setO3Log = (v) =>
+	fetch("/api/o3-log", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ enabled: v }),
+	}).catch(() => {}); // fire-and-forget; server re-reads the file each turn
+setO3Log(o3LogSel.checked);
+o3LogSel.onchange = () => {
+	const v = o3LogSel.checked;
+	localStorage.setItem("pi:o3-log", v ? "1" : "0");
+	setO3Log(v);
+};
 const o3LogEnabled = o3LogSel.checked;
 
 // ---- composer ----

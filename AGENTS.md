@@ -289,6 +289,23 @@ Open items (P3 hygiene):
 - [ ] Rename `pi_minimal_webui` folder → e.g. `pi-webui-ask-bridge` (browser
       side needs no change).
 - [ ] Watch the mutable top-level closure state in app.js as it grows.
+- [ ] **Subagent per-command safeguard (Option A, IPC).** The parent's
+      `tool_call` gate covers the *delegation* (Option B, shipped 2026-06-24:
+      `subagent` selector = agent name / `parallel(agent,...)` / `chain(...)`,
+      ask-preview shows agent + task). It does NOT cover bash *inside* the
+      spawned `pi --mode json --no-session` subprocess — that runs headless
+      (`ctx.hasUI === false`) and auto-allows under `nonInteractive`; its only
+      gate is the tier's `--tools` allowlist. Option A gates per-command via a
+      stdout/stdin protocol: subprocess safeguard (env-gated `PI_SUBAGENT=1`)
+      emits `{type:"safeguard_request",id,...}` on stdout → `runSingle.onLine`
+      calls parent `ctx.ui.select` (RPC-bridged, proven by the ask-bridge) →
+      writes `{type:"safeguard_response",id,action}` to `proc.stdin`. Requires
+      `stdio:["pipe",...]` (currently `["ignore",...]`), a pending-request map,
+      abort handling, and obeys the `\n`-only framing invariant (gotcha #2).
+      **Linchpin to de-risk first:** confirm `pi --mode json --no-session`
+      loads the safeguard extension and fires its `tool_call` hook — if not,
+      the subprocess side is inert. ~150-250 lines across subagent.ts +
+      safeguard.ts. Decision deferred (B may suffice).
 
 When you close an item, tick it here **and** add a changelog entry.
 

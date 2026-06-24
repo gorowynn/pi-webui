@@ -17,33 +17,52 @@ set -euo pipefail
 SHARED="$HOME/.pi/shared-docs"
 CLI="$HOME/.pi/agent/npm/node_modules/context-mode/cli.bundle.mjs"
 
-[ -d "$SHARED" ] || { mkdir -p "$SHARED"; echo "created $SHARED"; }
-command -v pdftotext >/dev/null || { echo "pdftotext not on PATH (poppler)."; exit 1; }
-command -v python   >/dev/null || { echo "python not on PATH."; exit 1; }
-[ -f "$CLI" ] || { echo "context-mode CLI not found at $CLI"; exit 1; }
+[ -d "$SHARED" ] || {
+	mkdir -p "$SHARED"
+	echo "created $SHARED"
+}
+command -v pdftotext >/dev/null || {
+	echo "pdftotext not on PATH (poppler)."
+	exit 1
+}
+command -v python >/dev/null || {
+	echo "python not on PATH."
+	exit 1
+}
+[ -f "$CLI" ] || {
+	echo "context-mode CLI not found at $CLI"
+	exit 1
+}
 
 # collect targets: explicit args, else every *.pdf in the shared dir
 targets=()
 if [ "$#" -gt 0 ]; then
-  for a in "$@"; do
-    f="${a%.pdf}.pdf"; [ -f "$f" ] || f="$SHARED/${a%.pdf}.pdf"
-    [ -f "$f" ] || { echo "skip (not found): $a"; continue; }
-    targets+=("$f")
-  done
+	for a in "$@"; do
+		f="${a%.pdf}.pdf"
+		[ -f "$f" ] || f="$SHARED/${a%.pdf}.pdf"
+		[ -f "$f" ] || {
+			echo "skip (not found): $a"
+			continue
+		}
+		targets+=("$f")
+	done
 else
-  while IFS= read -r f; do targets+=("$f"); done < <(find "$SHARED" -maxdepth 1 -type f -name '*.pdf')
+	while IFS= read -r f; do targets+=("$f"); done < <(find "$SHARED" -maxdepth 1 -type f -name '*.pdf')
 fi
-[ "${#targets[@]}" -gt 0 ] || { echo "no PDFs to index in $SHARED"; exit 0; }
+[ "${#targets[@]}" -gt 0 ] || {
+	echo "no PDFs to index in $SHARED"
+	exit 0
+}
 
 for pdf in "${targets[@]}"; do
-  stem="$(basename "${pdf%.pdf}")"
-  md="$SHARED/$stem.md"
-  echo "==> $stem"
-  # 1. extract UTF-8 text with layout, 2. promote numbered headings to markdown
-  # NOTE: write LF line endings (binary). context-mode's markdown chunker keys
-  # headings on ^# with \n — CRLF (Python's Windows default + pdftotext output)
-  # defeats it and the whole file lands as one untitled chunk.
-  pdftotext -enc UTF-8 -layout "$pdf" - 2>/dev/null | python -c '
+	stem="$(basename "${pdf%.pdf}")"
+	md="$SHARED/$stem.md"
+	echo "==> $stem"
+	# 1. extract UTF-8 text with layout, 2. promote numbered headings to markdown
+	# NOTE: write LF line endings (binary). context-mode's markdown chunker keys
+	# headings on ^# with \n — CRLF (Python's Windows default + pdftotext output)
+	# defeats it and the whole file lands as one untitled chunk.
+	pdftotext -enc UTF-8 -layout "$pdf" - 2>/dev/null | python -c '
 import re, sys
 # numbered section heading: "4.11 Title", "11 Title", "2.3.4 Foo Bar"
 # title must start with a letter (kills NC-code lines like "1 N10"); furniture
@@ -62,10 +81,10 @@ for line in sys.stdin:
     else:
         out.append(s)
 sys.stdout.buffer.write("\n".join(out).encode("utf-8"))
-' > "$md"
-  pages=$(( $(grep -c $'\f' "$md") + 1 ))
-  node "$CLI" index "$md" --project "$SHARED" --source "pdf:$stem"
-  echo "    $pages pages -> $md (source pdf:$stem)"
+' >"$md"
+	pages=$(($(grep -c $'\f' "$md") + 1))
+	node "$CLI" index "$md" --project "$SHARED" --source "pdf:$stem"
+	echo "    $pages pages -> $md (source pdf:$stem)"
 done
 
 echo "done. search from any project: context-mode search \"<terms>\" --project \"$SHARED\""

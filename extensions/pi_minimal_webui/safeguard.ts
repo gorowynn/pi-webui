@@ -10,19 +10,27 @@
  *
  * Format — per-tool rules, "*" = wildcard:
  *
+ *   // The solid default (shipped in DEFAULT_CONFIG, written on first run):
  *   {
- *     "*": "ask",                 // fallback for any tool not listed below
- *     "nonInteractive": "allow",  // headless (print/json, no human): "allow" | "block"
- *     "read": {                   // per-target rules; first match wins, then "*"
+ *     "*": "ask",                 // fallback: fail-safe
+ *     "nonInteractive": "allow",  // headless (print/json): "allow" | "block"
+ *     "ask_user_question": "allow",  // coordination tools — no side effects
+ *     "todo": "allow",
+ *     "grep": "allow", "find": "allow", "ls": "allow", "glob": "allow",  // recon
+ *     "read": {                   // per-target rules; first non-* match wins, then "*"
  *       "*": "allow",
- *       ".env": "deny",
- *       ".env.example": "ask"
+ *       ".env*": "ask",  "*.pem": "ask",  "*.key": "ask",  // secrets
+ *       "*credentials*": "ask",  ".npmrc": "ask",
+ *       "id_rsa": "deny",  "id_ed25519": "deny"          // private keys
  *     },
- *     "edit": "ask",              // tool-level rule: one action for all targets
+ *     "edit": "ask",  "write": "ask",                          // mutation
  *     "bash": {
  *       "*": "ask",
- *       "re:^git (status|log)": "allow"
- *     }
+ *       "re:^git (status|log|diff|show|blame)(\\s|$)": "allow",  // recon
+ *       "re:^pwd(\\s|$)": "allow",  "re:^ls(\\s|$)": "allow",
+ *       "re:\\brm\\s+-[rRfF]*[rR][rRfF]*\\s+(/|~|/usr)(\\s|/|$)": "deny"  // catastrophic
+ *     },
+ *     "subagent": { "*": "allow", "implementer": "ask", "debugger": "ask" }
  *   }
  *
  * Pattern matching (what the selector is + how a pattern matches it):
@@ -39,13 +47,54 @@
  *
  * Commands: /safeguard (status) · /safeguard reset (clear session allows)
  */
+// ponytail: this extension ships zero-dep (no @types/node, no node_modules
+// resolution). Sibling files (subagent.ts, todo.ts, discipline.ts) use the
+// same pattern — @ts-expect-error on node: imports + local minimal types for
+// the pi surface. jiti strips types at load; runtime resolves the real modules.
+// @ts-expect-error no @types/node in this zero-dep extension; built-ins at runtime.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+// @ts-expect-error no @types/node in this zero-dep extension; built-ins at runtime.
 import { join } from "node:path";
-import {
-	getAgentDir,
-	type ExtensionAPI,
-	type ToolCallEvent,
-} from "@earendil-works/pi-coding-agent";
+// @ts-expect-error no @types/node in this zero-dep extension; built-ins at runtime.
+import { homedir } from "node:os";
+
+// Local minimal types for the pi extension surface (jiti strips these; the real
+// ExtensionAPI is provided by the host at load). Mirrors the sibling convention.
+// ponytail: agent dir is ~/.pi/agent on all platforms (matches subagent.ts).
+function getAgentDir(): string {
+	return join(homedir(), ".pi", "agent");
+}
+interface ToolCallEvent {
+	toolName: string;
+	input?: Record<string, unknown>;
+}
+interface CommandContext {
+	hasUI: boolean;
+	ui: {
+		notify(msg: string, level: "info" | "warning"): void;
+		select(msg: string, options: string[]): Promise<string | null>;
+	};
+}
+interface SessionContext extends CommandContext {}
+interface ToolCallContext extends CommandContext {}
+interface ExtensionAPI {
+	on(
+		event: "session_start",
+		fn: (event: unknown, ctx: SessionContext) => void,
+	): void;
+	on(
+		event: "tool_call",
+		fn: (event: ToolCallEvent, ctx: ToolCallContext) => unknown,
+	): void;
+	on(event: "session_shutdown", fn: () => void): void;
+	registerCommand(
+		name: string,
+		def: {
+			description: string;
+			handler: (args: string, ctx: CommandContext) => void;
+		},
+	): void;
+}
 
 type Action = "allow" | "ask" | "deny";
 type Rule = Action | { [pattern: string]: Action };
@@ -58,9 +107,76 @@ type Config = {
 const CONFIG_PATH = join(getAgentDir(), "safeguard.json");
 const PATH_TOOLS = new Set(["read", "write", "edit"]);
 
+// The solid default. Written to ~/.pi/agent/safeguard.json on first run and
+// used as the FLOOR by loadConfig (a user's config overlays tool-by-tool, so
+// any tool they didn't list keeps these rules). Trust ladder: allow read-only
+// inspection + agent coordination; ask on mutation / arbitrary exec / secrets;
+// hard-deny private keys and catastrophic rm. Every bash ALLOW is an anchored
+// regex (^...(\s|$)) — never a bare substring, which would let "ls" match
+// "false" / "curls". ponytail: deny patterns are best-effort (a determined
+// agent can obfuscate); the prompt is the real gate, deny just fails closed
+// on the obvious catastrophes so a reflexive "allow" click can't reach them.
 const DEFAULT_CONFIG: Config = {
 	"*": "ask",
 	nonInteractive: "allow",
+
+	// --- agent coordination: no side effects ---
+	ask_user_question: "allow",
+	todo: "allow",
+
+	// --- read-only recon: inspection only, no mutation ---
+	grep: "allow",
+	find: "allow",
+	ls: "allow",
+	glob: "allow",
+
+	// read: allow, but gate secrets (ask) and private keys (deny). glob/regex
+	// tested against full path AND basename; plain against basename.
+	read: {
+		"*": "allow",
+		".env*": "ask", // .env, .env.local, .env.production, .envrc (direnv)
+		"*.pem": "ask",
+		"*.key": "ask",
+		"*.pfx": "ask",
+		".npmrc": "ask", // may contain auth tokens
+		".pypirc": "ask",
+		"*credentials*": "ask", // credentials.json, .aws/credentials, etc.
+		id_rsa: "deny", // SSH private keys — almost never wanted in-context
+		id_ed25519: "deny",
+		id_ecdsa: "deny",
+	},
+
+	// --- mutation: always ask ---
+	edit: "ask",
+	write: "ask",
+
+	// bash: allow common read-only recon (anchored regex only!), deny
+	// catastrophic rm, ask on everything else (executes arbitrary code).
+	bash: {
+		"*": "ask",
+		// git recon — the highest-frequency safe-repetition case
+		"re:^git (status|log|diff|show|blame|branch|remote|ls-files)(\\s|$)":
+			"allow",
+		"re:^pwd(\\s|$)": "allow",
+		"re:^ls(\\s|$)": "allow",
+		"re:^echo ": "allow",
+		// version / help probes
+		"re:^(node|npm|pnpm|yarn|python|python3|pip|go|rustc|cargo|git) (--version|-v|--help)(\\s|$)":
+			"allow",
+		// catastrophic irreversible deletes — fail closed
+		"re:\\brm\\s+-[rRfF]*[rR][rRfF]*\\s+(/|~|/home|/usr|/etc|/var|/boot)(\\s|/|$)":
+			"deny",
+	},
+
+	// subagent delegation: allow read-only tiers, ask the bash-capable ones.
+	// Selector = agent name (single) or parallel/chain(...) — see selectorFor.
+	// Two-layer model: this gates the delegation; the delegate's --tools
+	// allowlist gates what it can do.
+	subagent: {
+		"*": "allow", // scout, summarizer, planner, reviewer (read-only)
+		implementer: "ask", // bash-capable
+		debugger: "ask", // bash-capable
+	},
 };
 
 const ALLOW_ONCE = "Allow once";
@@ -160,6 +276,39 @@ function selectorFor(toolName: string, input: Record<string, unknown>): string {
 	if (toolName === "bash") return String(input.command ?? "");
 	if (PATH_TOOLS.has(toolName))
 		return String(input.path ?? input.filePath ?? "");
+	// subagent: selector = the agent name (single mode) so per-target rules like
+	// `"subagent": { "implementer": "ask", "*": "allow" }` work. parallel/chain
+	// span multiple agents — key those by the mode label. This gates the
+	// *delegation* itself; the spawned subprocess's internal tool calls are gated
+	// by its own --tools allowlist (see subagent.ts TIERS) — that allowlist is the
+	// capability wall, since the subprocess runs headless (hasUI=false) and thus
+	// auto-allows under nonInteractive. Two layers: parent decides IF, allowlist
+	// decides WHAT.
+	if (toolName === "subagent") {
+		// single → agent name; parallel/chain → "<mode>(agent1,agent2,...)" so
+		// allow-always and per-agent policy key meaningfully (e.g. a rule keyed
+		// "parallel(implementer,scout)" matches that exact combo). Distinct agents
+		// only — order-independent. This is Option B (per-delegation coarse gate):
+		// the parent asks before spawning a bash-capable delegate; per-command IPC
+		// gating inside the subprocess is the Option A open work (see plans.md).
+		const a = input.agent;
+		if (typeof a === "string" && a) return a;
+		const list = (input.tasks ?? input.chain) as
+			| { agent?: unknown }[]
+			| undefined;
+		if (Array.isArray(list)) {
+			const mode = Array.isArray(input.tasks) ? "parallel" : "chain";
+			const agents = [
+				...new Set(
+					list
+						.map((t) => (typeof t?.agent === "string" ? t.agent : ""))
+						.filter(Boolean),
+				),
+			];
+			return agents.length ? `${mode}(${agents.join(",")})` : mode;
+		}
+		return "";
+	}
 	try {
 		return JSON.stringify(input);
 	} catch {
@@ -243,8 +392,16 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
-		const preview =
-			selector.length > 400 ? `${selector.slice(0, 400)} …` : selector;
+		// subagent: show the agent + a slice of the task so the approval is
+		// meaningful (selector alone is just the agent name). Read-only vs
+		// bash-capable isn't surfaced here — safeguard is decoupled from the tier
+		// table; the user encodes trust via per-agent rules in safeguard.json.
+		let preview = selector;
+		if (event.toolName === "subagent") {
+			const t = input.task;
+			if (typeof t === "string" && t) preview = `${selector} — ${t}`;
+		}
+		preview = preview.length > 400 ? `${preview.slice(0, 400)} …` : preview;
 		const choice = await ctx.ui.select(
 			`🔐 Allow ${event.toolName}?\n\n  ${preview}`,
 			[ALLOW_ONCE, ALLOW_SESSION, ALLOW_ALWAYS, DENY],

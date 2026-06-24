@@ -74,22 +74,40 @@ function broadcast(obj) {
 // ponytail: persist the per-turn cache snapshot to a file, not just the browser
 // console (which evaporates on reload). The numbers originate in pi (it owns the
 // model API); this sniffs the get_session_stats response (id "sb-stats") as it
-// already flows through the framing loop as a parsed object — no browser POST,
-// logs even with no tab open. Same fields app.js console.logs, + ISO timestamp.
-// Ceiling: appendFileSync is one sync write per stats refresh (~1/turn); fine
-// at this cadence — switch to a write stream if it ever batches at hundreds/s.
+// already flows through the framing loop as a parsed object. Same fields app.js
+// console.logs, + ISO timestamp. Gated by ~/.pi/agent/o3-log.json ({enabled})
+// which the sidebar toggle POSTs to — default off, so nothing logs unless asked.
+// Two guards: dedup (stats polls every ~3s; only log when input changes) runs
+// before the fs read, and the hit ratio is cacheRead/(cacheRead+input) so it
+// stays in [0,100] — cacheRead is cumulative across turns, dividing by the
+// per-turn input alone yielded nonsense >100% values.
+// Ceiling: appendFileSync is one sync write per real turn; fine at this cadence.
 // File: ~/.pi/agent/o3-cache.log.
 const O3_LOG = path.join(AGENT_DIR, "o3-cache.log");
+const O3_CFG = path.join(AGENT_DIR, "o3-log.json");
+let o3LastInput = -1; // dedup token: skip identical stats snapshots
+function o3Enabled() {
+	try {
+		return JSON.parse(fs.readFileSync(O3_CFG, "utf8")).enabled === true;
+	} catch {
+		return false;
+	}
+}
 function logO3Cache(obj) {
 	const t = obj && obj.id === "sb-stats" && obj.data && obj.data.tokens;
 	if (!t) return;
 	const inp = t.input || 0;
+	if (inp === o3LastInput) return; // dedup stats-poll spam
+	o3LastInput = inp;
+	if (!o3Enabled()) return;
+	const cr = t.cacheRead || 0;
+	const cw = t.cacheWrite || 0;
+	const denom = cr + inp || 1;
 	const line =
 		new Date().toISOString() +
 		" " +
-		`[O3] turn-end: input=${inp} cacheRead=${t.cacheRead || 0} ` +
-		`cacheWrite=${t.cacheWrite || 0} ` +
-		`cacheHit=${inp ? Math.round(((t.cacheRead || 0) / inp) * 100) : 0}%\n`;
+		`[O3] turn-end: input=${inp} cacheRead=${cr} cacheWrite=${cw} ` +
+		`cacheHit=${Math.round((cr / denom) * 100)}%\n`;
 	try {
 		fs.appendFileSync(O3_LOG, line, "utf8");
 	} catch {
@@ -722,6 +740,37 @@ const server = http.createServer(async (req, res) => {
 			);
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: true, tiers: clean }));
+		} catch (e) {
+			res.writeHead(500, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+	if (req.method === "GET" && url.pathname === "/api/o3-log") {
+		// o3-cache.log toggle, shared with the sidebar. Returns the persisted
+		// {enabled} so a reload reflects server truth, not just localStorage.
+		res.writeHead(200, { "Content-Type": "application/json" });
+		try {
+			return res.end(
+				JSON.stringify({
+					ok: true,
+					enabled: JSON.parse(fs.readFileSync(O3_CFG, "utf8")).enabled === true,
+				}),
+			);
+		} catch {
+			return res.end('{"ok":true,"enabled":false}');
+		}
+	}
+	if (req.method === "POST" && url.pathname === "/api/o3-log") {
+		// validate then persist {enabled:boolean}. isAllowed already gated the POST.
+		let body;
+		try {
+			body = await readBody(req);
+			const enabled = JSON.parse(body || "{}").enabled === true;
+			fs.mkdirSync(AGENT_DIR, { recursive: true });
+			fs.writeFileSync(O3_CFG, JSON.stringify({ enabled }), "utf8");
+			if (!enabled) o3LastInput = -1; // reset dedup so re-enabling logs the next turn
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true, enabled }));
 		} catch (e) {
 			res.writeHead(500, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: false, error: e.message }));

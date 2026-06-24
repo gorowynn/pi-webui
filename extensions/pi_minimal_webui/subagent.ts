@@ -31,9 +31,9 @@ import * as path from "node:path";
 
 // ponytail: ambient node globals. This extension has no @types/node (jiti strips
 // types at load; runtime has the real globals). Declared minimally so the checker
-// doesn't choke on Buffer/process used below. index.ts uses per-line
-// @ts-expect-error for its single process.env access; this file touches 7 global
-// refs, so a 2-line ambient declare is less noise than 7 suppressions.
+// doesn't choke on Buffer/process used below. index.ts uses a per-line suppression
+// comment for its single process.env access; this file touches 7 global refs, so a
+// 2-line ambient declare is less noise than 7 suppressions.
 declare const Buffer: { byteLength(val: string, encoding?: string): number };
 declare const process: { argv: string[]; execPath: string };
 
@@ -133,6 +133,11 @@ const TIERS: TierAgent[] = [
 		description:
 			"Investigate a bug; trace symptoms to a root cause. Read-heavy recon.",
 		model: "zai/glm-5.2",
+		// ponytail: `bash` here is NOT read-only — the allowlist is a capability
+		// wall, not a behavioral one. The system prompt asks for grep/git only,
+		// but a subagent can run anything. acceptable trade-off: the spawned pi
+		// inherits the user's tool permissions; to harden, drop `bash` and let
+		// `read`/`grep`/`find` carry traces. kept for now (repro commands matter).
 		tools: ["read", "grep", "find", "bash"],
 		systemPrompt:
 			"You are a debugging agent. Reproduce/trace the reported symptom to its root cause using reads and read-only bash (grep, git log/blame). State the root cause, the offending code, and the minimal fix — do not apply it.",
@@ -217,7 +222,7 @@ function getFinalOutput(messages: MessageLike[]): string {
 		const msg = messages[i];
 		if (msg.role === "assistant")
 			for (const part of msg.content)
-			if (part.type === "text" && part.text) return part.text;
+				if (part.type === "text" && part.text) return part.text;
 	}
 	// ponytail: reasoning models (e.g. zai/glm-4.7, which glm-4.5-air is aliased
 	// to) sometimes emit the answer ONLY in a `thinking` block with no `text`
@@ -229,7 +234,8 @@ function getFinalOutput(messages: MessageLike[]): string {
 		const msg = messages[i];
 		if (msg.role === "assistant")
 			for (const part of msg.content)
-			if (part.type === "thinking" && part.thinking) return part.thinking.trim();
+				if (part.type === "thinking" && part.thinking)
+					return part.thinking.trim();
 	}
 	return "";
 }
@@ -566,9 +572,10 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet:
 			"Delegate to a subagent for planning, implementation, review, or lookup",
 		promptGuidelines: [
-			"Use `subagent` to delegate a bounded task to an isolated agent on a cheaper/tier-appropriate model, keeping this context lean.",
-			"Pick the agent by task type: planner/reviewer/debugger (capable) for reasoning, implementer for code changes, scout/summarizer (smallest) for lookups.",
-			"Use `tasks` (parallel) for independent lookups and `chain` when one step's output feeds the next (insert {previous}).",
+			"Use subagent when a task's input is large but the answer is small: reading 3+ files to answer one question (scout/summarizer), tracing a bug across files (debugger), planning a multi-file change (planner), reviewing a diff (reviewer), or implementing a well-specified change (implementer).",
+			"Do NOT use subagent for a single read/grep or anything you can answer inline — the subprocess round-trip isn't worth it. Delegate bounded tasks whose result is all you need back.",
+			"Prefer context-mode (ctx_execute_file) over subagent when you are deriving a fact from ONE large file/log in-sandbox and want to stay in the loop; use subagent for multi-file exploration, reasoning, or any edit.",
+			"Use subagent tasks[] (parallel) for independent lookups and chain[] when one step feeds the next (insert {previous}); a debugger→implementer chain turns a root-cause into an applied fix.",
 		],
 		parameters: SubagentParams,
 
