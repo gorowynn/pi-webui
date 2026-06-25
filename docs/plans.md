@@ -13,14 +13,16 @@ across turns, so the provider's prompt cache isn't busted every turn. Provider
 caching (Anthropic/Gemini) rewards a stable prefix; any per-turn change to the
 injected text discards the cached prefix → re-billed tokens.
 
-> **Status (2026-06-24): instrumentation shipped.** The per-turn `[O3]`
-> cache logger is live in `app.js` — `awaitingTurnStats` is armed at
-> `agent_end` and the `sb-stats` handler prints
-> `[O3] turn-end: input=… cacheRead=… cacheWrite=… cacheHit=N%`. Run a steady
-> multi-turn conversation with an active todo list → read those console lines
-> as the **baseline**. Then apply the `discipline.ts` fix and re-run. If the
-> baseline shows `cacheRead ≈ 0` across turns, the cache does not reach the
-> extension tail → **O3 is a no-op**; close it and move to O1.
+> **Status (2026-06-25): CLOSED — fix applied + instrumentation removed.** The
+> permanent statusbar cache-hit readout (`cacheRead ÷ (cacheRead + input)`,
+> shipped 2026-06-25) replaced the temporary `[O3]` logger and gave the
+> verdict: a healthy ~84% hit rate. The cache *does* reach the extension tail
+> and mostly holds — so the discipline nudge's per-turn churn was low-impact,
+> not the serious cache-buster this audit hypothesized. Still applied the
+> planned fix (`discipline.ts` branch 1 → constant nudge, drops live
+> ids/counts — correct in principle) and removed the `[O3]` scaffolding
+> (`awaitingTurnStats` console log, `~/.pi/agent/o3-cache.log` server logger,
+> `/api/o3-log` + sidebar toggle). Detail in CHANGELOG 2026-06-25.
 
 ### Current state (the finding)
 
@@ -61,11 +63,11 @@ Leave branch 2 and branch 3 as-is (already stable per state). The hard gate
 keeps enforcing the real invariant; the soft nudge is now just a constant
 reminder.
 
-### Verify (A/B run)
+### Verify (A/B run) — resolved
 
-The instrumentation above *is* the measurement. Baseline → apply the
-`discipline.ts` fix → compare the `cacheHit%`. Remove the `O3-MEASUREMENT` block
-from `app.js` once decided.
+Done. The permanent statusbar hit-rate readout confirmed ~84% (cache reaches
+the tail, mostly holds); the `discipline.ts` fix landed and the temporary
+`O3-MEASUREMENT` instrumentation was removed.
 
 ### Self-check
 

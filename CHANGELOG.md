@@ -9,6 +9,46 @@
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-06-25 — chore(extension): close O3 — cache-stable discipline nudge + drop [O3] instrumentation
+
+- **O3 verdict + fix.** The cache-stable prompt audit (`docs/plans.md` §O3) is
+  closed. The permanent statusbar cache-hit readout (shipped same day) showed a
+  healthy ~84% — the provider prompt cache *does* reach the extension tail and
+  mostly holds, so the discipline nudge's per-turn churn was low-impact, not a
+  serious cache-buster. Still applied the planned fix: `discipline.ts` branch 1's
+  soft nudge is now a **constant** string (drops the live `#1, #2` ids /
+  started-open counts that changed every turn). The hard `tool_call` gate already
+  enforced the invariant mid-turn; the nudge only needed to remind of the
+  rhythm. Branches 2 (all-finished → "clear") and 3 (no-list) were already
+  state-stable, unchanged.
+- **Removed the temporary `[O3]` instrumentation** (measurement scaffolding;
+  the permanent hit-rate display replaces it):
+  - `app.js`: the `awaitingTurnStats` arm-at-`agent_end` + `[O3] turn-end …`
+    console-log block, the `let awaitingTurnStats` decl, and the `o3-log`
+    sidebar-toggle wiring (`o3LogSel`/`setO3Log`/`o3LogEnabled`, `pi:o3-log`).
+  - `server.js`: `logO3Cache()` + `O3_LOG`/`O3_CFG`/`o3LastInput`/`o3Enabled()`,
+    the call in the stdout framing loop, and the `GET/POST /api/o3-log`
+    endpoints.
+  - `index.html`: the `cache logger` checkbox in the settings drawer.
+- No behavior change to caching (the fix is correct-but-marginal); the win is a
+  cleaner codebase + permanent visibility now lives in the statusbar.
+
+### 2026-06-25 — feat(webui): statusbar git breakdown + cache hit rate
+
+- **Git segment now splits changes by state** (`server.js` `gitInfo()` +
+  `app.js` `refreshHealth()`). Was `branch (NΔ)` (one opaque count); now parses
+  `git status --porcelain` into three buckets and renders `branch +a ~b ?c`
+  (only non-zero buckets; clean tree → just branch):
+  - `+N` staged (index column X), `~N` unstaged (worktree column Y),
+    `?N` untracked (`??`). A file in both columns (e.g. `MM`/`DD`) counts in
+    both — accurate, it has staged AND unstaged changes.
+  - `title` tooltip explains the symbols. `gitInfo` shape changed
+    `{branch, changes}` → `{branch, staged, unstaged, untracked}`.
+- **Cache segment shows hit rate** (`app.js` stats handler). Was
+  `read↓ write↑` (raw tokens, no context); appends `NN%` = `cacheRead / input`
+  (the same formula the `[O3]` per-turn log uses), so you see how effective the
+  prompt cache actually is. `title` explains read/write + the % basis.
+
 ### 2026-06-24 — feat(extension): solid default safeguard.json + subagent nudge/integration
 
 - **Solid default (`safeguard.ts` `DEFAULT_CONFIG`):** the default WAS just `{"*":"ask",

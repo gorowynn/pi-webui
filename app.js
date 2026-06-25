@@ -2038,7 +2038,6 @@ function handle(payload) {
 			if (cur) finalizeBubble();
 			setStreaming(false);
 			setActivity("ready", false);
-			awaitingTurnStats = true; // O3-MEASUREMENT: log cache rate for this turn
 			break;
 
 		case "message_start":
@@ -2379,21 +2378,24 @@ function refreshHealth() {
 		.then((h) => {
 			if (!h) return;
 			if (h.cwd) sb.repo.textContent = h.cwd;
-			sb.git.textContent = h.git
-				? `${h.git.branch}${h.git.changes ? ` (${h.git.changes}Δ)` : ""}`
-				: "—";
+			if (h.git) {
+				const parts = [];
+				if (h.git.staged) parts.push(`+${h.git.staged}`);
+				if (h.git.unstaged) parts.push(`~${h.git.unstaged}`);
+				if (h.git.untracked) parts.push(`?${h.git.untracked}`);
+				sb.git.textContent = parts.length
+					? `${h.git.branch} ${parts.join(" ")}`
+					: h.git.branch;
+				sb.git.title = "+ staged  ~ unstaged  ? untracked";
+			} else {
+				sb.git.textContent = "—";
+			}
 		})
 		.catch(() => {});
 }
 function refreshStats() {
 	api({ type: "get_session_stats", id: "sb-stats" });
 }
-// O3-MEASUREMENT: per-turn cache-rate logger. awaitingTurnStats is armed at
-// agent_end (turn boundary); the next sb-stats snapshot logs cacheRead as a % of
-// input tokens, then clears. Run a steady multi-turn conversation with an active
-// todo list, read [O3] lines in the console, apply the discipline.ts fix, then
-// compare. Remove this block once the A/B is done. See docs/plans.md §O3.
-let awaitingTurnStats = false;
 // ---- SSE ----
 const es = new EventSource("/api/events");
 es.onopen = () => {
@@ -2486,18 +2488,18 @@ es.onmessage = (ev) => {
 				populateModels(p.data.models);
 			} else if (p.id === "sb-stats" && p.data) {
 				const t = p.data.tokens || {};
-				if (awaitingTurnStats) {
-					// O3-MEASUREMENT: post-turn cache snapshot (baseline vs post-fix).
-					awaitingTurnStats = false;
-					if (o3LogEnabled) {
-						const inp = t.input || 0;
-						console.log(
-							`[O3] turn-end: input=${inp} cacheRead=${t.cacheRead || 0} cacheWrite=${t.cacheWrite || 0} cacheHit=${inp ? Math.round(((t.cacheRead || 0) / inp) * 100) : 0}%`,
-						);
-					}
-				}
 				sb.tok.textContent = `${fmt(t.input)}↓ ${fmt(t.output)}↑`;
-				sb.cache.textContent = `${fmt(t.cacheRead)}↓ ${fmt(t.cacheWrite)}↑`;
+				// cache hit rate = cacheRead / total input. pi's `input` is the NON-cached
+				// portion only (Anthropic convention), so total = input + cacheRead —
+				// dividing by `input` alone yielded >100% values (saw 542%). Always ≤100%.
+				const inp = t.input || 0;
+				const total = inp + (t.cacheRead || 0);
+				const hit = total
+					? Math.round(((t.cacheRead || 0) / total) * 100)
+					: null;
+				sb.cache.textContent = `${fmt(t.cacheRead)}↓ ${fmt(t.cacheWrite)}↑${hit != null ? ` ${hit}%` : ""}`;
+				sb.cache.title =
+					"cache: read↓ (from cache) / write↑ (newly created); % = reads ÷ (reads + fresh input)";
 				sb.cost.textContent =
 					p.data.cost != null ? p.data.cost.toFixed(3) : "…";
 				const cu = p.data.contextUsage;
@@ -2691,24 +2693,6 @@ function saveTierConfig() {
 }
 for (const tier of Object.keys(tierSels))
 	tierSels[tier].onchange = saveTierConfig;
-// O3 cache-logger toggle: gates the per-turn [O3] console log AND the server-
-// side file log (~/.pi/agent/o3-cache.log). Server default is off; the sidebar
-// POSTs the toggle so the file is only ever written when the user opts in.
-const o3LogSel = $("o3-log");
-o3LogSel.checked = localStorage.getItem("pi:o3-log") === "1";
-const setO3Log = (v) =>
-	fetch("/api/o3-log", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ enabled: v }),
-	}).catch(() => {}); // fire-and-forget; server re-reads the file each turn
-setO3Log(o3LogSel.checked);
-o3LogSel.onchange = () => {
-	const v = o3LogSel.checked;
-	localStorage.setItem("pi:o3-log", v ? "1" : "0");
-	setO3Log(v);
-};
-const o3LogEnabled = o3LogSel.checked;
 
 // ---- composer ----
 function autosize() {

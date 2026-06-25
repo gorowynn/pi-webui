@@ -87,24 +87,17 @@ export default function (pi: ExtensionAPI) {
 			const todos: TodoItem[] = getTodos();
 			let nudge = "";
 			if (todos.length > 0) {
-				const started = todos.filter((t) => t.status === "started");
-				const open = todos.filter((t) => t.status === "open");
+				// ponytail: constant nudge — no live ids/counts. The hard tool_call gate
+				// above enforces the invariant mid-turn; this only reminds of the rhythm.
+				// A byte-constant suffix keeps the provider prompt cache stable across
+				// turns (O3 — see docs/plans.md).
 				const allDone = todos.every((t) => t.status === "finished");
 				if (allDone) {
 					nudge =
 						'Your todo list is fully finished but not cleared — call todo action:"clear" before moving on.';
 				} else {
-					const bits: string[] = [];
-					if (started.length)
-						bits.push(
-							`${started.length} started (resume/finish #${started
-								.map((s) => s.id)
-								.join(", #")})`,
-						);
-					if (open.length) bits.push(`${open.length} open`);
-					nudge = `Todo list active (${bits.join(
-						", ",
-					)}). Keep it current with action:"update" as you work.`;
+					nudge =
+						'Todo list active. Keep it current with action:"update" as you work — one started at a time, flip to finished when done.';
 				}
 			} else if (event.prompt && event.prompt.trim()) {
 				nudge =

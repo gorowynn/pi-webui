@@ -71,50 +71,6 @@ function broadcast(obj) {
 	}
 }
 
-// ponytail: persist the per-turn cache snapshot to a file, not just the browser
-// console (which evaporates on reload). The numbers originate in pi (it owns the
-// model API); this sniffs the get_session_stats response (id "sb-stats") as it
-// already flows through the framing loop as a parsed object. Same fields app.js
-// console.logs, + ISO timestamp. Gated by ~/.pi/agent/o3-log.json ({enabled})
-// which the sidebar toggle POSTs to — default off, so nothing logs unless asked.
-// Two guards: dedup (stats polls every ~3s; only log when input changes) runs
-// before the fs read, and the hit ratio is cacheRead/(cacheRead+input) so it
-// stays in [0,100] — cacheRead is cumulative across turns, dividing by the
-// per-turn input alone yielded nonsense >100% values.
-// Ceiling: appendFileSync is one sync write per real turn; fine at this cadence.
-// File: ~/.pi/agent/o3-cache.log.
-const O3_LOG = path.join(AGENT_DIR, "o3-cache.log");
-const O3_CFG = path.join(AGENT_DIR, "o3-log.json");
-let o3LastInput = -1; // dedup token: skip identical stats snapshots
-function o3Enabled() {
-	try {
-		return JSON.parse(fs.readFileSync(O3_CFG, "utf8")).enabled === true;
-	} catch {
-		return false;
-	}
-}
-function logO3Cache(obj) {
-	const t = obj && obj.id === "sb-stats" && obj.data && obj.data.tokens;
-	if (!t) return;
-	const inp = t.input || 0;
-	if (inp === o3LastInput) return; // dedup stats-poll spam
-	o3LastInput = inp;
-	if (!o3Enabled()) return;
-	const cr = t.cacheRead || 0;
-	const cw = t.cacheWrite || 0;
-	const denom = cr + inp || 1;
-	const line =
-		new Date().toISOString() +
-		" " +
-		`[O3] turn-end: input=${inp} cacheRead=${cr} cacheWrite=${cw} ` +
-		`cacheHit=${Math.round((cr / denom) * 100)}%\n`;
-	try {
-		fs.appendFileSync(O3_LOG, line, "utf8");
-	} catch {
-		/* best-effort; a missing agent dir or perms issue shouldn't kill pi IO */
-	}
-}
-
 // ponytail: buffer _piQ until the socket drains, then flush; re-pause if it
 // saturates again mid-flush. Recurses safely — once('drain') fires per saturation.
 function pause(res) {
@@ -192,7 +148,6 @@ function startPi() {
 				continue;
 			} // ignore non-JSON noise
 			broadcast({ source: "pi", payload: obj });
-			logO3Cache(obj);
 		}
 	});
 
@@ -346,15 +301,31 @@ function gitInfo() {
 			encoding: "utf8",
 			windowsHide: true, // health endpoint is polled every 2s — must never pop a window
 		}).trim();
-		const changes = execSync("git status --porcelain", {
+		// porcelain XY: staged = index col (X), unstaged = worktree col (Y),
+		// untracked = "??". A file in both columns (e.g. MM/DD) counts in both —
+		// accurate: it has staged AND unstaged changes.
+		const counts = execSync("git status --porcelain", {
 			cwd: PI_CWD,
 			stdio: ["ignore", "pipe", "ignore"],
 			encoding: "utf8",
 			windowsHide: true,
 		})
 			.split("\n")
-			.filter(Boolean).length;
-		data = { branch, changes };
+			.filter(Boolean)
+			.reduce(
+				(a, line) => {
+					const x = line[0],
+						y = line[1];
+					if (x === "?" && y === "?") a.untracked++;
+					else {
+						if (x !== " ") a.staged++;
+						if (y !== " " && y !== "?") a.unstaged++;
+					}
+					return a;
+				},
+				{ staged: 0, unstaged: 0, untracked: 0 },
+			);
+		data = { branch, ...counts };
 	} catch {
 		data = null; // not a git repo
 	}
@@ -745,38 +716,6 @@ const server = http.createServer(async (req, res) => {
 			return res.end(JSON.stringify({ ok: false, error: e.message }));
 		}
 	}
-	if (req.method === "GET" && url.pathname === "/api/o3-log") {
-		// o3-cache.log toggle, shared with the sidebar. Returns the persisted
-		// {enabled} so a reload reflects server truth, not just localStorage.
-		res.writeHead(200, { "Content-Type": "application/json" });
-		try {
-			return res.end(
-				JSON.stringify({
-					ok: true,
-					enabled: JSON.parse(fs.readFileSync(O3_CFG, "utf8")).enabled === true,
-				}),
-			);
-		} catch {
-			return res.end('{"ok":true,"enabled":false}');
-		}
-	}
-	if (req.method === "POST" && url.pathname === "/api/o3-log") {
-		// validate then persist {enabled:boolean}. isAllowed already gated the POST.
-		let body;
-		try {
-			body = await readBody(req);
-			const enabled = JSON.parse(body || "{}").enabled === true;
-			fs.mkdirSync(AGENT_DIR, { recursive: true });
-			fs.writeFileSync(O3_CFG, JSON.stringify({ enabled }), "utf8");
-			if (!enabled) o3LastInput = -1; // reset dedup so re-enabling logs the next turn
-			res.writeHead(200, { "Content-Type": "application/json" });
-			return res.end(JSON.stringify({ ok: true, enabled }));
-		} catch (e) {
-			res.writeHead(500, { "Content-Type": "application/json" });
-			return res.end(JSON.stringify({ ok: false, error: e.message }));
-		}
-	}
-
 	if (req.method === "GET" && url.pathname === "/api/sessions") {
 		// resumable sessions for this project's cwd (newest first). The dir is
 		// derived from PI_CWD — no client path is accepted, so nothing escapes it.
