@@ -442,39 +442,6 @@ code {
 	background: var(--panel2);
 }
 
-/* edit diff */
-pre.diff {
-	margin: 4px 0;
-	padding: 6px 0;
-	font-size: 12px;
-	line-height: 1.45;
-}
-pre.diff .add,
-pre.diff .del,
-pre.diff .ctx {
-	display: block;
-	padding: 0 10px;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
-}
-pre.diff .add {
-	background: #a6cc7022;
-	color: #b5e89a;
-}
-pre.diff .add::before {
-	content: "+ ";
-}
-pre.diff .del {
-	background: #f2877922;
-	color: #f0a0b0;
-}
-pre.diff .del::before {
-	content: "- ";
-}
-pre.diff .ctx {
-	color: var(--muted);
-}
-
 /* side-by-side edit diff (old | new, new pane editable) */
 .tool.hasdiff > .out {
 	max-height: none;
@@ -1202,12 +1169,6 @@ textarea:focus {
 	color: var(--accent);
 	flex: 0 0 auto;
 }
-#todopanel .empty {
-	color: var(--muted);
-	padding: 10px 0;
-	text-align: center;
-}
-
 #modal .qform {
 	margin: 0;
 }

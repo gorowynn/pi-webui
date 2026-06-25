@@ -420,17 +420,6 @@ function renderSubagentView(host, details, density) {
 	html += "</div>";
 	host.innerHTML = html;
 }
-// parse the agent/mode from a subagent tool's args for the live head
-function subagentHead(args) {
-	if (!args) return null;
-	if (args.agent) return args.agent;
-	if (Array.isArray(args.tasks) && args.tasks.length)
-		return `parallel (${args.tasks.length})`;
-	if (Array.isArray(args.chain) && args.chain.length)
-		return `chain (${args.chain.length})`;
-	return null;
-}
-
 // ---- edit diff: LCS line diff from oldText/newText args ----
 // ponytail: O(n*m) Uint32Array DP table. Fine for typical edits; swap for
 // Myers if huge files start lagging the UI.
