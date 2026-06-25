@@ -133,14 +133,16 @@ const TIERS: TierAgent[] = [
 		description:
 			"Investigate a bug; trace symptoms to a root cause. Read-heavy recon.",
 		model: "zai/glm-5.2",
-		// ponytail: `bash` here is NOT read-only — the allowlist is a capability
-		// wall, not a behavioral one. The system prompt asks for grep/git only,
-		// but a subagent can run anything. acceptable trade-off: the spawned pi
-		// inherits the user's tool permissions; to harden, drop `bash` and let
-		// `read`/`grep`/`find` carry traces. kept for now (repro commands matter).
-		tools: ["read", "grep", "find", "bash"],
+		// ponytail: read-only recon — `bash` was dropped (2026-06-25) to make the
+		// capability wall match the read-only intent. The spawned subprocess runs
+		// headless (hasUI=false); safeguard fires its tool_call hook but auto-allows
+		// under the nonInteractive policy, so bash had no real per-command gate
+		// (only this system prompt). Losing repro/git-blame traces is the accepted
+		// trade-off vs unattended arbitrary bash. If reproduction is essential,
+		// route that work to the parent (which is safeguard-gated).
+		tools: ["read", "grep", "find"],
 		systemPrompt:
-			"You are a debugging agent. Reproduce/trace the reported symptom to its root cause using reads and read-only bash (grep, git log/blame). State the root cause, the offending code, and the minimal fix — do not apply it.",
+			"You are a debugging agent. Trace the reported symptom to its root cause using read-only recon (read, grep, find) over the code. State the root cause, the offending code, and the minimal fix — do not apply it.",
 	},
 	{
 		// Small tier — implementation. Competent but cheaper.

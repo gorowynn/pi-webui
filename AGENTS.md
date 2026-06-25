@@ -175,12 +175,14 @@ is the dev loop. Don't introduce a build step without strong reason.
    blamed `toolcall_end`/`pendingEditCalls` — that mechanism is gone: `toolcall_start`/`toolcall_end`
    are intentionally not handled now; tool boxes + diff previews render from
    `tool_execution_*` only.)
-8. **Mutable top-level closure state in app.js** (~23 module-scope `let`s:
+8. **Mutable top-level closure state in app.js** (~26 module-scope `let`s:
    `cur`, `curToolName`/`curToolArgs`, `streaming`, `pinned`, `lastScrollTop`,
    `todos`, `askId`, `pendingAskArgs`, `compacting`, `commands`, `currentModelId`,
    `curSessionFile`, `modalFree`, `palSel`/`palItems`, `lastThinkPaint`,
-   `renderRaf`, `lastActivity`, `lastFocus`, …). Grew from ~12 — fine at this
-   size, but it's the one to watch before adding more (see open work #2).
+   `renderRaf`, `lastActivity`, `lastFocus`, `availableModels`, `subagentDensity`,
+   the three interval handles (`statsTimer`/`healthTimer`/`usageTimer`), …). Grew
+   from ~12 — fine at this size, but it's the one to watch before adding more
+   (see open work #2). (2026-06-25: O3 close-out shaved `awaitingTurnStats`.)
 9. **One live pi session at a time, but you can resume history.** There's one
    shared pi process for all tabs; the **⏱ Sessions** button (`GET /api/sessions`
    on the server, `switch_session` RPC to resume) swaps that single process to a
@@ -238,13 +240,15 @@ is the dev loop. Don't introduce a build step without strong reason.
     calls + text, `compact` trims to status + calls. If a subagent box shows only
     text, `details` was absent (the tool isn't `subagent`, or a pi build that
     doesn't relay `partialResult.details`).
-15. **Settings sidebar holds model/behavior + subagent tiers + dev toggles.**
+15. **Settings sidebar holds model/behavior + subagent tiers + a dev toggle.**
     `<aside id="settings">` (fixed right drawer; ⚙ opens, ✕/backdrop/Esc
     closes). The model/thinking/pony selects were MOVED here from the header —
     they keep their IDs so the existing `onchange` handlers work unchanged. The
     3 tier selects POST to `/api/subagent-tiers` → `~/.pi/agent/subagent-tiers.json`,
-    which `subagent.ts` re-reads each call (no restart). `o3LogEnabled` /
-    `subagentDensity` are module-scope `let`s set from these toggles.
+    which `subagent.ts` re-reads each call (no restart). `subagentDensity` is a
+    module-scope `let` set from its select. (The `cache logger` toggle +
+    `o3LogEnabled` were removed in the 2026-06-25 O3 close-out — the permanent
+    statusbar cache-hit readout replaced it.)
 
 ## RPC coverage (verified 2026-06-23)
 
@@ -289,23 +293,18 @@ Open items (P3 hygiene):
 - [ ] Rename `pi_minimal_webui` folder → e.g. `pi-webui-ask-bridge` (browser
       side needs no change).
 - [ ] Watch the mutable top-level closure state in app.js as it grows.
-- [ ] **Subagent per-command safeguard (Option A, IPC).** The parent's
-      `tool_call` gate covers the *delegation* (Option B, shipped 2026-06-24:
-      `subagent` selector = agent name / `parallel(agent,...)` / `chain(...)`,
-      ask-preview shows agent + task). It does NOT cover bash *inside* the
-      spawned `pi --mode json --no-session` subprocess — that runs headless
-      (`ctx.hasUI === false`) and auto-allows under `nonInteractive`; its only
-      gate is the tier's `--tools` allowlist. Option A gates per-command via a
-      stdout/stdin protocol: subprocess safeguard (env-gated `PI_SUBAGENT=1`)
-      emits `{type:"safeguard_request",id,...}` on stdout → `runSingle.onLine`
-      calls parent `ctx.ui.select` (RPC-bridged, proven by the ask-bridge) →
-      writes `{type:"safeguard_response",id,action}` to `proc.stdin`. Requires
-      `stdio:["pipe",...]` (currently `["ignore",...]`), a pending-request map,
-      abort handling, and obeys the `\n`-only framing invariant (gotcha #2).
-      **Linchpin to de-risk first:** confirm `pi --mode json --no-session`
-      loads the safeguard extension and fires its `tool_call` hook — if not,
-      the subprocess side is inert. ~150-250 lines across subagent.ts +
-      safeguard.ts. Decision deferred (B may suffice).
+- [x] **Subagent per-command safeguard (Option A, IPC) — CLOSED 2026-06-25,
+      "B suffices + cheap harden."** De-risked the linchpin: the spawned
+      `pi --mode json` subprocess DOES load safeguard and its `tool_call` hook
+      fires, but headless (`hasUI=false`) → `nonInteractive` policy → default
+      `allow` → it auto-allows every command (stdin is `ignore` anyway, so it
+      can't prompt). The real capability wall is the tier `--tools` allowlist.
+      Resolved by dropping `bash` from the debugger tier (its comment already
+      endorsed this) → 5/6 tiers are now provably read-only; only `implementer`
+      keeps bash (needs it for builds/tests), bounded by the parent's Option B
+      delegation gate (shows agent+task before spawning). Full IPC deferred —
+      ~150-250 lines that interleave a non-pi protocol into pi's NDJSON stdout,
+      risking the `\n`-only framing invariant (gotcha #2) for marginal benefit.
 
 When you close an item, tick it here **and** add a changelog entry.
 

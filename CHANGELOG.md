@@ -9,6 +9,35 @@
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-06-25 — chore(extension): close subagent safeguard Option A ("B suffices + cheap harden")
+
+- **Linchpin de-risked.** The deferred item (per-command safeguard via IPC for
+  bash *inside* spawned subagents) is closed. The subprocess (`pi --mode json
+  --no-session`) DOES load the safeguard extension and its `tool_call` hook
+  fires — but headless (`hasUI=false`) → `nonInteractive` policy → default
+  `allow` → **auto-allows every command** (stdin is `ignore`, so it couldn't
+  prompt regardless). So the real capability wall today is the tier `--tools`
+  allowlist, not safeguard.
+- **Cheap harden** (`subagent.ts` TIERS): dropped `bash` from the `debugger`
+  tier — its own code comment already endorsed this. debugger is now read-only
+  recon (`read`/`grep`/`find`); its systemPrompt no longer references bash/git.
+  5/6 tiers are now provably non-mutating (planner, reviewer, debugger, scout,
+  summarizer). Only `implementer` keeps `bash` (it needs builds/tests), and the
+  parent's Option B delegation gate (shipped 2026-06-24) shows agent + task
+  before spawning, so a human approves that mutation.
+- **Full IPC deferred.** ~150-250 lines across `subagent.ts` + `safeguard.ts`
+  (stdio `ignore`→`pipe`, env-gated request/response protocol, parent brokering
+  via `ctx.ui.select`, pending-request map + abort) — and it would interleave a
+  non-pi protocol into pi's `--mode json` NDJSON stdout, risking the `\n`-only
+  framing invariant (gotcha #2) for marginal benefit against the explicit
+  auto-allow headless default. Net: the read-only wall + delegation gate
+  achieve the safety goal; the residual (implementer bash) is bounded and
+  human-approved.
+- **Docs:** `AGENTS.md` open-work item ticked closed with the finding;
+  gotcha #8 refreshed (closure-state count ~23→~26 + refreshed examples, after
+  the O3 close-out shaved `awaitingTurnStats`); gotcha #15 dropped the stale
+  `o3LogEnabled` ref.
+
 ### 2026-06-25 — chore(extension): close O3 — cache-stable discipline nudge + drop [O3] instrumentation
 
 - **O3 verdict + fix.** The cache-stable prompt audit (`docs/plans.md` §O3) is
