@@ -74,7 +74,8 @@ is the dev loop. Don't introduce a build step without strong reason.
 | `app.js` | The entire frontend (vanilla JS). SSE handling, rendering, modals, diffs, commands palette. Uses `md()` + `esc()` globals from md.js. |
 | `docs/` | Durable specs: [`design.md`](docs/design.md) (UI/UX, visual source of truth) and [`README.md`](docs/README.md) (index + SSOT charter). |
 | `extensions/pi_minimal_webui/` | The pi extension shipped with the package. See below. |
-| `package.json` | `keywords:["pi-package"]` makes it `pi install`-able. `files:` whitelist = `server.js`, `index.html`, `md.js`, `extensions`. |
+| `package.json` | `keywords:["pi-package"]` makes it `pi install`-able. `pi` manifest declares `extensions` + `skills` (both package-relative); `files:` whitelist ships both to npm. |
+| `skills/` | Shipped skills. Currently `sdd/` — strict 4-phase Spec-Driven Development + TiCoder (Plan→Spec→Impl-Plan→Code+Test, explicit approval between phases). Discovered via the `pi.skills` package manifest (same path the extension uses), so it ships with the repo AND is auto-discovered — no settings entry beyond the existing local-path package. `/reload` picks up edits; invoke with `/skill:sdd`. Skill-only = advisory (no gate backs it); the size gate lives in the `description` (the one field always in context). |
 
 ### The extension (`extensions/pi_minimal_webui/`)
 

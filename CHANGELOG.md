@@ -9,6 +9,30 @@
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-06-25 — feat(skill): add `sdd` — strict 4-phase Spec-Driven Development + TiCoder
+
+- **First shipped skill** (`skills/sdd/SKILL.md`). 4-phase loop with explicit
+  Yes/No approval between phases: Plan (`.sdd/plan.md`) → Spec
+  (`.sdd/spec.md`, requirements ID-tagged `FR-N`) → Impl-Plan + TiCoder tests
+  (`.sdd/tasks.md`, each test tagged `# FR-N`) → Code+Test to green, then
+  `.sdd/verify-report.md`. Implementation code is FORBIDDEN before Phase 3
+  approval. Artifacts scoped under `.sdd/` so the package can run in any repo
+  without colliding with a host `docs/`.
+- **Skill-only, deliberately.** No `tool_call` gate backs it (an earlier draft
+  had one; user rejected blocking). Enforcement ceiling = the `description`
+  (always in context, drives auto-load) carrying the size gate (substantial /
+  multi-file only; no one-line fixes) + per-phase disk artifacts. "STOP and ask
+  Yes/No" is self-interruption, the weakest LLM behavior — accepted as the
+  cost of no gate; revisit as a `before_agent_start` nudge if drift shows.
+- **Wired through the package manifest** (`package.json`): added `"skills":
+  ["./skills"]` to the `pi` key (the repo is a local-path package in settings,
+  so resources load via the manifest — `packages.md`), and `"skills"` to the
+  npm `files` whitelist so `pi install npm:pi-webui` ships it. `/reload`
+  re-scans; `/skill:sdd` forces it on. `/skill:sdd` is the command because
+  the frontmatter `name` is `sdd` (must be lowercase a-z/0-9/hyphens).
+- **Docs:** `AGENTS.md` file map gained a `skills/` row + a `package.json`
+  note refresh.
+
 ### 2026-06-25 — chore(extension): close subagent safeguard Option A ("B suffices + cheap harden")
 
 - **Linchpin de-risked.** The deferred item (per-command safeguard via IPC for

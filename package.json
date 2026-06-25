@@ -8,13 +8,15 @@
     "server.js",
     "index.html",
     "md.js",
-    "extensions"
+    "extensions",
+    "skills"
   ],
   "scripts": {
     "start": "node server.js"
   },
   "pi": {
-    "extensions": ["./extensions"]
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
