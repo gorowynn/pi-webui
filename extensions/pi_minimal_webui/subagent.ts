@@ -591,8 +591,8 @@ export default function (pi: ExtensionAPI) {
 				(mode: "single" | "parallel" | "chain") =>
 				(results: SingleResult[]): SubagentDetails => ({ mode, results });
 
-			const hasChain = (params.chain as any[] | undefined)?.length ?? 0 > 0;
-			const hasTasks = (params.tasks as any[] | undefined)?.length ?? 0 > 0;
+			const hasChain = ((params.chain as any[] | undefined)?.length ?? 0) > 0;
+			const hasTasks = ((params.tasks as any[] | undefined)?.length ?? 0) > 0;
 			const hasSingle = Boolean(params.agent && params.task);
 			const modeCount = Number(hasChain) + Number(hasTasks) + Number(hasSingle);
 			if (modeCount !== 1) {

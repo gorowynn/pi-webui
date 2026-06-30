@@ -227,7 +227,8 @@ stays on its chosen model; only delegated work routes.
 **Tradeoff / open:** the spawned child loads global extensions too (harmless —
 single-shot, tool-allowlisted). Tiers are in-code config (edit the model
 string in `subagent.ts` to retune); not yet user-editable `.md` agents. Smoke
-test pending.
+test done 2026-06-30 (fixed a precedence bug: parallel/chain were dead since
+inception — see CHANGELOG).
 **$ ↓↓ + context ↓↓, quality ↑, effort M — DONE.**
 
 ### O6. Peak-hours cost deferral / routing

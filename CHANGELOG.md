@@ -9,6 +9,35 @@
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-06-30 — fix(extension): subagent parallel & chain modes were dead since inception
+
+- **Bug.** Operator-precedence error in the mode-detection guard
+  (`subagent.ts` `execute()`; was `hasTasks = x?.length ?? 0 > 0`) parsed as
+  `x?.length ?? (0 > 0)` → `length ?? false` → for an N-element array it
+  returned the **length N** (a number), not a boolean. `modeCount` then summed
+  array *lengths* instead of counting active *modes*, so any parallel/chain
+  with **≥2 items** tripped `modeCount !== 1` and was rejected with "Provide
+  exactly one mode" — *before* the real dispatch branches ever ran. Single mode
+  (and N=1 arrays, by accident) worked, which is why prior smoke tests stayed
+  green.
+- **Fix.** Parenthesize — `((x?.length ?? 0) > 0)` on both `hasChain`/
+  `hasTasks` (`subagent.ts:594-595`). Verified live: a 4-agent parallel batch
+  (summarizer/planner/reviewer/debugger) and a 2-step scout→summarizer chain
+  with `{previous}` substitution now dispatch correctly. All three modes + all
+  five read-only agents exercised end-to-end; only `implementer` (bash-capable,
+  `ask`-gated, paid `glm-4.7`) remains untested.
+- **Scope.** Dispatch logic only. Tier→model routing (incl. the live
+  `subagent-tiers.json` override), the `--tools` allowlists, and the
+  safeguard/discipline gates were always correct — only the multi-element-array
+  paths were unreachable.
+- **Cost note (from the test run).** Subagents trade *parent context window*
+  for *total token spend*, not money for money: every spawn carries a ~10k
+  input-token floor (child re-loads system prompt + tool defs), so trivial
+  lookups are pure loss and parallel batches are uniformly costlier than
+  inline. The win is structural context isolation (roadmap O2) — largest for
+  chain (a full 7k-token read stays in the child) — which is exactly the
+  parallel/chain path this bug had dead-coded.
+
 ### 2026-06-25 — feat(skill): add `sdd` — strict 4-phase Spec-Driven Development + TiCoder
 
 - **First shipped skill** (`skills/sdd/SKILL.md`). 4-phase loop with explicit

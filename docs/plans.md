@@ -104,7 +104,9 @@ then remove the log.
 > it wins on cost AND context (roadmap O2 structurally). Tiers: capable
 > `zai/glm-5.2` (planner/reviewer/debugger), implement `zai/glm-5-turbo`
 > (implementer), lookup `zai/glm-4.5-air` (scout/summarizer). Modes:
-> single/parallel/chain. Smoke test pending. See `CHANGELOG.md` + `roadmap.md`
+> single/parallel/chain. Smoke test done 2026-06-30: it found + fixed a
+> precedence bug that had dead-coded parallel/chain (≥2 items) since inception
+> — see `CHANGELOG.md`. See `CHANGELOG.md` + `roadmap.md`
 > §O5 for the current truth; the per-turn detail below is kept only as the
 > historical (reverted) design.
 
