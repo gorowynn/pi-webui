@@ -2,3 +2,11 @@ node_modules/
 *.log
 .env
 .DS_Store
+
+# JetBrains plugin (jetbrains/ Gradle project)
+jetbrains/.gradle/
+jetbrains/.intellijPlatform/
+jetbrains/build/
+jetbrains/local.properties
+.idea/
+*.iml

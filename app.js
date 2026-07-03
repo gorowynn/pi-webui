@@ -1773,6 +1773,96 @@ function renderEditDiffPreviews(container) {
 	});
 	return wrap;
 }
+async function diffInIde(req) {
+	const { id } = req;
+	try {
+		const payload = await buildDiffPayload();
+		const decision = await window.piWebuiOpenDiff(payload);
+		api({ type: "extension_ui_response", id, value: decision });
+	} catch (_e) {
+		toast("IDE diff unavailable — showing in webui", "warn");
+		openSelectModal(req);
+	}
+}
+
+// ponytail: left = current file via the existing /api/file endpoint (resolves
+// under PI_CWD); right = left with every edit hunk applied (first-occurrence
+// replace, like the edit tool), or the write content. Path resolution stays in
+// server.js — the plugin only renders left vs right.
+async function buildDiffPayload() {
+	const inp = curToolArgs || {};
+	const path = inp.path || "";
+	const filename = path.split(/[\\/]/).pop() || "change";
+	let leftText = "";
+	try {
+		const r = await fetch("/api/file?path=" + encodeURIComponent(path));
+		const j = await r.json();
+		if (j && j.ok && j.content != null) leftText = j.content;
+	} catch (_e) {
+		/* new / unreadable file → empty left */
+	}
+	let rightText = leftText;
+	if (curToolName === "edit" && Array.isArray(inp.edits)) {
+		for (const e of inp.edits)
+			rightText = rightText.replace(e.oldText || "", e.newText || "");
+	} else if (curToolName === "write") {
+		rightText = inp.content || "";
+	}
+	return { filename, leftText, rightText };
+}
+
+// The webui permission modal, factored out so the IDE-diff path can fall back
+// to it. Unchanged behavior — extracted verbatim from the old select branch.
+function openSelectModal(req) {
+	const { id } = req;
+	const opts = (req.options || []).map((o) =>
+		typeof o === "string" ? { label: o } : o,
+	);
+	const labels = opts.map((o) => (o.label || "").toLowerCase());
+	const isPermission =
+		labels.some((l) =>
+			/\b(allow|permit|approve|yes|run|execute|trust|continue)\b/.test(l),
+		) &&
+		labels.some((l) =>
+			/\b(block|deny|cancel|no|stop|reject|skip|abort)\b/.test(l),
+		);
+	let bodyHtml = "";
+	let maxSev = 0;
+	if (isPermission) {
+		const body = buildPermissionBody(req.title, req.message);
+		bodyHtml = body.html;
+		maxSev = body.maxSev;
+	}
+	showModal(
+		`<h3>${esc(req.title || "Choose")}</h3>${bodyHtml}<div class='opts'></div>`,
+	);
+	const stack = renderEditDiffPreviews(card);
+	if (stack) {
+		card.classList.add("wide");
+		card.querySelector(".opts").before(stack);
+	}
+	const list = card.querySelector(".opts");
+	opts.forEach((o) => {
+		const b = document.createElement("button");
+		const val = o.label;
+		const desc = o.description;
+		b.innerHTML =
+			esc(val) + (desc ? `<span class='desc'>${esc(desc)}</span>` : "");
+		if (
+			maxSev >= 3 &&
+			/\b(allow|permit|approve|yes|run|execute|continue)\b/.test(
+				(val || "").toLowerCase(),
+			)
+		)
+			b.className = "danger";
+		b.onclick = () => {
+			hideModal();
+			api({ type: "extension_ui_response", id, value: val });
+		};
+		list.appendChild(b);
+	});
+}
+
 function uiRequest(req) {
 	const { id, method } = req;
 	// ponytail: ask_user_question latch. input(MARKER) arrives AFTER the user
@@ -1836,55 +1926,20 @@ function uiRequest(req) {
 
 	// dialog methods
 	if (method === "select") {
-		const opts = (req.options || []).map((o) =>
-			typeof o === "string" ? { label: o } : o,
-		);
-		// detect a permission-style prompt (Allow/Block, Yes/No) so we can show
-		// the risk banner for the command in question.
-		const labels = opts.map((o) => (o.label || "").toLowerCase());
-		const isPermission =
-			labels.some((l) =>
-				/\b(allow|permit|approve|yes|run|execute|trust|continue)\b/.test(l),
-			) &&
-			labels.some((l) =>
-				/\b(block|deny|cancel|no|stop|reject|skip|abort)\b/.test(l),
-			);
-		let bodyHtml = "";
-		let maxSev = 0;
-		if (isPermission) {
-			const body = buildPermissionBody(req.title, req.message);
-			bodyHtml = body.html;
-			maxSev = body.maxSev;
+		// ponytail: when the JetBrains plugin hosts this page it injects
+		// window.piWebuiOpenDiff — route edit/write approvals to the IDE's native
+		// diff dialog as the gate. The decision comes back over the SAME
+		// extension_ui_response channel with safeguard's option labels, so
+		// safeguard.ts (the security gate) is unchanged. Falls back to the modal
+		// if the bridge is absent or rejects.
+		if (
+			(curToolName === "edit" || curToolName === "write") &&
+			typeof window.piWebuiOpenDiff === "function"
+		) {
+			void diffInIde(req);
+			return;
 		}
-		showModal(
-			`<h3>${esc(req.title || "Choose")}</h3>${bodyHtml}<div class='opts'></div>`,
-		);
-		const stack = renderEditDiffPreviews(card);
-		if (stack) {
-			card.classList.add("wide");
-			card.querySelector(".opts").before(stack);
-		}
-		const list = card.querySelector(".opts");
-		opts.forEach((o) => {
-			const b = document.createElement("button");
-			const val = o.label;
-			const desc = o.description;
-			b.innerHTML =
-				esc(val) + (desc ? `<span class='desc'>${esc(desc)}</span>` : "");
-			// tint the approve option red on high-risk prompts
-			if (
-				maxSev >= 3 &&
-				/\b(allow|permit|approve|yes|run|execute|continue)\b/.test(
-					(val || "").toLowerCase(),
-				)
-			)
-				b.className = "danger";
-			b.onclick = () => {
-				hideModal();
-				api({ type: "extension_ui_response", id, value: val });
-			};
-			list.appendChild(b);
-		});
+		openSelectModal(req);
 	} else if (method === "confirm") {
 		const body = buildPermissionBody(req.title, req.message);
 		showModal(`<h3>${esc(req.title || "Confirm")}</h3>${body.html}`);

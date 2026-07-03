@@ -76,6 +76,7 @@ is the dev loop. Don't introduce a build step without strong reason.
 | `extensions/pi_minimal_webui/` | The pi extension shipped with the package. See below. |
 | `package.json` | `keywords:["pi-package"]` makes it `pi install`-able. `pi` manifest declares `extensions` + `skills` (both package-relative); `files:` whitelist ships both to npm. |
 | `skills/` | Shipped skills. Currently `sdd/` — strict 4-phase Spec-Driven Development + TiCoder (Plan→Spec→Impl-Plan→Code+Test, explicit approval between phases). Discovered via the `pi.skills` package manifest (same path the extension uses), so it ships with the repo AND is auto-discovered — no settings entry beyond the existing local-path package. `/reload` picks up edits; invoke with `/skill:sdd`. Skill-only = advisory (no gate backs it); the size gate lives in the `description` (the one field always in context). |
+| `jetbrains/` | **Standalone Gradle plugin** (separate project — the webui's zero-build invariant is preserved). Embeds the webui panel in a JetBrains tool window via JCEF, plus a **native IDE diff approval gate** for edit/write: the proposed change opens in the IDE diff viewer; the 4-button decision (safeguard labels — a wire contract) flows back via the existing `extension_ui_response` channel; `safeguard.ts` is **unchanged**. Depends only on `com.intellij.modules.platform` → runs in any JB IDE. See [`jetbrains/README.md`](jetbrains/README.md); build `gradlew buildPlugin`, install the zip via Settings → Plugins → ⚙ → Install from Disk. |
 
 ### The extension (`extensions/pi_minimal_webui/`)
 
@@ -250,6 +251,20 @@ is the dev loop. Don't introduce a build step without strong reason.
     module-scope `let` set from its select. (The `cache logger` toggle +
     `o3LogEnabled` were removed in the 2026-06-25 O3 close-out — the permanent
     statusbar cache-hit readout replaced it.)
+16. **JetBrains plugin (`jetbrains/`) build bootstrap is version-pinned** — every
+    version below cost a failed build, so they are load-bearing: IntelliJ Platform
+    Gradle Plugin **2.7.0** + Foojay resolver **1.0.0** (older →
+    `JvmVendorSpec IBM_SEMERU` on Gradle 9); Kotlin **2.4.0** (older →
+    `IllegalArgumentException: 25.0.3` — the Kotlin daemon runs on the Gradle JVM,
+    Rider's default JDK 25, and older Kotlin's bundled parser can't read "25");
+    `instrumentCode = false` (the platform's instrumentation task throws
+    `Packages does not exist` on the JDK 25 Gradle JVM; it only injects
+    `@NotNull` checks, not load-bearing — re-enable when building on JDK 21);
+    `DiffContentFactory` lives in `com.intellij.diff` (NOT `.contents`, where
+    `DiffContent` is). `local()` builds against the auto-detected installed IDE
+    (folder with `product-info.json`; override `RIDER_HOME` / `-PriderHome`) —
+    no hardcoded path, no IntelliJ Community download. Full detail:
+    [`jetbrains/README.md`](jetbrains/README.md) "Build notes".
 
 ## RPC coverage (verified 2026-06-23)
 

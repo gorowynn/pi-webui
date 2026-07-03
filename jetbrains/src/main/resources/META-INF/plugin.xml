@@ -1,0 +1,17 @@
+<idea-plugin>
+    <id>com.gorowynn.piwebui</id>
+    <name>pi-webui</name>
+    <vendor url="https://github.com/gorowynn/pi-webui">gorowynn</vendor>
+    <description>Embeds the pi-webui panel in a tool window via JCEF.
+        Requires pi-webui running (e.g. `node server.js` or pi `/webui`).</description>
+
+    <!-- Platform module = available in all JetBrains IDEs -->
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="pi-webui"
+                    anchor="right"
+                    factoryClass="com.gorowynn.piwebui.PiWebuiToolWindowFactory"/>
+        <applicationService serviceImplementation="com.gorowynn.piwebui.PiWebuiSettings"/>
+    </extensions>
+</idea-plugin>

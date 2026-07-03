@@ -9,6 +9,53 @@
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-07-03 — feat(jetbrains): IDE plugin — JCEF tool window + native diff approval gate
+
+- **What.** Standalone Gradle plugin under `jetbrains/` (does NOT touch the
+  webui's zero-build invariant). Embeds the already-running webui panel in a
+  JetBrains tool window via JCEF (reuses 100% of the JS frontend, ~25-LoC Kotlin
+  bridge), AND adds a **native IDE diff approval gate** for edit/write: proposed
+  changes open in the IDE's diff viewer with 4 Approve/Deny buttons, and the
+  decision flows back to pi through the existing safeguard channel. Depends only
+  on `com.intellij.modules.platform` → runs in Rider/IDEA/PyCharm/WebStorm/
+  CLion/GoLand/RubyMine.
+- **The wire (security model).** The IDE diff replaces the webui modal *renderer
+  only* — `safeguard.ts` is **unchanged**. The decision is a safeguard
+  option-label posted via the SAME `api({type:"extension_ui_response", id,
+  value})` channel. The 4 labels are a wire contract, exact: `Allow once` /
+  `Allow for this session` / `Allow always (save to config)` / `Deny`. Esc/X
+  defaults to Deny (fail-closed). If the plugin/bridge is absent, app.js falls
+  back to the existing modal (`openSelectModal`).
+- **Flow.** `tool_execution_start` carries `{path, edits:[{oldText,newText}]}` →
+  app.js `uiRequest()` sees `method:"select"` + `curToolName∈{edit,write}` AND
+  `window.piWebuiOpenDiff` exists → builds `{filename,leftText,rightText}`
+  (left = `GET /api/file`; right = left + hunks applied) → JCEF bridge → Kotlin
+  `DiffApprovalDialog` (`DiffManager.showDiff()` + `DialogWrapper`, 4 buttons) →
+  label back → `extension_ui_response`.
+- **Files.** `jetbrains/`: `PiWebuiToolWindowFactory.kt` (JCEF + `JBCefJSQuery`
+  bridge), `DiffApprovalDialog.kt` (diff + buttons), `PiWebuiSettings.kt`
+  (persisted URL), `plugin.xml` (tool window, platform-only dep). `app.js`:
+  `diffInIde`/`buildDiffPayload`/`openSelectModal` + the select-branch guard.
+  New `.gitignore` block ignores `jetbrains/{.gradle,build,local.properties}` +
+  `.idea/`/`*.iml`; the Gradle wrapper stays committable.
+- **Build bootstrap (every one of these cost a failed build — they are
+  load-bearing).** IntelliJ Platform Gradle Plugin **2.7.0** (2.3.0 →
+  `JvmVendorSpec IBM_SEMERU` on Gradle 9); Foojay resolver **1.0.0**
+  (`settings.gradle.kts`; 0.8/0.9 → same `IBM_SEMERU`); Kotlin **2.4.0**
+  (2.0.21 → `IllegalArgumentException: 25.0.3` — its daemon runs on the Gradle
+  JVM/JDK 25 and its bundled parser can't read "25"); `instrumentCode = false`
+  (the platform's instrumentation task throws `Packages does not exist` on the
+  JDK 25 Gradle JVM; it only injects `@NotNull` checks, not load-bearing —
+  re-enable when building on JDK 21); `DiffContentFactory` is in
+  `com.intellij.diff` (NOT `.contents`, where `DiffContent` is). `local()`
+  builds against the auto-detected installed IDE (`product-info.json`),
+  overridable via `RIDER_HOME`/`-PriderHome` — no hardcoded path, no IntelliJ
+  Community download. Build: `gradlew buildPlugin` → zip in
+  `build/distributions/`; install via Settings → Plugins → ⚙ → Install from Disk.
+- **Open.** Disposal of the JCEF query + load handler; `autoStartCommand` to
+  spawn server.js; single-window embedded diff via `createRequestPanel` (vs the
+  current `showDiff` + separate button dialog); VirtualFile highlighting.
+
 ### 2026-06-30 — fix(extension): subagent parallel & chain modes were dead since inception
 
 - **Bug.** Operator-precedence error in the mode-detection guard
