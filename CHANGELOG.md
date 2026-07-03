@@ -9,6 +9,24 @@
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-07-03 — fix(jetbrains): diff approval is one window — embed the diff panel, no blocking popup
+
+- **Symptom:** the IDE diff-approval flow opened *two* modal windows —
+  `DiffManager.showDiff()` (the diff) + our button `DialogWrapper` (the popup).
+  The popup sat on top and blocked scrolling/interacting with the diff, and a
+  decision left the diff window open (we had no handle to close it).
+- **Fix:** embed the native diff viewer *inside* the approval dialog via
+  `DiffManager.createRequestPanel(Project, Disposable, Window)` as the dialog's
+  center panel; the 4 safeguard buttons live in the dialog's bottom action bar.
+  One window → buttons never overlay the diff, and `close(OK_EXIT_CODE)` closes
+  the whole dialog (diff included). Panel is torn down via a
+  `Disposer.newDisposable()` parent in the overridden `dispose()`.
+- **API note:** the modern `createRequestPanel` takes `Project`/`Disposable`/
+  `Window` — no `DiffContext` (verified via `javap` against Rider 2026.1.2's
+  `intellij.platform.diff.jar`). `DialogWrapper` is not `Disposable`, hence the
+  manual parent disposable.
+- File: `jetbrains/src/main/kotlin/com/gorowynn/piwebui/DiffApprovalDialog.kt`.
+
 ### 2026-07-03 — feat(jetbrains): IDE plugin — JCEF tool window + native diff approval gate
 
 - **What.** Standalone Gradle plugin under `jetbrains/` (does NOT touch the
