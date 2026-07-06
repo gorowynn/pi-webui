@@ -9,6 +9,17 @@
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-07-06 — fix: ＋ New session works in the IDE panel (JCEF)
+
+- **Symptom:** clicking ＋ New in the JetBrains tool window did nothing.
+- **Cause:** the guard used the native `window.confirm()`; JCEF (embedded
+  Chromium) has no default JS-dialog handler, so `confirm()` returned falsy and
+  the `new_session` call was skipped. It was the webui's only native dialog —
+  everything else is in-DOM modals.
+- **Fix:** replaced it with a small `confirmModal()` in-DOM dialog (reuses the
+  existing `.opts` button styling). Works in both a browser tab and the IDE;
+  no plugin rebuild needed. (`app.js`)
+
 ### 2026-07-06 — fix+feat(jetbrains): diff-gate hardening, real-file diff, IDE-connection badge
 
 - **🔴 Hang fix** — if `DiffApprovalDialog.open()` ever threw (huge file, OOM,

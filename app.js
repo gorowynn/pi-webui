@@ -2898,14 +2898,30 @@ function resumeSession(sessionPath, current) {
 sendBtn.onclick = send;
 stopBtn.onclick = () => api({ type: "abort" });
 compactBtn.onclick = () => api({ type: "compact" });
-$("new").onclick = () => {
-	if (
-		confirm("Start a new session? Current chat stays saved on the pi side.")
-	) {
-		setTodos([]); // clear the todo panel for the fresh session
-		api({ type: "new_session" });
-	}
-};
+// ponytail: in-DOM confirm — JCEF (the IDE panel) no-ops window.confirm(), and
+// the webui uses in-DOM modals everywhere else; this was the lone native dialog.
+function confirmModal(msg, onYes) {
+	showModal(`<h3>${esc(msg)}</h3><div class="opts"></div>`, true);
+	const list = card.querySelector(".opts");
+	const no = document.createElement("button");
+	no.textContent = "Cancel";
+	no.onclick = hideModal;
+	const yes = document.createElement("button");
+	yes.textContent = "Confirm";
+	yes.onclick = () => {
+		hideModal();
+		onYes();
+	};
+	list.append(no, yes);
+}
+$("new").onclick = () =>
+	confirmModal(
+		"Start a new session? Current chat stays saved on the pi side.",
+		() => {
+			setTodos([]); // clear the todo panel for the fresh session
+			api({ type: "new_session" });
+		},
+	);
 $("sessions").onclick = showSessions;
 
 inputEl.addEventListener("keydown", (e) => {
