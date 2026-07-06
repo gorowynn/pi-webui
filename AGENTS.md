@@ -265,6 +265,18 @@ is the dev loop. Don't introduce a build step without strong reason.
     (folder with `product-info.json`; override `RIDER_HOME` / `-PriderHome`) —
     no hardcoded path, no IntelliJ Community download. Full detail:
     [`jetbrains/README.md`](jetbrains/README.md) "Build notes".
+17. **Don't try to build `jetbrains/` from the pi agent's git-bash** —
+    `./gradlew` crashes the shell (0xC0000005 on the `java` exec); every
+    `BUILD EXIT=0` is a silent no-op, and `build/` reflects the user's Rider
+    build, not the agent's. Build in Rider (or a real terminal). Verify Kotlin
+    APIs you're unsure about with `javap` (`~/.jdks/ms-25.0.3/bin/javap.exe
+    -classpath "<rider>/lib/*"`), not by running gradlew. The webui side IS
+    testable here (`node --check app.js` + greps). Current plugin diff-gate
+    surface: the real-file diff (`DiffContentFactory.create(proj, text,
+    fileType)` over a resolved `VirtualFile` — highlighted, reads the open
+    editor) + the IDE-connection badge (plugin injects `window.piWebuiIdeInfo` →
+    app.js `sb-ide` statusbar cell: green IDE name when hosted, dim `none`
+    standalone).
 
 ## RPC coverage (verified 2026-06-23)
 

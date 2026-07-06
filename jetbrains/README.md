@@ -3,7 +3,9 @@
 A thin tool window that embeds the **already-running** [pi-webui](..) panel in
 any JetBrains IDE via JCEF (bundled Chromium), plus a **native IDE diff
 approval gate** for edit/write: proposed changes open in the IDE's diff viewer
-and the Approve/Deny decision flows straight back to pi.
+— syntax-highlighted, against the open editor's current text — and the
+Approve/Deny decision flows straight back to pi. A statusbar badge shows which
+IDE hosts the panel (or `none` in a standalone browser tab).
 
 > This is a **standalone Gradle project**. It does NOT affect the webui's
 > zero-build invariant — `server.js` / `app.js` / `style.css` / `index.html`
@@ -52,9 +54,13 @@ pi proposes an edit
   → safeguard.ts asks permission via ctx.ui.select(...)
   → app.js uiRequest() sees method:"select" + curToolName ∈ {edit,write}
        AND window.piWebuiOpenDiff exists (the plugin injected it)
-       → builds {filename, leftText, rightText}  (left = /api/file; right = left + hunks applied)
+       → builds {filename, path, op, edits, content, leftText, rightText}
+            (path+edits let the plugin resolve the IDE file for a highlighted,
+             editor-aware diff; leftText/rightText are the /api/file fallback)
        → awaits window.piWebuiOpenDiff(payload)        ── JCEF bridge ──▶ Kotlin
-              Kotlin opens DiffApprovalDialog (native diff + 4 buttons)
+              Kotlin opens DiffApprovalDialog (ONE window: native diff embedded
+                 as the center panel + the 4 buttons in the bottom bar —
+                 nothing blocks the diff, and any decision closes the lot)
               user clicks → returns one of safeguard's option labels
        ◀── promise resolves with the label ───────────────────────────── Kotlin
        → app.js posts api({type:"extension_ui_response", id, value: label})   ← SAME channel as the modal
@@ -67,6 +73,15 @@ rejects, app.js falls back to the existing webui modal (see `openSelectModal`).
 The four button labels are a **wire contract** with `safeguard.ts` and must
 match exactly: `Allow once` / `Allow for this session` /
 `Allow always (save to config)` / `Deny`.
+
+The diff is a **real file diff**: the dialog resolves the edit path to an IDE
+`VirtualFile`, reads the open editor's current text (unsaved edits included)
+for the left side, and builds both sides with the file's `FileType` for syntax
+highlighting. If the path isn't under the project, it falls back to the
+`/api/file` text. The plugin also injects `window.piWebuiIdeInfo = {name,
+version}` (via `ApplicationInfo`) on load; app.js shows a **statusbar badge**
+(green `Rider`, or dim `none`) so the hosting state — and the no-IDE fallback
+— is visible at a glance.
 
 ## Build notes (the bootstrap that worked)
 
@@ -83,7 +98,8 @@ load-bearing — older ones throw cryptic errors:
   chokes on the JDK 25 Gradle JVM (`Packages does not exist`); it only injects
   `@NotNull` checks, not load-bearing. Re-enable when building on a JDK 21.
 - **`DiffContentFactory` lives in `com.intellij.diff`** (NOT `.contents`, where
-  `DiffContent` is) — easy package mix-up. `create(String)` works as-is.
+  `DiffContent` is) — easy package mix-up. `create(proj, String, FileType)`
+  gives a syntax-highlighted content; `create(String)` is the plain variant.
 
 Gson is bundled in the IntelliJ Platform (`lib/gson-*.jar`) — no extra dependency.
 
@@ -93,7 +109,4 @@ Gson is bundled in the IntelliJ Platform (`lib/gson-*.jar`) — no extra depende
   (currently outlive the browser — fine for one long-lived window).
 - Optional `autoStartCommand` so opening the tool window can spawn server.js
   (with the project's existing cross-platform tree-kill).
-- Single-window embedded diff via `DiffManager.createRequestPanel(...)` instead
-  of `showDiff()` + a separate button dialog.
-- Resolve edit paths to IDE `VirtualFile`s (when under the project root) for
-  ref-aware highlighting instead of plain text content.
+- A Settings UI for the base URL (today it's hand-edited in `pi-webui.xml`).

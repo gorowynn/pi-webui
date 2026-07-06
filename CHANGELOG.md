@@ -9,6 +9,36 @@
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-07-06 — fix+feat(jetbrains): diff-gate hardening, real-file diff, IDE-connection badge
+
+- **🔴 Hang fix** — if `DiffApprovalDialog.open()` ever threw (huge file, OOM,
+  bad payload), the JS promise from `window.piWebuiOpenDiff` stayed pending →
+  app.js's `await` hung → pi's approval latch stalled. The CEF→EDT handler now
+  wraps it in try/catch and ALWAYS resolves, failing closed to `"Deny"`.
+  (`PiWebuiToolWindowFactory.kt`)
+- **🟡 Enter fail-closed** — `DiffApprovalDialog` overrides `doOKAction()` →
+  `Deny`, so Enter (the dialog's default OK path) can't implicitly approve; only
+  an explicit button click allows. Esc / window-X already = Deny.
+  (`DiffApprovalDialog.kt`)
+- **Real-file diff** — the dialog resolves the edit path to an IDE `VirtualFile`
+  and builds the diff via `DiffContentFactory.create(proj, text, fileType)`:
+  **syntax highlighting** by file type, and the **left side reads the open
+  editor's text** (unsaved edits included) instead of server.js's disk read.
+  Falls back to the app.js `/api/file` text when the path isn't under the
+  project. Payload gained `path`/`op`/`edits`/`content`; `EditHunk{oldText,
+  newText}` mirrors app.js's first-occurrence replace. (`DiffApprovalDialog.kt`,
+  `DiffPayload`/`EditHunk`, `app.js buildDiffPayload`)
+- **IDE-connection badge** — the plugin injects `window.piWebuiIdeInfo =
+  {name, version}` (via `ApplicationInfo`) on each load and calls
+  `window.piWebuiIdeStatus(info)`; app.js renders a statusbar cell — green
+  `Rider` (hover = version) when IDE-hosted, dim `none` in a standalone tab.
+  Doubles as a visible check that the no-IDE fallback is active.
+  (`PiWebuiToolWindowFactory.kt`, `index.html`, `app.js updateIdeBadge`,
+  `style.css`)
+- **Not build-verified in the dev shell** — the agent's git-bash can't exec the
+  JVM via `gradlew` (0xC0000005); Kotlin is linter-clean + key APIs
+  `javap`-verified, but the actual build/test ran in Rider.
+
 ### 2026-07-03 — fix(jetbrains): diff approval is one window — embed the diff panel, no blocking popup
 
 - **Symptom:** the IDE diff-approval flow opened *two* modal windows —

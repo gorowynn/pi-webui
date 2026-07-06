@@ -4,9 +4,15 @@ import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.DiffRequestPanel
 import com.intellij.diff.requests.SimpleDiffRequest
+import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileTypes.FileType
+import com.intellij.openapi.fileTypes.FileTypes
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VfsUtil
+import com.intellij.openapi.vfs.VirtualFile
 import java.awt.Dimension
 import java.awt.event.ActionEvent
 import javax.swing.AbstractAction
@@ -44,12 +50,11 @@ class DiffApprovalDialog(
 
     override fun createCenterPanel(): JComponent {
         val factory = DiffContentFactory.getInstance()
-        val left = factory.create(payload.leftText)
-        val right = factory.create(payload.rightText)
+        val (leftText, rightText, fileType) = resolveContents()
         val request = SimpleDiffRequest(
             title,
-            listOf(left, right),
-            listOf("Current (on disk)", "Proposed (from pi)"),
+            listOf(factory.create(proj, leftText, fileType), factory.create(proj, rightText, fileType)),
+            listOf("Current", "Proposed (from pi)"),
         )
         // createRequestPanel(Project, Disposable parent, Window) — modern API,
         // no DiffContext. The panel is torn down via parentDisp in dispose().
@@ -58,6 +63,46 @@ class DiffApprovalDialog(
         panel.setRequest(request)
         panel.component.preferredSize = Dimension(1000, 700)
         return panel.component
+    }
+
+    /**
+     * Prefer the IDE's real file: reflects the open editor (incl. unsaved edits)
+     * + the file's FileType for syntax highlighting. Falls back to the app.js-
+     * provided text (server.js /api/file) when the path isn't under the project.
+     */
+    private fun resolveContents(): Triple<String, String, FileType> {
+        val vf = resolveVirtualFile()
+        if (vf != null) {
+            val left = readCurrentText(vf)
+            val right = when (payload.op) {
+                "write" -> payload.content
+                "edit" -> applyEdits(left, payload.edits)
+                else -> payload.rightText
+            }
+            return Triple(left, right, vf.fileType)
+        }
+        return Triple(payload.leftText, payload.rightText, FileTypes.PLAIN_TEXT)
+    }
+
+    private fun resolveVirtualFile(): VirtualFile? {
+        val raw = payload.path.takeIf { it.isNotBlank() } ?: return null
+        val io = java.io.File(raw)
+        val candidate = if (io.isAbsolute) io else {
+            val base = proj.basePath ?: return null
+            java.io.File(base, raw)
+        }
+        return LocalFileSystem.getInstance().findFileByIoFile(candidate)
+    }
+
+    /** Open editor's text (unsaved edits included) when loaded; else VFS content. */
+    private fun readCurrentText(vf: VirtualFile): String =
+        FileDocumentManager.getInstance().getDocument(vf)?.text ?: VfsUtil.loadText(vf) ?: ""
+
+    /** Mirror app.js: first-occurrence replace per hunk (display-only preview). */
+    private fun applyEdits(text: String, edits: List<EditHunk>): String {
+        var t = text
+        for (e in edits) t = t.replaceFirst(e.oldText, e.newText)
+        return t
     }
 
     override fun createActions(): Array<Action> = arrayOf(
@@ -72,6 +117,13 @@ class DiffApprovalDialog(
             decision = value
             close(OK_EXIT_CODE) // closes the whole dialog — diff + buttons together
         }
+    }
+
+    // Enter (→ doOKAction) must NOT implicitly approve: fail closed to Deny. The
+    // only path to Allow is an explicit button click. Matches Esc / window-X.
+    override fun doOKAction() {
+        decision = DENY
+        super.doOKAction()
     }
 
     override fun dispose() {

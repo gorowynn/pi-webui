@@ -1802,13 +1802,23 @@ async function buildDiffPayload() {
 		/* new / unreadable file → empty left */
 	}
 	let rightText = leftText;
-	if (curToolName === "edit" && Array.isArray(inp.edits)) {
-		for (const e of inp.edits)
+	const op = curToolName;
+	const edits = Array.isArray(inp.edits) ? inp.edits : [];
+	if (op === "edit")
+		for (const e of edits)
 			rightText = rightText.replace(e.oldText || "", e.newText || "");
-	} else if (curToolName === "write") {
-		rightText = inp.content || "";
-	}
-	return { filename, leftText, rightText };
+	else if (op === "write") rightText = inp.content || "";
+	// leftText/rightText are the fallback for paths not under the IDE project; the
+	// plugin prefers path+op+edits/content for a real, syntax-highlighted diff.
+	return {
+		filename,
+		path,
+		op,
+		edits,
+		content: inp.content || "",
+		leftText,
+		rightText,
+	};
 }
 
 // The webui permission modal, factored out so the IDE-diff path can fall back
@@ -2451,6 +2461,26 @@ function refreshHealth() {
 function refreshStats() {
 	api({ type: "get_session_stats", id: "sb-stats" });
 }
+// IDE-connection badge: the JetBrains plugin injects window.piWebuiIdeInfo on
+// load and calls window.piWebuiIdeStatus(info) once we register it. Falls to
+// "none" when the page isn't IDE-hosted (standalone browser tab).
+function updateIdeBadge(info) {
+	const el = document.getElementById("sb-ide");
+	if (!el) return;
+	if (info && info.name) {
+		el.textContent = info.name;
+		el.title = info.version ? info.name + " " + info.version : info.name;
+		el.classList.add("on");
+		el.classList.remove("off");
+	} else {
+		el.textContent = "none";
+		el.title = "no IDE hosting this panel (standalone)";
+		el.classList.add("off");
+		el.classList.remove("on");
+	}
+}
+window.piWebuiIdeStatus = updateIdeBadge;
+updateIdeBadge(window.piWebuiIdeInfo || null);
 // ---- SSE ----
 const es = new EventSource("/api/events");
 es.onopen = () => {

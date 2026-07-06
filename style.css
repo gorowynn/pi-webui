@@ -170,6 +170,15 @@ code {
 	padding: 1px 5px;
 	border-radius: var(--r);
 }
+/* IDE-connection badge in the statusbar: green when a JetBrains IDE hosts the
+   panel, dimmed "none" when standalone. Set by app.js updateIdeBadge(). */
+#sb-ide.on {
+	background: #a6cc701f;
+	color: var(--ok);
+}
+#sb-ide.off {
+	opacity: 0.5;
+}
 .think {
 	background: var(--think);
 	margin: 10px 0;
