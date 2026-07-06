@@ -1,7 +1,7 @@
 {
   "name": "pi-webui",
   "version": "0.2.0",
-  "description": "Minimal, zero-dependency web UI for pi. `pi install npm:pi-webui`, then type /webui.",
+  "description": "Minimal-dependency web UI for pi. `pi install npm:pi-webui`, then type /webui.",
   "keywords": ["pi-package"],
   "license": "MIT",
   "files": [

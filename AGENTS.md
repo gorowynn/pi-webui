@@ -33,7 +33,7 @@ change → `docs/`; finished work → `CHANGELOG.md`). Full policy:
 
 ## What this project is
 
-**pi-webui** — a minimal, **zero-dependency** web UI for
+**pi-webui** — a **minimal-dependency** web UI for
 [pi](https://github.com/earendil-works/pi-coding-agent). No build step, no
 React/Express/`ws`. Just Node built-ins (`http` + `child_process`), native
 browser SSE + `fetch`, and pi's **RPC mode** (`pi --mode rpc`) over stdin/stdout
@@ -68,10 +68,11 @@ is the dev loop. Don't introduce a build step without strong reason.
 | File | Role |
 |------|------|
 | `server.js` | The bridge. CommonJS, ~no deps. Serves assets, frames JSONL (splits on `\n` only), spawns/respawns `pi --mode rpc`, CSRF + DNS-rebinding gate, `safePath`, 1MB body cap. |
-| `index.html` | Markup only. Inline refs to `style.css` + `md.js` + `app.js` (load order matters: md.js before app.js). |
+| `index.html` | Markup only. Inline refs to `style.css` + `vendor/highlight.css` + `vendor/markdown-it.min.js` + `md.js` + `vendor/highlight.min.js` + `app.js` (load order matters: markdown-it → md.js → highlight.min.js → app.js). |
 | `style.css` | All styling. Ayu-Dark palette — see [docs/design.md](docs/design.md). |
-| `md.js` | **Markdown → HTML parser + `esc()` HTML escaper**. Zero-dep, pure `string→string`, browser-loaded via `<script>` BEFORE app.js, also `require`-able in Node. Exports two globals: `md(markdown)` and `esc(text)`. The single source of truth for both — app.js dropped its duplicate copies. |
+| `md.js` | **Thin shim over vendored markdown-it** + the `esc()` HTML escaper. ~45 lines: `md(markdown)` delegates to a configured markdown-it 14.x (`html:false`/`breaks:true`/`linkify:true` + `target=_blank` on links); `esc(text)` stays (project-wide source of truth). Same globals + `require`-able export as before. The hand-rolled ~790-line parser is gone (2026-07-06). Loaded AFTER `vendor/markdown-it.min.js`. |
 | `app.js` | The entire frontend (vanilla JS). SSE handling, rendering, modals, diffs, commands palette. Uses `md()` + `esc()` globals from md.js. |
+| `vendor/` | **Vendored 3rd-party runtimes**, both static assets via the `server.js` `STATIC` whitelist (no npm, no build): **markdown-it** (`markdown-it.min.js` v14.1.0 UMD, 124 KB — sets `window.markdownit`; `md.js` is its shim) and **highlight.js** (`highlight.min.js` v11.11.1 common build + `highlight.css` github-dark). `app.js` `highlightCode()` post-processes `pre code` blocks `md.js` emits; both gated so a missing/removed asset degrades silently (md.js → escaped text; hljs → uncolored code). |
 | `docs/` | Durable specs: [`design.md`](docs/design.md) (UI/UX, visual source of truth) and [`README.md`](docs/README.md) (index + SSOT charter). |
 | `extensions/pi_minimal_webui/` | The pi extension shipped with the package. See below. |
 | `package.json` | `keywords:["pi-package"]` makes it `pi install`-able. `pi` manifest declares `extensions` + `skills` (both package-relative); `files:` whitelist ships both to npm. |
@@ -192,44 +193,36 @@ is the dev loop. Don't introduce a build step without strong reason.
    concurrent sessions are still a later concern. If the pi subprocess crashes,
    the bridge restarts it after 1s (crash-loop guard = exponential backoff).
 10. **Security baseline already in place:** CSRF + DNS-rebinding gate on POSTs,
-    SSE backpressure (drops stalled clients), `md()` link-scheme allowlist
-    (blocks `javascript:`/`data:`), 1MB body cap. Don't regress these.
+    SSE backpressure (drops stalled clients), markdown-it `html:false` (raw HTML
+    escaped) + built-in `validateLink` (blocks `javascript:`/`data:`/`vbscript:`
+    hrefs), 1MB body cap. Don't regress these.
 
-11. **`md.js` must load before `app.js`.** Both `index.html` (`<script src="md.js">` then `app.js`) and `server.js` (`STATIC` whitelist) must list `md.js`. app.js calls `md()`/`esc()` at runtime with no local definitions — they're globals set by md.js's IIFE. md.js is `require`-able in Node (exports `{md, esc}`); exercise it with `node -e "const{md}=require('./md.js');console.log(md('**x**'))"` after touching the parser.
+11. **Load order: `vendor/markdown-it.min.js` → `md.js` → `vendor/highlight.min.js` → `app.js`.** `md.js` is now a thin SHIM over vendored markdown-it 14.x (UMD, sets `window.markdownit`) — it keeps `esc()` (project-wide HTML-escaping source of truth) and delegates `md()` to a configured markdown-it (`html:false`, `breaks:true`, `linkify:true`; links get `target=_blank rel=noopener noreferrer`). So markdown-it MUST load before md.js. app.js calls `md()`/`esc()` as globals set by md.js's IIFE. All three (`md.js` + both vendor files) are served via the `server.js` `STATIC` whitelist. md.js is still `require`-able in Node (exports `{md, esc}`; the shim resolves markdown-it via the `markdownit` global, else `require('./vendor/markdown-it.min.js')`); exercise with `node -e "const{md}=require('./md.js');console.log(md('**x**'))"`. `app.js` `highlightCode(cur.bubble)` runs at the end of `renderAssistantContent` — the single chokepoint for hljs (gotcha #13). The `vendor/` dir holds the project's vendored 3rd-party runtimes (markdown-it + highlight.js — see File map).
 12. **`esc()` is shared, not duplicated.** It lives ONLY in `md.js` (static entity map, null-safe). app.js has ~40 call sites that use the global. Don't re-add a local `esc` to app.js — it would silently shadow and drift (the old copy returned `"null"` for null input; the shared one returns `""`).
-13. **Assistant text renders from pi's AUTHORITATIVE message, not re-accumulated
-    deltas.** (`app.js`: `finalizeBubble(payload.message.content)` at `message_end`;
-    `renderAssistantContent` shared with `renderMessage`/reload.) History: md used
-    to render broken *sometimes* live but always fine after reload. Two layers of
-    cause, fixed in two steps:
-    - **Render path (2026-06-24, first fix):** text stopped streaming live; it
-      accumulates raw blocks into `cur.content` and renders once at `message_end`
-      via `renderAssistantContent` — the same function reload uses. Killed the
-      live-vs-reload *path* divergence (missing `text_end`, whole-message
-      `text_end.content`, stray `text_delta` after `cur` nulled, …).
-    - **Data source (2026-06-24, decisive fix):** the live path still read
-      browser-re-accumulated `text_delta`s, which are LOSSY/CORRUPTIBLE in the
-      SSE transport (dropped/merged deltas → missing words; stripped spaces/
-      parens/digits → words jammed). Reload reads pi's stored message via
-      `get_messages`, so it was always clean. Root fix: `message_end` carries
-      the full final `message` (`agent-session.js` L390-410 relays it; every
-      `AssistantMessageEvent` also carries `partial` — pi-ai `types.d.ts`
-      L330-374), the SAME object pi persists. `finalizeBubble(payload.message.content)`
-      renders from THAT, so live and reload read byte-identical input and can no
-      longer diverge regardless of transport hiccups. The hand-accumulated
-      `cur.content` survives only as the `agent_end` safety-net fallback (when
-      `message_end` never fired).
-    Design notes: `finalizeBubble(content)` clears the bubble, RESETS the
-    per-block cursors (`textPar`/`thinkEl`/…) so re-render creates fresh nodes
-    instead of painting into the detached live-streamed ones, then calls
-    `renderAssistantContent`. Thinking STILL streams live (`renderThink` via the
-    rAF-coalesced `scheduleRender`) and is just re-rendered finalized at
-    `message_end` (collapsed `<details>` → invisible swap). `md.js` itself is
-    deterministic and innocent — verified by feeding it the full reload text
-    (zero words lost). **If md ever renders broken again**, it must now ALSO be
-    broken after reload (same input); if not, suspect `payload.message` being
-    absent/empty at `message_end` (check the raw event) — the `cur.content`
-    fallback would then kick in and reintroduce the old symptom.
+13. **Assistant text + thinking both stream LIVE, then finalize from pi's
+    AUTHORITATIVE message.** (`app.js`: `scheduleRender`→`renderText`/`renderThink`
+    per rAF during deltas; `finalizeBubble(payload.message.content)` at
+    `message_end` is the authoritative re-render; `renderAssistantContent` is
+    shared with `renderMessage`/reload.) History: md used to render broken
+    *sometimes* live but always fine after reload. The decisive 2026-06-24 fix
+    was rendering from `message_end`'s full final `message` (`agent-session.js`
+    relays it — the SAME object pi persists and returns via `get_messages`), not
+    browser-re-accumulated `text_delta`s (LOSSY/CORRUPTIBLE in SSE: dropped/
+    merged deltas → missing words; stripped spaces/parens/digits → words jammed).
+    **2026-07-06: text streaming was RE-ENABLED** (markdown-it replaced the
+    hand-rolled parser — see md.js file-map row). Safe now because: markdown-it
+    renders partial input as its literal/partial form (unclosed fence/emphasis/
+    link → literal text), so the live view is "incomplete" not "broken"; and the
+    `message_end` finalize still re-renders from authoritative
+    `payload.message.content`, so a transiently-wrong live token self-corrects
+    (the old bug STAYED broken until reload; this is momentary). `finalizeBubble`
+    clears the bubble + RESETS per-block cursors (`textPar`/`thinkEl`/…) so
+    re-render creates fresh nodes. Thinking streams live via `renderThink` (now
+    `md()`, not `textContent`) and is re-rendered finalized at `message_end`.
+    **If text ever looks wrong persistently** (not just mid-stream), it must ALSO
+    be wrong after reload (same authoritative input); if not, suspect
+    `payload.message` absent/empty at `message_end` — the `cur.content` fallback
+    would kick in and reintroduce the old symptom.
 14. **Subagent live view reads `partialResult.details`, not `.content`.** When
     the `subagent` tool runs it streams its whole live state
     (`{mode, results:[{agent, model, turns, exitCode, messages:[…child tool
@@ -286,7 +279,7 @@ to change — don't re-audit without a pi version bump.
 
 - **Use RPC, not the SDK.** The SDK docs cover `createAgentSession()` /
   in-process `AgentSession`; we deliberately use `pi --mode rpc` (subprocess)
-  instead — it keeps the zero-dependency constraint, the process isolation,
+  instead — it keeps the minimal-dependency constraint, the process isolation,
   and the crash-restart backoff in `server.js`. Migrating would break both.
 - **Wire keys are correct.** `follow_up` is snake_case (gotcha #1); the
   composer maps mode→`steer`/`follow_up`/`prompt`; `contextUsage:null` after

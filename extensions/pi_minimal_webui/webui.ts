@@ -1,7 +1,7 @@
 /**
  * pi-webui — `/webui` launcher command.
  *
- * Spawns the bundled server.js (a zero-dep HTTP bridge that itself spawns its
+ * Spawns the bundled server.js (a minimal-dep HTTP bridge that itself spawns its
  * own `pi --mode rpc`) in the background, opens the browser, and leaves the
  * TUI fully usable. The webui is a SEPARATE pi session in the same cwd — not
  * the TUI session you ran /webui from (RPC mode is fixed at process start, so

@@ -20,13 +20,13 @@
  * ~/.pi/agent/subagent-tiers.json ({capable,implement,lookup} → "provider/model")
  * is re-read on every call (safeguard pattern) and overrides the TIERS defaults.
  */
-// @ts-expect-error no @types/node in this zero-dep extension; built-ins at runtime.
+// @ts-expect-error no @types/node in this minimal-dep extension; built-ins at runtime.
 import { spawn } from "node:child_process";
-// @ts-expect-error no @types/node in this zero-dep extension; built-ins at runtime.
+// @ts-expect-error no @types/node in this minimal-dep extension; built-ins at runtime.
 import * as fs from "node:fs";
-// @ts-expect-error no @types/node in this zero-dep extension; built-ins at runtime.
+// @ts-expect-error no @types/node in this minimal-dep extension; built-ins at runtime.
 import * as os from "node:os";
-// @ts-expect-error no @types/node in this zero-dep extension; built-ins at runtime.
+// @ts-expect-error no @types/node in this minimal-dep extension; built-ins at runtime.
 import * as path from "node:path";
 
 // ponytail: ambient node globals. This extension has no @types/node (jiti strips

@@ -133,7 +133,7 @@ function newAssistantBubble() {
 		thinkLabel: null,
 		thinkCount: null,
 		thinkBuf: "",
-		content: [], // raw {type:"text"|"thinking", text/thinking} blocks, rendered once at message_end
+		content: [], // raw {type:"text"|"thinking"} blocks; streamed live + finalized at message_end
 		_blk: null, // block currently being filled by *_delta
 	};
 	return cur;
@@ -161,12 +161,29 @@ function nonEmptyContent(content) {
 			(b.type === "text" && b.text) || (b.type === "thinking" && b.thinking),
 	);
 }
-// ponytail: the ONE render path for assistant text + thinking blocks, shared
-// by the live stream (message_end → finalizeBubble) and reload (renderMessage).
-// Text is NOT streamed live — it renders once, fully formed, at message_end —
-// so md() gets identical input live and after reload: no more "renders broken
-// until reload". Thinking still streams live above; this just (re)renders its
-// finalized form. Mirrors what renderMessage used to inline.
+// ponytail: syntax-highlight code blocks via the vendored highlight.js
+// (vendor/highlight.min.js, loaded before app.js). Pure post-process over the
+// DOM renderAssistantContent just built — md.js already emits
+// <pre><code class="language-xxx">. Gated so a missing/removed asset degrades
+// silently to today's uncolored output. Ceiling: highlightElement is sync per
+// block; a pathological paste could jank, fine for normal code. Re-render
+// builds fresh nodes (finalizeBubble resets cursors, gotcha #13) so no
+// stale-highlight guarding is needed; the dataset check is belt-and-suspenders.
+function highlightCode(root) {
+	if (!window.hljs || !root) return;
+	root.querySelectorAll("pre code").forEach((el) => {
+		if (el.dataset.highlighted) return;
+		try {
+			hljs.highlightElement(el);
+		} catch (e) {}
+	});
+}
+// ponytail: the AUTHORITATIVE render path for assistant text + thinking blocks,
+// shared by message_end (finalizeBubble) and reload (renderMessage). Text ALSO
+// streams live now (scheduleRender→renderText, re-enabled with markdown-it), but
+// this is the definitive render from pi's payload.message.content — so live and
+// reload read byte-identical input and can't diverge. Thinking streams live via
+// renderThink (now md()); this re-renders its finalized form.
 function renderAssistantContent(content) {
 	for (const b of nonEmptyContent(content)) {
 		if (b.type === "text") {
@@ -186,6 +203,7 @@ function renderAssistantContent(content) {
 			cur.thinkBuf = "";
 		}
 	}
+	highlightCode(cur.bubble);
 }
 // definitive render into cur's bubble, replacing any live-streamed nodes (keeps
 // the .role label). Called from message_end (normal, with pi's AUTHORITATIVE
@@ -249,7 +267,9 @@ function ensureThink(active) {
 	// opened a collapsed trace — paint whatever we have right now (the
 	// streaming path skips body paints while closed).
 	d.addEventListener("toggle", () => {
-		if (d.open) body.textContent = d.__buf || body.textContent || "";
+		// ponytail: thinking is markdown now (renderThink uses md()). Paint the
+		// parsed buffer on open so a collapsed trace shows formatted, not raw.
+		if (d.open) body.innerHTML = md(d.__buf || "");
 	});
 }
 function finalizeThink() {
@@ -286,18 +306,22 @@ function renderThink(force) {
 	lastThinkPaint = now;
 	// expensive body paint only when visible or finalizing
 	if (force || cur.thinkDetails.open) {
-		cur.thinkEl.textContent = buf;
+		cur.thinkEl.innerHTML = md(buf);
 		autoscroll();
 	}
 }
-// ponytail: coalesce thinking-delta paints to one rAF. Only thinking streams
-// live now (text renders once at message_end), so this just feeds renderThink;
-// thinking_end/finalize paint directly for an immediate final paint.
+// ponytail: coalesce live paints to one rAF. BOTH text and thinking stream
+// live now (re-enabled with markdown-it — partial input renders its literal/
+// partial form, and message_end finalize corrects to the authoritative text;
+// see gotcha #13). renderText/renderThink each guard on their own cursor, so a
+// rAF for one no-ops the other. thinking_end/finalize paint directly for an
+// immediate final paint.
 let renderRaf = 0;
 function scheduleRender() {
 	if (renderRaf) return;
 	renderRaf = requestAnimationFrame(() => {
 		renderRaf = 0;
+		renderText();
 		renderThink();
 	});
 }
@@ -2139,11 +2163,11 @@ function handle(payload) {
 			)
 				cur = newAssistantBubble();
 			if (e.type === "text_start") {
-				// ponytail: text does NOT render live (user doesn't need it; only
-				// thinking streams). Accumulate raw blocks; the ONE definitive md()
-				// render happens at message_end via renderAssistantContent —
-				// identical to reload, so they can't diverge. cur._blk is the block
-				// currently being filled; survives a missing text_end.
+				// ponytail: text streams live again (markdown-it tolerates partial
+				// input; message_end does the AUTHORITATIVE render from
+				// payload.message.content via finalizeBubble, so a transiently-wrong
+				// live token self-corrects — see gotcha #13). cur._blk survives a
+				// missing text_end.
 				cur._blk = { type: "text", text: "" };
 				cur.content.push(cur._blk);
 				setActivity("writing…", true);
@@ -2153,6 +2177,10 @@ function handle(payload) {
 					cur.content.push(cur._blk);
 				}
 				cur._blk.text += e.delta || "";
+				// mirror to cur.textBuf + paint per rAF (scheduleRender→renderText).
+				cur.textBuf = cur._blk.text;
+				ensureTextPar();
+				scheduleRender();
 			} else if (e.type === "text_end") {
 				if (cur._blk && cur._blk.type === "text" && e.content != null)
 					cur._blk.text = e.content;

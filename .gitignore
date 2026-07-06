@@ -2,10 +2,12 @@ node_modules/
 *.log
 .env
 .DS_Store
+Thumbs.db
 
 # JetBrains plugin (jetbrains/ Gradle project)
 jetbrains/.gradle/
 jetbrains/.intellijPlatform/
+jetbrains/.kotlin/
 jetbrains/build/
 jetbrains/local.properties
 .idea/

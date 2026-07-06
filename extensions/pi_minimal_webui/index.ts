@@ -88,7 +88,7 @@ import todo from "./todo.js";
 import discipline from "./discipline.js";
 import subagent from "./subagent.js";
 
-// @ts-expect-error no @types/node in this zero-dep extension; jiti strips types at load, and the typeof guard keeps this safe at runtime.
+// @ts-expect-error no @types/node in this minimal-dep extension; jiti strips types at load, and the typeof guard keeps this safe at runtime.
 const envMarker =
 	(typeof process !== "undefined" &&
 		process.env &&

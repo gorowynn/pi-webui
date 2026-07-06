@@ -9,6 +9,67 @@
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-07-06 — feat: markdown-it replaces hand-rolled parser + live text/thinking streaming
+
+- **Replaced the ~790-line hand-rolled `md.js` parser with a ~45-line shim over
+  vendored markdown-it 14.x** (`vendor/markdown-it.min.js`, UMD, 124 KB — same
+  zero-build vendor pattern as highlight.js). Driver: "don't want to own a
+  parser" + the conformance/reliability gap (markdown-it is CommonMark+GFM-
+  conformant, 24M dl/wk vs `markdown-parser`'s 1.5K — see eval in session).
+- **`md.js`** keeps `esc()` (project-wide source of truth) and delegates `md()`
+  to markdown-it (`html:false`/`breaks:true`/`linkify:true`; links get
+  `target=_blank rel=noopener noreferrer`). Same globals + `require` export.
+- **Round-trip verified:** 22/30 structural match vs the old parser; the 8 diffs
+  are benign (tag/attr order) or improvements (bare-URL linkify, real `![]()`
+  images, better partial-input handling). All 6 security assertions PASS (raw
+  HTML escaped; `javascript:`/`data:` schemes not in href).
+- **Re-enabled LIVE text streaming** (off since gotcha #13, 2026-06-24) +
+  **thinking now renders as markdown** (was plain `textContent`). markdown-it
+  tolerates partial input (unclosed fence/emphasis → literal), and the
+  `message_end` finalize from `payload.message.content` remains the
+  authoritative correction — so a transiently-wrong live token self-corrects
+  instead of persisting (the old bug stayed broken until reload).
+- **Files:** `md.js` (rewrite→shim), `vendor/markdown-it.min.js` (new),
+  `index.html` (load order: markdown-it → md.js → hljs → app.js), `server.js`
+  (`STATIC` entry), `app.js` (`text_delta`→streaming, `renderThink`+toggle→
+  `md()`, `scheduleRender`→+`renderText`), `style.css` (`.think .tbody`
+  `pre-wrap`→`normal`), `AGENTS.md` (gotchas #10/#11/#13 + file-map).
+
+### 2026-07-06 — feat: syntax highlighting for code blocks (vendored highlight.js)
+
+- Colorized fenced code blocks instead of plain monochrome.
+- **Approach (zero-build preserved):** vendored `highlight.js` v11.11.1 common
+  build + the **github-dark** theme into `vendor/` (`highlight.min.js` 127 KB,
+  `highlight.css` 1.3 KB) — served as static assets via the `server.js` `STATIC`
+  whitelist, exactly like `md.js`. No npm, no build, no React.
+- **Wiring:** `index.html` loads `md.js → vendor/highlight.min.js → app.js` so
+  `window.hljs` is ready; `app.js` adds `highlightCode(cur.bubble)` at the end
+  of `renderAssistantContent` (the one chokepoint for live finalize + reload,
+  gotcha #13), gated `if(window.hljs)`. `style.css` neutralizes hljs's box
+  (`pre code.hljs{background:transparent;padding:0}`) so our `<pre>` keeps its
+  bg/border/padding and hljs supplies only token colors.
+- **First third-party runtime the project ships.** Reversible: drop the 2
+  includes + 1 hook call → silently back to uncolored output. Decision logged
+  in roadmap #12 / plans M1 (both marked SHIPPED).
+- **Verified:** `node --check` clean; md.js still emits `language-*`; hljs
+  tokenizes a sample (`hljs-keyword`/`hljs-comment` spans); all assets serve
+  200. Manual browser smoke (colored on send + reload + session-switch)
+  pending.
+
+### 2026-07-06 — docs: plan for syntax highlighting (roadmap #12 / plans M1)
+
+- Added roadmap entry
+  **#12** ("Richer markdown output — syntax highlighting", Value ●●●●, Effort S,
+  Tier 1) and build plan **M1** in [`docs/plans.md`](docs/plans.md).
+- **Why highlighting first:** `md.js` already emits `language-*` classes, and
+  both render paths route through one chokepoint (`renderAssistantContent`),
+  so the hook is a single `highlightCode(cur.bubble)` call — smallest diff,
+  biggest visual win for a coding-agent UI. KaTeX/Mermaid noted as deferred follow-ons.
+- **Open decision flagged in the plan:** vendoring `highlight.js` is the first
+  third-party runtime the project ships — a reversible step away from the
+  minimal-dep brand, gated behind `if(window.hljs)` so removal degrades silently.
+  Recommend vendor; awaiting the call before building.
+
 ### 2026-07-06 — fix: ＋ New session works in the IDE panel (JCEF)
 
 - **Symptom:** clicking ＋ New in the JetBrains tool window did nothing.
@@ -332,7 +393,7 @@
   NOT read-only despite the system prompt asking for grep/git only — the
   `--tools` allowlist is a capability wall, not a behavioral one. Added a
   `ponytail:` comment naming the ceiling and the harden path (drop `bash`).
-- **Type hygiene (`safeguard.ts`):** normalized to the sibling zero-dep pattern
+- **Type hygiene (`safeguard.ts`):** normalized to the sibling minimal-dep pattern
   (`@ts-expect-error` on `node:` imports + local minimal types for the pi
   surface) — safeguard.ts was the lone holdout still importing `node:fs` /
   `node:path` / `@earendil-works/pi-coding-agent` directly, producing 8 latent
@@ -465,7 +526,7 @@
   `discipline.ts` fix is still pending the baseline A/B.
 - Verified: `node --check` on `app.js`/`server.js`; `subagent.ts` carries only
   the baseline node-type noise (Buffer/process/implicit-any) every sibling
-  extension ships with (zero-dep, no @types/node). Smoke test pending: invoke
+  extension ships with (minimal-dep, no @types/node). Smoke test pending: invoke
   `subagent` in the webui and confirm a delegated task runs on the pinned model.
 
 ### 2026-06-24 — fix(webui): render assistant text from pi's authoritative message (root cause of broken-until-reload)
@@ -631,7 +692,7 @@ Audited the implementation against the official pi docs and recorded the
 result so a future session doesn't re-audit.
 
 - **`AGENTS.md`** — new "RPC coverage (verified 2026-06-23)" section: RPC is
-  the correct surface (not the in-process SDK — would break zero-dep + process
+  the correct surface (not the in-process SDK — would break minimal-dep + process
   isolation); all wire keys verified correct (`follow_up` snake_case,
   full Extension-UI protocol handled, `contextUsage:null` handled); two events
   deliberately unhandled (`auto_retry_end`, `extension_error`); nothing custom
@@ -804,7 +865,7 @@ Five reported bugs:
 
 ### 2026-06-23 — feat(webui): extract md.js (hardened parser + shared esc), drop inline tool display
 
-- **New `md.js`** (~670 lines): zero-dependency Markdown→HTML parser extracted from
+- **New `md.js`** (~670 lines): minimal-dependency Markdown→HTML parser extracted from
   app.js's inline cluster. Pure `string→string`, browser-loaded via `<script>`
   BEFORE app.js, also `require`-able in Node — the whole point of the extraction
   was testability (app.js can't be `require`d, its top level touches `document`).
@@ -951,7 +1012,7 @@ Five reported bugs:
 - `499b42c` feat: rich content rendering + working ask_user_question in RPC mode
 - `4e25c26` feat: status dashboard, ask_user_question modal, todo panel, full-width tool UX
 - `7e5b206` feat: pi-webui global launcher (npm bin shim, no runtime deps)
-- `55aa269` feat: initial commit — zero-dependency pi web UI
+- `55aa269` feat: initial commit — minimal-dependency pi web UI
 
 ### 2026-06-23 — chore: created AGENT_NOTES.md
 

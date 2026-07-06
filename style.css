@@ -170,6 +170,15 @@ code {
 	padding: 1px 5px;
 	border-radius: var(--r);
 }
+/* syntax highlighting: vendored highlight.js adds .hljs to <pre><code> and ships
+   its own background/padding in vendor/highlight.css. Our <pre> already owns the
+   background/border/padding (above), so neutralize hljs's box and let it
+   supply only token colors. Kept here (not in the vendored file) so the
+   upstream theme stays unmodified for clean updates. */
+pre code.hljs {
+	background: transparent;
+	padding: 0;
+}
 /* IDE-connection badge in the statusbar: green when a JetBrains IDE hosts the
    panel, dimmed "none" when standalone. Set by app.js updateIdeBadge(). */
 #sb-ide.on {
@@ -246,7 +255,9 @@ code {
 	color: #d4cbe2;
 	font-size: 13px;
 	line-height: 1.6;
-	white-space: pre-wrap;
+	/* normal, not pre-wrap: thinking is markdown now (block HTML via md()), and
+	   pre-wrap would misrender prose. <pre> blocks keep their own formatting. */
+	white-space: normal;
 	border-top: 1px solid #ffffff14;
 }
 .tool {

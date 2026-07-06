@@ -33,7 +33,7 @@ tab" is still a tab-swap, not true parallelism.
 **What:** Browser Notification API (+ optional soft sound) when the agent goes
 idle after a run longer than N seconds, especially if the tab is hidden.
 **Benefit:** Fire off a long task and walk away. Highest value-per-line in the
-whole list — ~15 lines, native API, zero deps.
+whole list — ~15 lines, native API, minimal deps.
 **Drawback:** Needs a permission prompt; easy to make annoying (only notify on
 `agent_end` after a real run, throttle).
 **Effort:** S
@@ -59,6 +59,30 @@ opaquely. Surfacing = trust in the UI.
 **Drawback:** `extension_error` payloads aren't well-specified; might be noisy
 if an extension throws often. Easy to mute.
 **Effort:** S
+
+### 12. Richer markdown output — syntax highlighting (then math / diagrams) — SHIPPED 2026-07-06 (highlighting)
+
+> **Status (2026-07-06): highlighting SHIPPED** — vendored `highlight.js`
+> v11.11.1 (github-dark) per [`plans.md`](plans.md) M1. KaTeX/Mermaid remain
+> deferred follow-ons (add when math/diagrams actually appear in usage).
+
+**What:** Colorize the `pre code.language-xxx` blocks `md.js` already emits,
+via a drop-in runtime (no build, no React).
+Optional follow-ons, same drop-in shape: KaTeX for `$…$` math and a Mermaid
+runtime for ` ```mermaid ` blocks.
+**Benefit:** Reading code is the core use case of a coding-agent UI, and uncolored
+blocks are its core readability gap. Smallest diff for the largest win:
+`md.js` already emits the `language-*` classes a highlighter keys off, and both
+the live + reload render paths go through one function (`renderAssistantContent`),
+so the hook is one call.
+**Drawback:** *Touches the minimal-dependency identity.* highlight.js / Prism /
+KaTeX / Mermaid are third-party — vendoring a static `.js`+`.css` is consistent
+with the no-build / no-npm rule (same as shipping `md.js`), but it IS a runtime
+reliance on external code. **Decision point:** vendor a blob (~50 KB common
+build, lazy + battle-tested) vs hand-roll a tiny tokenizer (true minimal-dep, more
+code to maintain) vs skip. Recommend **vendor**, gated behind `if (window.hljs)`
+so a missing/removed asset degrades silently to today's uncolored output.
+**Effort:** S (highlighting); KaTeX/Mermaid S each if pursued later.
 
 ## Tier 2 — worth it, more involved
 
@@ -280,10 +304,13 @@ Value ● = low, ●●●●● = high. Effort S/M/L. Score = value ÷ effort.
 | 6 | Mobile / PWA | ●●● | M | ★★½ |
 | 10 | Tool-call / cost history | ●● | M | ★★ |
 | 11 | Theme/font settings | ●● | M | ★★ |
+| 12 | Richer md (syntax highlighting) | ●●●● | S | ★★★★½ |
 
 ## Suggested order
 
 Knock out **#2 + #3 + #4** first (all S, immediate feel improvements, pure
 additive UI, mutually independent). Then **#1 fork** (the biggest workflow win).
 Then decide between safety (**#5 revert**) vs. mobile (**#6/#7**) based on
-whether the project is actually used off-laptop.
+whether the project is actually used off-laptop. **#12 (syntax highlighting)**
+joins the first S batch if its minimal-dep tradeoff (see the entry +
+[`plans.md`](plans.md) M1) is acceptable.

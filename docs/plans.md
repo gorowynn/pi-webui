@@ -172,3 +172,116 @@ saving can't buy back).
 
 Remove the ⚡ UI + the `set_model`/revert calls in `send()` and the
 `agent_end`/error handlers. The global `modelSel` path is untouched.
+
+---
+
+## M1 — Syntax highlighting via vendored highlight.js (= roadmap #12)
+
+> **Status (2026-07-06): SHIPPED.** Vendored `highlight.js` v11.11.1 common
+> build (`vendor/highlight.min.js`, 127 KB raw / ~50 KB gzip) + the
+> **github-dark** theme (`vendor/highlight.css` — hljs ships no `ayu-*` theme;
+> github-dark is the closest dark default). Wired per the plan: `server.js`
+> STATIC whitelist; `index.html` loads `md.js → highlight.min.js → app.js` so
+> `window.hljs` is ready (the `__PI_ASK_MARKER` injection still lands between
+> hljs and app.js); `app.js` `highlightCode(cur.bubble)` hooks the end of
+> `renderAssistantContent` — the one chokepoint for live finalize + reload.
+> **One addition vs plan:** `style.css` `pre code.hljs{background:transparent;
+> padding:0}` so our `<pre>` keeps its bg/border/padding and hljs supplies only
+> token colors (vendored theme left unmodified for clean updates). Verified:
+> `node --check` clean on app.js + server.js; md.js still emits `language-*`;
+> `hljs.highlight` tokenizes a sample (`hljs-keyword`/`hljs-comment` spans
+> present); all assets serve 200. Manual browser smoke (colored on send +
+> reload + session-switch) still pending. Rollback = drop the 2 includes + the
+> one hook call (graceful: `if(window.hljs)` guard).
+
+**Goal:** colorize the `pre code.language-xxx` blocks `md.js` already emits,
+**without** a build step or React.
+
+### Current state (why this is cheap)
+
+- `md.js` already emits `<pre><code class="language-xxx">` for fenced blocks
+  with a language, and `<pre><code>` (no class) for plain/indented blocks. A
+  highlighter keys straight off that class — **zero parser change.**
+- Assistant text renders through **one chokepoint**, `renderAssistantContent`
+  (`app.js:170`), used by both the live finalize (`finalizeBubble` → it, gotcha
+  #13) and reload (`renderMessage` → it, `app.js:2048`). Hook once → covers both.
+
+  *(Line numbers current as of a grep; re-locate by symbol name, not line.)*
+
+### The change
+
+1. **Vendor** (static asset like `md.js` — no npm, no build):
+   - `vendor/highlight.min.js` — the **common build** (~40 langs; full build
+     if breadth matters). ~50 KB min+gzip.
+   - `vendor/highlight.css` — a dark hljs theme close to Ayu-Dark
+     (`github-dark` / `atom-one-dark`; accent-tune against `design.md` later).
+2. **Serve**: add both to the `STATIC` whitelist in `server.js`.
+3. **Load** (`index.html`, before `app.js`):
+   `<link rel="stylesheet" href="vendor/highlight.css">` +
+   `<script src="vendor/highlight.min.js"></script>`.
+4. **Hook** (`app.js`) — a post-process over whatever `renderAssistantContent`
+   just built:
+
+   ```js
+   function highlightCode(root){
+     if(!window.hljs) return;                // graceful: missing asset → uncolored
+     root.querySelectorAll('pre code').forEach(el=>{
+       if(el.dataset.highlighted) return;    // hljs sets this; belt-and-suspenders
+       try{ hljs.highlightElement(el); }catch(e){}
+     });
+   }
+   ```
+
+   Call `highlightCode(cur.bubble)` at the end of `renderAssistantContent`
+   (after the bubble DOM is built). That single call covers live finalize +
+   reload, since both route through it.
+
+### Decisions to lock first
+
+- **Vendor blob vs hand-rolled tokenizer vs skip.** Vendoring is the lazy,
+  correct call (battle-tested, ~50 KB), but it's the first third-party runtime
+  the project ships — a real, reversible step away from the "minimal-dep" brand.
+  `if(window.hljs)` means removing the asset silently returns to today's
+  output, so the blast radius of the decision is low. **Recommend: vendor.**
+- **Auto-detect for class-less blocks?** Default **off** (only colorize
+  `language-*` blocks — deterministic, fast). Enable later with a capped
+  `hljs.configure({languages:[…]})` if plain blocks look bare.
+
+### Verify (smoke)
+
+- Send a prompt that returns a ` ```python ` block → colored.
+- **Reload the session** (⏱ Sessions → re-enter) → still colored (proves the
+  reload path, not just live).
+- **Switch session** → new transcript colored.
+- Temporarily rename `vendor/highlight.min.js` → page still works, blocks
+  render uncolored (proves the `if(window.hljs)` guard).
+
+### Self-check
+
+`node -e "const{md}=require('./md.js');console.log(md('```js\\nx=1\\n```'))"`
+still emits `class="language-js"` unchanged (parser untouched). Highlighting is
+purely a post-process, so md.js's existing determinism is the regression guard.
+
+### Risks / ceilings
+
+- **Repo / package weight:** common build ~50 KB min+gzip added to the `files:`
+  whitelist → published npm size. Acceptable; flag if package size matters.
+- **Re-render double-highlight:** `renderAssistantContent` builds fresh nodes
+  each time (gotcha #13 resets cursors), so there are no stale highlighted
+  nodes — the `dataset.highlighted` check is purely defensive.
+- **Streaming:** assistant text renders once at `message_end` (gotcha #13), so
+  highlighting runs once at finalize, not per delta. Thinking streams live but
+  is collapsed `<details>` — leave uncolored unless it visibly matters.
+- **Theme mismatch** with Ayu-Dark: cosmetic, tunable in `design.md`.
+
+### Follow-ons (deferred)
+
+- **KaTeX** (`auto-render` scanning `$…$`) and **Mermaid** (runtime over
+  ` ```mermaid ` blocks) are the same drop-in shape if math/diagrams actually
+  show up in usage. Don't build speculatively — add when seen.
+
+### Rollback
+
+Remove the `<link>`/`<script>` lines in `index.html` and the `highlightCode`
+call in `app.js`. `md.js` output is valid uncolored HTML — nothing else depends
+on the highlight. (Optionally drop the `vendor/` files + whitelist entries.)

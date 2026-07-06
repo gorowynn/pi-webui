@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Minimal zero-dependency bridge between a browser and `pi --mode rpc`.
+// Minimal-dependency bridge between a browser and `pi --mode rpc`.
 // Browser <--SSE-- POST--> Node <--stdin/stdout JSONL--> pi subprocess.
 // Run: node server.js   (optionally set PORT, PI_BIN, PI_ARGS, PI_CWD)
 const http = require("http");
@@ -22,6 +22,24 @@ const HTML_PATH = path.join(__dirname, "index.html");
 const STATIC = {
 	"/style.css": { file: "style.css", type: "text/css; charset=utf-8" },
 	"/md.js": { file: "md.js", type: "text/javascript; charset=utf-8" },
+	// vendored highlight.js (github-dark theme) — first third-party runtime we
+	// ship; static asset like md.js, no npm/build. Gated client-side so a
+	// missing file degrades to uncolored code (see app.js highlightCode).
+	"/vendor/highlight.min.js": {
+		file: "vendor/highlight.min.js",
+		type: "text/javascript; charset=utf-8",
+	},
+	"/vendor/highlight.css": {
+		file: "vendor/highlight.css",
+		type: "text/css; charset=utf-8",
+	},
+	// vendored markdown-it 14.x (UMD, sets window.markdownit). Loaded BEFORE
+	// md.js, which is now a thin shim delegating to it (the hand-rolled parser
+	// is gone). Static asset like the highlight.js vendor entry — no npm/build.
+	"/vendor/markdown-it.min.js": {
+		file: "vendor/markdown-it.min.js",
+		type: "text/javascript; charset=utf-8",
+	},
 	"/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
 };
 

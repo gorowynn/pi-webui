@@ -47,15 +47,15 @@
  *
  * Commands: /safeguard (status) · /safeguard reset (clear session allows)
  */
-// ponytail: this extension ships zero-dep (no @types/node, no node_modules
+// ponytail: this extension ships minimal-dep (no @types/node, no node_modules
 // resolution). Sibling files (subagent.ts, todo.ts, discipline.ts) use the
 // same pattern — @ts-expect-error on node: imports + local minimal types for
 // the pi surface. jiti strips types at load; runtime resolves the real modules.
-// @ts-expect-error no @types/node in this zero-dep extension; built-ins at runtime.
+// @ts-expect-error no @types/node in this minimal-dep extension; built-ins at runtime.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-// @ts-expect-error no @types/node in this zero-dep extension; built-ins at runtime.
+// @ts-expect-error no @types/node in this minimal-dep extension; built-ins at runtime.
 import { join } from "node:path";
-// @ts-expect-error no @types/node in this zero-dep extension; built-ins at runtime.
+// @ts-expect-error no @types/node in this minimal-dep extension; built-ins at runtime.
 import { homedir } from "node:os";
 
 // Local minimal types for the pi extension surface (jiti strips these; the real
