@@ -1,8 +1,9 @@
 # docs/ — pi-webui documentation
 
 > **Single source of truth.** Project knowledge for pi-webui lives in exactly
-> three places: [`../AGENTS.md`](../AGENTS.md) (agent orientation, **auto-loaded
-> by pi**, conventions, gotchas, open work), [`../CHANGELOG.md`](../CHANGELOG.md)
+> four places: [`../AGENTS.md`](../AGENTS.md) (agent orientation, **auto-loaded
+> by pi**, conventions index, open work), [`../GOTCHAS.md`](../GOTCHAS.md) (full
+> gotchas, linked from AGENTS.md by keyword), [`../CHANGELOG.md`](../CHANGELOG.md)
 > (running history), and this `docs/` folder (durable, structured specs).
 > Everything else — code comments, commit messages, chat — is **subordinate**
 > and must defer to these.
@@ -11,14 +12,15 @@
 
 | Location | Holds | Update when… |
 |----------|-------|--------------|
-| [`../AGENTS.md`](../AGENTS.md) | What an agent needs to do its job: project shape, run/dev, conventions, gotchas, smoke tests, **open work items**. **Auto-loaded by pi at startup.** Read this **first** every session. | You learn a non-obvious gotcha, convention, or open/close a tracked task. |
+| [`../AGENTS.md`](../AGENTS.md) | What an agent needs to do its job: project shape, run/dev, conventions, the gotcha keyword index, smoke tests, **open work items**. **Auto-loaded by pi at startup.** Read this **first** every session. | You learn a convention or open/close a tracked task. |
+| [`../GOTCHAS.md`](../GOTCHAS.md) | Full gotcha/convention detail, kept out of the auto-load to save context. AGENTS.md links here by keyword. **Read the matching entry before editing the area it covers.** | You add a new gotcha (also add its keyword to the AGENTS.md index). |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | Running **history** (newest first, dated entries). | You finish a chunk of work worth recording. |
 | `docs/` (here) | Durable **specs** that outlive any one task: design system, architecture, other product specs. Referenced by name, versioned with the repo. | A spec changes (palette, layout, etc.). |
 
-**Rule of thumb:** if it's about *how to work in this repo safely* or an *open
-work item / tracked task* → `AGENTS.md`. Finished work → `CHANGELOG.md`. If it's
-a *product/design spec* → `docs/`. Never let durable knowledge live only in a
-code comment or a chat transcript; move it here.
+**Rule of thumb:** a *gotcha / how to work safely* → `GOTCHAS.md` (+ its keyword
+to the `AGENTS.md` index); an *open work item / tracked task* → `AGENTS.md`.
+Finished work → `CHANGELOG.md`. A *product/design spec* → `docs/`. Never let
+durable knowledge live only in a code comment or a chat transcript; move it here.
 
 ## Index
 

@@ -9,6 +9,23 @@
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-07-07 — docs(context): split gotchas out of AGENTS.md → GOTCHAS.md (keyword index)
+
+- **Why:** `AGENTS.md` is auto-loaded every session; the 17 gotchas (~6 KB) were
+  the biggest controllable chunk of recurring context. First compressed them in
+  place (−36%), then moved them out entirely per request — saves ~15 KB/session
+  vs. the original, with no information loss.
+- **What:** all 17 gotchas moved verbatim to root [`GOTCHAS.md`](GOTCHAS.md).
+  `AGENTS.md` now holds a **keyword index** ("when touching X → read GOTCHAS.md
+  #N") plus a read-before-editing trigger. Numbering preserved, so cross-refs
+  updated to `GOTCHAS.md #N` (RPC coverage #1, smoke tests #7, open work #2/#8).
+- **SSOT kept coherent:** `docs/README.md` + the AGENTS.md intro now list
+  `GOTCHAS.md` as a 4th knowledge source; new gotchas go to `GOTCHAS.md` **plus**
+  a keyword in the AGENTS.md index.
+- **Trade-off:** gotchas are no longer in auto-load context — the keyword index +
+  the "read before editing" line are the contract that the agent consults the
+  matching entry before touching the relevant area.
+
 ### 2026-07-07 — feat(diff): the pi proposal is EDITABLE — tweak it before approving (IDE + standalone)
 
 - **Capability:** the right (**Proposed**) pane of the approval diff is now
