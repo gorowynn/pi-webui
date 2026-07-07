@@ -2194,6 +2194,7 @@ function setStreaming(on) {
 	dot.classList.toggle("live", on);
 	stopBtn.disabled = !on;
 	if (!on) cur = null;
+	rescheduleStats(); // ponytail: poll stats fast while producing, slow while idle
 }
 // ponytail: compaction state -- disables the Compact button and drives the
 // activity bar while the context is being summarized, whether the trigger
@@ -2635,9 +2636,19 @@ es.onopen = () => {
 };
 // ponytail: pause stat/health/usage polling while the tab is backgrounded — avoids
 // burning requests every 3s/6s/60s on an unseen window. Re-sync on return.
-let statsTimer = setInterval(refreshStats, 3000);
+// stats cadence is streaming-aware: 3s while an agent turn is active (the token/
+// cost bar tracks live), 15s idle (cheap drift correction instead of ~20 idle
+// RPC round-trips/min pinging pi for get_session_stats). rescheduleStats() flips
+// the cadence on each setStreaming.
+const STATS_FAST = 3000,
+	STATS_IDLE = 15000;
+let statsTimer = setInterval(refreshStats, STATS_IDLE);
 let healthTimer = setInterval(refreshHealth, 6000);
 let usageTimer = setInterval(refreshUsageBar, 60000);
+function rescheduleStats() {
+	clearInterval(statsTimer);
+	statsTimer = setInterval(refreshStats, streaming ? STATS_FAST : STATS_IDLE);
+}
 document.addEventListener("visibilitychange", () => {
 	if (document.hidden) {
 		clearInterval(statsTimer);
@@ -2647,7 +2658,7 @@ document.addEventListener("visibilitychange", () => {
 		refreshStats();
 		refreshHealth();
 		refreshUsageBar();
-		statsTimer = setInterval(refreshStats, 3000);
+		rescheduleStats();
 		healthTimer = setInterval(refreshHealth, 6000);
 		usageTimer = setInterval(refreshUsageBar, 60000);
 	}

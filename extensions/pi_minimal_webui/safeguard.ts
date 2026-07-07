@@ -52,7 +52,7 @@
 // same pattern — @ts-expect-error on node: imports + local minimal types for
 // the pi surface. jiti strips types at load; runtime resolves the real modules.
 // @ts-expect-error no @types/node in this minimal-dep extension; built-ins at runtime.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 // @ts-expect-error no @types/node in this minimal-dep extension; built-ins at runtime.
 import { join } from "node:path";
 // @ts-expect-error no @types/node in this minimal-dep extension; built-ins at runtime.
@@ -189,9 +189,19 @@ const ALLOW_SESSION = "Allow for this session";
 const ALLOW_ALWAYS = "Allow always (save to config)";
 const DENY = "Deny";
 
+// ponytail: mtime-cache the parsed config. loadConfig runs in the tool_call hot
+// path (~2×/call); the old code sync-read + JSON.parse'd ~/.pi/agent/safeguard.json
+// every time. statSync is ~10× cheaper than read+parse and its mtime invalidates
+// the instant a manual edit or a "save always" lands — preserving the re-read-
+// each-call live behavior without the per-call cost. saveConfig() drops the cache
+// so a write can never leave callers reading a pre-write snapshot. Parse stays in
+// the try: a missing/corrupt file throws → defaults, cache cleared (re-probe next
+// call once the file is fixed and its mtime advances).
+let cfgCache: { mtime: number; cfg: Config } | null = null;
 function loadConfig(): Config {
 	try {
-		if (!existsSync(CONFIG_PATH)) return { ...DEFAULT_CONFIG };
+		const mtime = statSync(CONFIG_PATH).mtimeMs;
+		if (cfgCache && cfgCache.mtime === mtime) return cfgCache.cfg;
 		const parsed = JSON.parse(readFileSync(CONFIG_PATH, "utf-8")) as Config;
 		const cfg: Config = { ...DEFAULT_CONFIG };
 		if (
@@ -207,13 +217,16 @@ function loadConfig(): Config {
 			if (typeof v === "string" || (v && typeof v === "object"))
 				cfg[k] = v as Rule;
 		}
+		cfgCache = { mtime, cfg };
 		return cfg;
 	} catch {
+		cfgCache = null; // missing or unreadable — re-probe next call
 		return { ...DEFAULT_CONFIG };
 	}
 }
 
 function saveConfig(cfg: Config): void {
+	cfgCache = null; // invalidate before the write — a thrown write must not leave a stale cache
 	try {
 		writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
 	} catch {

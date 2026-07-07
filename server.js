@@ -307,10 +307,14 @@ function ponySessionMode(sessionFile) {
 	return null;
 }
 
-// ponytail: sync git probe with a 2s cache; status endpoint, blocking ~50ms is fine.
+// ponytail: sync git probe cached above the health-poll cadence. /api/health is
+// polled every 6s (app.js refreshHealth); a cache TTL BELOW that (the old 2s)
+// missed on every poll → ~20 git process spawns/min while idle. A 7s window
+// (>6s poll) makes consecutive polls hit the cache, halving spawns; the badge
+// still refreshes within ~12s. Blocking ~50ms, only on a cache miss.
 let gitCache = { t: 0, data: null };
 function gitInfo() {
-	if (Date.now() - gitCache.t < 2000) return gitCache.data;
+	if (Date.now() - gitCache.t < 7000) return gitCache.data;
 	let data = null;
 	try {
 		const branch = execSync("git rev-parse --abbrev-ref HEAD", {
