@@ -3,6 +3,7 @@ package com.gorowynn.piwebui
 import com.google.gson.Gson
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.wm.ToolWindow
@@ -49,23 +50,28 @@ class PiWebuiToolWindowFactory : ToolWindowFactory {
         val ideName = Gson().toJson(app.versionName)
         val ideVer = Gson().toJson(app.fullVersion)
         openDiff.addHandler { json: String ->
-            // runs on the CEF thread → open the modal on the EDT, then resolve the
-            // promise asynchronously (no blocking the CEF message thread).
+            // runs on the CEF thread → open the editor tab on the EDT; the JS
+            // promise resolves later, from the editor's decision callback (or
+            // fail-closed Deny on tab close / open error). Never left pending.
             ApplicationManager.getApplication().invokeLater {
-                val decision = try {
+                try {
                     val payload = try {
                         Gson().fromJson(json, DiffPayload::class.java)
                     } catch (_: Exception) {
                         DiffPayload()
                     }
-                    DiffApprovalDialog(project, payload).open()
+                    val onDecide: (Any) -> Unit = { value ->
+                        val js = "window.__piDiffResolve(" + Gson().toJson(value) + ");"
+                        runCatching { browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url, 0) }
+                    }
+                    val file = DiffReviewFile(payload, onDecide)
+                    FileEditorManager.getInstance(project).openFile(file, /* focusEditor = */ true)
                 } catch (e: Exception) {
                     // Fail-closed: never leave the JS promise pending (that would
-                    // hang app.js's await → pi's approval latch). Resolve as Deny.
-                    DiffApprovalDialog.DENY
+                    // hang app.js's await → pi's approval latch).
+                    val js = "window.__piDiffResolve(" + Gson().toJson(DiffReviewEditor.DENY) + ");"
+                    runCatching { browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url, 0) }
                 }
-                val js = "window.__piDiffResolve(" + Gson().toJson(decision) + ");"
-                browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url, 0)
             }
             null
         }

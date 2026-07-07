@@ -14,6 +14,9 @@
       <span id="status"
         ><span id="dot"></span><span id="status-text">connecting…</span></span
       >
+      <button id="refresh-btn" title="reload page" aria-label="reload page">
+        ↻
+      </button>
       <button id="settings-btn" title="settings" aria-label="settings">
         ⚙
       </button>
@@ -81,7 +84,17 @@
     </aside>
     <div id="settings-back" aria-hidden="true"></div>
 
-    <main id="transcript"></main>
+    <div id="scroll-wrap">
+      <main id="transcript"></main>
+      <button
+        id="jump-bottom"
+        type="button"
+        title="Jump to latest"
+        aria-label="Jump to latest"
+      >
+        ↓
+      </button>
+    </div>
     <details id="todopanel" open>
       <summary>
         <span>todos</span><span class="count" id="tp-count">0/0</span>

@@ -71,9 +71,14 @@ transcript.addEventListener("scroll", () => {
 	// chunk landed (scrollHeight grew), nearBottom() read false, and the log
 	// stopped following and drifted to the middle. Re-pin whenever we're back
 	// near the bottom.
-	if (nearBottom()) pinned = true;
-	else if (top + 4 < lastScrollTop) pinned = false;
+	if (nearBottom()) {
+		pinned = true;
+		unread = 0;
+	} else if (top + 4 < lastScrollTop) {
+		pinned = false;
+	}
 	lastScrollTop = top;
+	refreshJump();
 });
 // ponytail: coalesce autoscroll to ONE rAF. It's called from every streaming
 // hot site (renderText, renderThink, toolBlock, tool_execution_end); each
@@ -89,6 +94,42 @@ function autoscroll() {
 		if (pinned) transcript.scrollTop = transcript.scrollHeight;
 	});
 }
+// ponytail: keep pinned users glued to the bottom when transcript layout
+// changes for ANY reason, not just streaming renders. <details> expanders
+// (tool blocks auto-opening for diffs / auto-closing on long results, thinking
+// traces the user opens) and async diff content (mountSideBySide fetches
+// /api/file, then lays out AFTER the trailing autoscroll already ran) all
+// change scrollHeight outside the render cycle and used to drift the viewport
+// off the bottom ("autoscroll doesn't behave correctly"). One observer catches
+// them; autoscroll() is rAF-coalesced + pinned-gated, so this is cheap and
+// self-suppresses when the user scrolled up to read.
+new MutationObserver(() => autoscroll()).observe(transcript, {
+	childList: true,
+	subtree: true,
+	attributes: true,
+	attributeFilter: ["open"],
+});
+// ponytail: chat-app scroll affordance. Sticky-bottom while near the bottom
+// (autoscroll follows); scroll up to read and a floating "↓ N new" pill surfaces
+// so new output isn't silently missed. Click it (or scroll back, or send) →
+// re-pin + snap. unread = assistant turns that landed while scrolled away.
+let unread = 0;
+const jumpBottom = document.getElementById("jump-bottom");
+function refreshJump() {
+	if (!jumpBottom) return;
+	const show = !pinned;
+	if (jumpBottom.classList.contains("show") !== show)
+		jumpBottom.classList.toggle("show", show);
+	const lbl = unread > 0 ? `↓ ${unread} new` : "↓";
+	if (jumpBottom.textContent !== lbl) jumpBottom.textContent = lbl;
+}
+if (jumpBottom)
+	jumpBottom.addEventListener("click", () => {
+		pinned = true;
+		unread = 0;
+		refreshJump();
+		transcript.scrollTo({ top: transcript.scrollHeight, behavior: "smooth" });
+	});
 
 function addUser(text) {
 	const m = document.createElement("div");
@@ -100,7 +141,9 @@ function addUser(text) {
 	b.appendChild(span);
 	transcript.appendChild(m);
 	pinned = true;
+	unread = 0;
 	scrollDown();
+	refreshJump();
 }
 // ponytail: render an extension `notify` payload as a real assistant
 // message in the transcript (markdown-formatted). Used for substantial /
@@ -145,8 +188,17 @@ function ensureTextPar() {
 	cur.bubble.appendChild(p);
 	cur.textPar = p;
 }
-function renderText() {
+// ponytail: throttle text paints to ~8/s while streaming (renderThink is
+// 300ms for the same reason) — re-parsing the WHOLE growing buffer through
+// markdown-it every rAF saturates the main thread on long messages: scroll
+// freezes and renders stall (looks like "messages don't update"). force=true
+// bypasses for the authoritative final render (renderAssistantContent).
+let lastTextPaint = 0;
+function renderText(force) {
 	if (cur && cur.textPar) {
+		const now = performance.now();
+		if (!force && now - lastTextPaint < 120) return;
+		lastTextPaint = now;
 		cur.textPar.innerHTML = md(cur.textBuf);
 		autoscroll();
 	}
@@ -189,7 +241,7 @@ function renderAssistantContent(content) {
 		if (b.type === "text") {
 			cur.textBuf = b.text || "";
 			ensureTextPar();
-			renderText();
+			renderText(true);
 			cur.textPar = null;
 			cur.textBuf = "";
 		} else if (b.type === "thinking") {
@@ -1845,9 +1897,40 @@ async function buildDiffPayload() {
 	};
 }
 
+// Editable side-by-side for the standalone approval modal: left = current file
+// (read-only), right = pi's proposal (editable <textarea>). Returns a getter
+// (label) => label | {label, oldFull, newFull} so the button handler ships the
+// edit back over the SAME extension_ui_response channel safeguard reads —
+// safeguard mutates pi's event.input from oldFull/newFull, so pi applies the
+// user's edited version (context stays consistent).
+function mountEditableDiff(container, oldText, newText) {
+	const wrap = document.createElement("div");
+	wrap.className = "sx-edit";
+	const left = document.createElement("textarea");
+	left.className = "sx-edit-left";
+	left.value = oldText;
+	left.readOnly = true;
+	left.spellcheck = false;
+	const right = document.createElement("textarea");
+	right.className = "sx-edit-right";
+	right.value = newText;
+	right.spellcheck = false;
+	wrap.appendChild(left);
+	wrap.appendChild(right);
+	container.classList.add("wide");
+	container.querySelector(".opts").before(wrap);
+	return (label) => {
+		const edited = right.value;
+		return edited === newText
+			? label
+			: { label, oldFull: oldText, newFull: edited };
+	};
+}
+
 // The webui permission modal, factored out so the IDE-diff path can fall back
-// to it. Unchanged behavior — extracted verbatim from the old select branch.
-function openSelectModal(req) {
+// to it. For edit/write it renders an EDITABLE side-by-side so the user can
+// tweak pi's proposal before approving; other tools get the read-only preview.
+async function openSelectModal(req) {
 	const { id } = req;
 	const opts = (req.options || []).map((o) =>
 		typeof o === "string" ? { label: o } : o,
@@ -1870,10 +1953,17 @@ function openSelectModal(req) {
 	showModal(
 		`<h3>${esc(req.title || "Choose")}</h3>${bodyHtml}<div class='opts'></div>`,
 	);
-	const stack = renderEditDiffPreviews(card);
-	if (stack) {
-		card.classList.add("wide");
-		card.querySelector(".opts").before(stack);
+	const isEditWrite = curToolName === "edit" || curToolName === "write";
+	let editedValue = null; // (label) => label | {label, oldFull, newFull}
+	if (isEditWrite) {
+		const payload = await buildDiffPayload();
+		editedValue = mountEditableDiff(card, payload.leftText, payload.rightText);
+	} else {
+		const stack = renderEditDiffPreviews(card);
+		if (stack) {
+			card.classList.add("wide");
+			card.querySelector(".opts").before(stack);
+		}
 	}
 	const list = card.querySelector(".opts");
 	opts.forEach((o) => {
@@ -1891,7 +1981,11 @@ function openSelectModal(req) {
 			b.className = "danger";
 		b.onclick = () => {
 			hideModal();
-			api({ type: "extension_ui_response", id, value: val });
+			api({
+				type: "extension_ui_response",
+				id,
+				value: editedValue ? editedValue(val) : val,
+			});
 		};
 		list.appendChild(b);
 	});
@@ -2142,12 +2236,20 @@ function handle(payload) {
 			// transport): live and reload now read the same bytes and can't diverge.
 			// The live thinking <details> is swapped for a finalized one here too
 			// (collapsed by default → invisible).
-			if (cur)
+			if (cur) {
 				finalizeBubble(
 					payload.message && Array.isArray(payload.message.content)
 						? payload.message.content
 						: null,
 				);
+				// ponytail: count toward the "↓ N new" pill if the user scrolled away.
+				// cur only exists when text/thinking streamed, so tool-only turns whose
+				// bubble was dropped aren't mis-counted.
+				if (!pinned) {
+					unread++;
+					refreshJump();
+				}
+			}
 			cur = null;
 			break;
 
@@ -2729,6 +2831,7 @@ function closeSettings() {
 	settingsBack.classList.remove("open");
 	settingsEl.setAttribute("aria-hidden", "true");
 }
+$("refresh-btn").onclick = () => location.reload();
 $("settings-btn").onclick = openSettings;
 $("settings-close").onclick = closeSettings;
 settingsBack.onclick = closeSettings;

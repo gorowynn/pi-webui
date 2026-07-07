@@ -265,11 +265,25 @@ is the dev loop. Don't introduce a build step without strong reason.
     APIs you're unsure about with `javap` (`~/.jdks/ms-25.0.3/bin/javap.exe
     -classpath "<rider>/lib/*"`), not by running gradlew. The webui side IS
     testable here (`node --check app.js` + greps). Current plugin diff-gate
-    surface: the real-file diff (`DiffContentFactory.create(proj, text,
-    fileType)` over a resolved `VirtualFile` — highlighted, reads the open
-    editor) + the IDE-connection badge (plugin injects `window.piWebuiIdeInfo` →
-    app.js `sb-ide` statusbar cell: green IDE name when hosted, dim `none`
-    standalone).
+    surface: the diff renders as a **CENTER editor tab in the main IDE window**
+    (not a floating `DialogWrapper`) — `DiffReviewEditorProvider` (registered in
+    `plugin.xml`, `HIDE_DEFAULT_EDITOR` + `DumbAware`) builds `DiffReviewEditor`
+    over an in-memory `DiffReviewFile` (`LightVirtualFile` carrying payload + the
+    decision callback); the native diff uses `DiffContentFactory.create(proj, left,
+    fileType)` (read-only Current) + `createEditable(proj, right, fileType)` (editable
+    Proposed, read back via `DocumentContent.getDocument().getText()`) over a resolved
+    `VirtualFile`; the 4 safeguard buttons sit in a top bar; a decision closes the
+    tab, and a tab-✕/close fails closed to `Deny` via the editor's `dispose()`. If the
+    user EDITED the proposal, the bridge value is `{label, oldFull, newFull}` (not a
+    bare label) and `safeguard.ts` mutates pi's `event.input` (`write`→`content`,
+    `edit`→`edits=[{oldText:oldFull,newText:newFull}]`) so pi applies the user's version
+    — context stays consistent; the standalone webui modal does the same via
+    `mountEditableDiff` (two textareas). + the
+    IDE-connection badge (plugin injects `window.piWebuiIdeInfo` → app.js
+    `sb-ide` statusbar cell: green IDE name when hosted, dim `none` standalone).
+    `javap` checks: `LightVirtualFile` is `com.intellij.testFramework.*` but ships
+    in `intellij.platform.core.jar` (runtime-available); `FileEditorProvider`/
+    `FileEditorManager`/`FileEditorPolicy` are in `intellij.platform.analysis.jar`.
 
 ## RPC coverage (verified 2026-06-23)
 

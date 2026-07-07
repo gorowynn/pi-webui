@@ -9,6 +9,128 @@
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
+### 2026-07-07 — feat(diff): the pi proposal is EDITABLE — tweak it before approving (IDE + standalone)
+
+- **Capability:** the right (**Proposed**) pane of the approval diff is now
+  editable. Edit it, click any Allow button, and **pi applies your edited version**
+  (not its original). Works in BOTH the JetBrains editor-tab diff AND the
+  standalone webui modal. Leave it untouched → unchanged behavior (pi's original).
+- **The enabler:** pi's `tool_call` hook supports in-place `event.input` mutation
+  (verified in the [extensions docs](https://pi.dev/docs/latest/extensions):
+  "Mutations to event.input affect the actual tool execution, no re-validation").
+  So the edited text is fed back into pi's OWN edit/write — pi applies the user's
+  version, keeping its context consistent (no stale file, no clobber). This is
+  the clean path; the alternative (plugin writes + Deny) was rejected for the
+  stale-context wart.
+- **Wire contract change:** the `extension_ui_response` `value` is now
+  `string | {label, oldFull, newFull}`. Bare label = no edit; the object carries
+  the full old/new text when the user edited. The 4 safeguard button LABELS are
+  unchanged (still the wire contract).
+- **IDE (`DiffReviewEditor.kt`):** right pane via `DiffContentFactory.createEditable`;
+  `resolveValue()` reads it back (`.document.text`) and ships `{label, oldFull,
+  newFull}` when it differs from the original proposal. `DiffReviewFile.decide` /
+  bridge callback widened `(String)` → `(Any)`; `Gson().toJson` handles both.
+- **safeguard.ts:** the `tool_call` `select` result is parsed (string or object);
+  on any ALLOW, `applyEdits()` mutates `event.input` (`write`→`content=newFull`,
+  `edit`→`edits=[{oldText:oldFull,newText:newFull}]` whole-file replace). Deny /
+  no-payload → unchanged. The `select` return type widened to allow the object.
+- **app.js:** `mountEditableDiff` (two `<textarea>`s, left read-only / right
+  editable) renders in `openSelectModal` for edit/write; resolves with the object
+  when edited, else the label. `diffInIde` was already pass-through (`value:
+  decision`) — no change needed for the IDE object shape. New `.sx-edit` CSS.
+- **Files:** `DiffReviewEditor.kt`, `PiWebuiToolWindowFactory.kt`,
+  `extensions/pi_minimal_webui/safeguard.ts`, `app.js`, `style.css`, `jetbrains/README.md`,
+  `AGENTS.md` gotcha #17. Verified: `node --check app.js` OK, Kotlin LSP clean,
+  wire-contract grep (label/oldFull/newFull) consistent across all three.
+- **Note (one caveat):** the edited apply is one-shot. `Allow for this session` /
+  `Allow always` apply the edit THIS time, but the saved allow-rule auto-approves
+  future calls WITHOUT the diff (so those apply pi's original next time) — the
+  rule is about re-prompting, not content.
+
+### 2026-07-07 — feat(jetbrains): diff approval renders as a CENTER editor tab, not a floating window
+
+- **Symptom:** the edit/write approval diff popped up as a separate floating
+  `DialogWrapper` window; wanted it in the same window as the IDE.
+- **Fix:** replaced `DiffApprovalDialog` (`DialogWrapper`, always a separate
+  window) with a real editor tab in the main editor area — `DiffReviewEditor`
+  (`FileEditor`) over an in-memory `DiffReviewFile` (`LightVirtualFile` carrying
+  the payload + an idempotent `decide()` callback), claimed by
+  `DiffReviewEditorProvider` (`FileEditorProvider`, registered in `plugin.xml`).
+  The native diff (`DiffManager.createRequestPanel`, embedded) is the tab content,
+  with the 4 safeguard buttons in a top bar — same window, wide/central like a
+  file. `HIDE_DEFAULT_EDITOR` keeps the text editor off that tab; `DumbAware`
+  keeps the gate working during indexing (else `openFile` is skipped → the JS
+  promise hangs → pi's approval latch stalls).
+- **Decision/fail-closed:** a button click resolves the safeguard label via the
+  bridge (`window.__piDiffResolve`) + `FileEditorManager.closeFile`; closing the
+  tab any other way (✕, session close) hits `dispose()` → fail-closed `Deny`.
+  `decide()` is idempotent so exactly one resolution fires. The wire contract
+  with `safeguard.ts` (the 4 labels) and the app.js bridge are **unchanged**.
+- APIs verified via `javap` against Rider 2026.1.2 (per gotcha #17): `LightVirtualFile`
+  is `com.intellij.testFramework.*` but ships in `intellij.platform.core.jar`
+  (runtime-available); `FileEditorProvider`/`FileEditorManager`/`FileEditorPolicy`
+  are in `intellij.platform.analysis.jar`.
+- Files: `DiffReviewEditor.kt` (new: file + editor + provider, with
+  `resolveContents` moved from the old dialog), `PiWebuiToolWindowFactory.kt`
+  (bridge now `openFile`s the tab + resolves the promise from the decision
+  callback instead of blocking on `DialogWrapper.show()`), `plugin.xml` (registers
+  the provider), `DiffApprovalDialog.kt` (**deleted**), `jetbrains/README.md` +
+  `AGENTS.md` gotcha #17 updated.
+
+### 2026-07-07 — feat(webui): header reload button (JCEF has no F5)
+
+- Rider's JCEF panel doesn't forward F5/Ctrl-R to the page, so there was no
+  way to reload after a static-asset edit. Added a `↻` button (`#refresh-btn`)
+  in the header next to `⚙` → `location.reload()`. Shares the existing
+  `header button` styling (no CSS). Files: `index.html`, `app.js`.
+
+### 2026-07-07 — feat(webui): chat-app autoscroll (reactive follow + jump-to-bottom pill)
+
+- **Symptom:** autoscroll "didn't behave correctly all the time" — the viewport
+  drifted off the bottom when `<details>` expanders changed, and there was no
+  affordance when you scrolled up to read history (new output piled up silently).
+- **Root cause (expanders — confirmed):** `autoscroll()` was called at only 4
+  sites (`renderText`, `renderThink`, `toolBlock`, tail of `tool_execution_end`).
+  But `<details>` toggles changed `scrollHeight` *outside* that cycle: tool
+  blocks auto-open for diffs (`tool_execution_end`) and auto-close on long
+  results; the thinking `<details>` toggle paints tens of KB with no re-snap;
+  and `mountSideBySide` is **async** (fetches `/api/file`) so its diff content
+  laid out *after* the trailing `autoscroll()` already ran against a stale
+  height. **Fix:** ONE `MutationObserver` on `#transcript` (`childList`+
+  `subtree`+`open` attr) → `autoscroll()`. Catches every layout change;
+  `autoscroll()` is rAF-coalesced + pinned-gated, so it's cheap and silent
+  when scrolled up.
+- **Chat-app affordance:** floating "↓ N new" pill (`#jump-bottom`) over the
+  transcript, shown only when scrolled up. `unread` counts assistant turns that
+  landed while away (guarded on `cur` so dropped tool-only bubbles aren't
+  mis-counted). Click → re-pin + smooth-snap; scroll back to bottom or send →
+  re-pin + reset. Required wrapping `#transcript` in a `position: relative`
+  `#scroll-wrap` (absolute children of a scroll container move with content, so
+  the overlay can't live inside `#transcript`) + `min-height:0` on both for the
+  nested-flex scroll to work.
+- Files: `app.js` (observer + pill wiring), `style.css` (`#scroll-wrap`,
+  `main` min-height, `#jump-bottom`), `index.html` (wrap + button).
+
+### 2026-07-07 — fix(webui): throttle live text re-render (scroll freeze / "messages don't update")
+
+- **Symptom:** during streaming, scroll periodically locked up and long
+  messages appeared to stop updating. Root cause: `renderText()` re-parsed the
+  WHOLE growing buffer through markdown-it on **every animation frame** (up to
+  60/s), unthrottled. `renderThink()` already had a 300ms throttle for this
+  exact reason ("freezes the tab"), but the text path never got one. On a long
+  message the per-frame `md()` cost saturates the main thread → scroll
+  deadlocks and renders stall. One root cause, both symptoms.
+- **Fix** (`app.js` `renderText`): mirror `renderThink` — time-throttle the
+  streaming paint to ~8/s (120ms), with `force=true` bypassing it for the
+  authoritative final render (`renderAssistantContent` at `message_end`, now
+  `renderText(true)`). `md.js` confirmed robust (never throws), so this was
+  cost, not a thrown render. The streaming path `scheduleRender→renderText()`
+  stays throttled; the `message_end` finalize still re-renders from pi's
+  authoritative `payload.message.content`, so live+reload can't diverge
+  (gotcha #13 invariant preserved).
+- Skipped a formal test (4-line throttle; needs fake timers+DOM, heavier than
+  the fix) — add if streaming perf regresses again.
+
 ### 2026-07-06 — feat: markdown-it replaces hand-rolled parser + live text/thinking streaming
 
 - **Replaced the ~790-line hand-rolled `md.js` parser with a ~45-line shim over

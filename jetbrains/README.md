@@ -2,10 +2,13 @@
 
 A thin tool window that embeds the **already-running** [pi-webui](..) panel in
 any JetBrains IDE via JCEF (bundled Chromium), plus a **native IDE diff
-approval gate** for edit/write: proposed changes open in the IDE's diff viewer
-— syntax-highlighted, against the open editor's current text — and the
-Approve/Deny decision flows straight back to pi. A statusbar badge shows which
-IDE hosts the panel (or `none` in a standalone browser tab).
+approval gate** for edit/write: proposed changes open **as a diff tab in the
+IDE's main editor area** — same window, not a floating popup — syntax-highlighted
+against the open editor's current text, with the Approve/Deny decision flowing
+straight back to pi. The right (**Proposed**) pane is **editable** — tweak pi's
+proposal and pi applies *your* version (fed back via `event.input` mutation).
+A statusbar badge shows which IDE hosts the panel (or
+`none` in a standalone browser tab).
 
 > This is a **standalone Gradle project**. It does NOT affect the webui's
 > zero-build invariant — `server.js` / `app.js` / `style.css` / `index.html`
@@ -58,30 +61,56 @@ pi proposes an edit
             (path+edits let the plugin resolve the IDE file for a highlighted,
              editor-aware diff; leftText/rightText are the /api/file fallback)
        → awaits window.piWebuiOpenDiff(payload)        ── JCEF bridge ──▶ Kotlin
-              Kotlin opens DiffApprovalDialog (ONE window: native diff embedded
-                 as the center panel + the 4 buttons in the bottom bar —
-                 nothing blocks the diff, and any decision closes the lot)
+              Kotlin opens a CENTER editor tab (DiffReviewEditor: the native
+                 diff embedded as the tab content + the 4 buttons in a top
+                 bar — same window as the IDE; a decision or closing the tab
+                 resolves the promise and removes it)
+              user may EDIT the right pane; if changed, the resolve value is
+                 {label, oldFull, newFull} instead of a bare label string
               user clicks → returns one of safeguard's option labels
-       ◀── promise resolves with the label ───────────────────────────── Kotlin
-       → app.js posts api({type:"extension_ui_response", id, value: label})   ← SAME channel as the modal
-  → safeguard.ts maps the label to allow/session-allow/allow-always/deny   (UNCHANGED)
+       ◀── promise resolves with the label (or {label,oldFull,newFull}) ── Kotlin
+       → app.js posts api({type:"extension_ui_response", id, value})   ← SAME channel as the modal
+  → safeguard.ts maps the label to allow/session-allow/allow-always/deny;
+     if value carries oldFull/newFull it mutates pi's event.input so pi applies
+     the EDITED version (write→content, edit→edits=[whole-file replace])
 ```
 
-The security-critical gate (`safeguard.ts`) is **untouched** — the plugin just
-replaces the modal *renderer*. If the plugin isn't present, or the bridge
-rejects, app.js falls back to the existing webui modal (see `openSelectModal`).
+The security-critical gate (`safeguard.ts`) keeps its allow/deny logic; the only
+addition is that when the resolve value carries `oldFull`/`newFull` it mutates
+pi's `event.input` so pi applies the user's edited text (no edit → unchanged).
 The four button labels are a **wire contract** with `safeguard.ts` and must
 match exactly: `Allow once` / `Allow for this session` /
-`Allow always (save to config)` / `Deny`.
+`Allow always (save to config)` / `Deny`. If the plugin isn't present, or the
+bridge rejects, app.js falls back to the existing webui modal (`openSelectModal`,
+now also editable for edit/write).
 
-The diff is a **real file diff**: the dialog resolves the edit path to an IDE
+The diff is a **real file diff**: the editor resolves the edit path to an IDE
 `VirtualFile`, reads the open editor's current text (unsaved edits included)
 for the left side, and builds both sides with the file's `FileType` for syntax
 highlighting. If the path isn't under the project, it falls back to the
-`/api/file` text. The plugin also injects `window.piWebuiIdeInfo = {name,
+`/api/file` text. The tab is rendered by a `FileEditorProvider` (`DiffReviewEditorProvider`,
+registered in `plugin.xml`) over an in-memory `LightVirtualFile` (`DiffReviewFile`)
+that carries the payload + the decision callback; `HIDE_DEFAULT_EDITOR` keeps
+the text editor off that tab, and `DumbAware` keeps the gate working during
+indexing (otherwise the open would be skipped and the JS promise would hang).
+Closing the tab without deciding fails closed to `Deny` (the editor's
+`dispose()` is the hook). **The right pane is editable**
+(`DiffContentFactory.createEditable`); on a decision the edited text is read
+back (`DocumentContent.getDocument().getText()`) and, if it differs from the
+original proposal, shipped as `{label, oldFull, newFull}`. The standalone webui
+modal offers the same editing (`mountEditableDiff` — two `<textarea>`s: left
+read-only / right editable). The plugin also injects `window.piWebuiIdeInfo = {name,
 version}` (via `ApplicationInfo`) on load; app.js shows a **statusbar badge**
 (green `Rider`, or dim `none`) so the hosting state — and the no-IDE fallback
 — is visible at a glance.
+
+**Verify after a rebuild** — the plugin can't run headless, so smoke-test it in a
+sandbox IDE (`./gradlew runIde`): open the pi-webui tool window, ask pi for an
+edit on a project file, and a `<file> — pi change` tab opens in the editor area
+with the diff + the 4 buttons; the **right (Proposed) pane is editable**. **Allow
+once** applies your edited text (or pi's original if untouched) and closes the tab;
+closing the tab via ✕ without choosing tells pi **Deny** (fail-closed via the
+editor's `dispose()`).
 
 ## Build notes (the bootstrap that worked)
 
@@ -98,8 +127,18 @@ load-bearing — older ones throw cryptic errors:
   chokes on the JDK 25 Gradle JVM (`Packages does not exist`); it only injects
   `@NotNull` checks, not load-bearing. Re-enable when building on a JDK 21.
 - **`DiffContentFactory` lives in `com.intellij.diff`** (NOT `.contents`, where
-  `DiffContent` is) — easy package mix-up. `create(proj, String, FileType)`
-  gives a syntax-highlighted content; `create(String)` is the plain variant.
+  `DiffContent` is) — easy package mix-up. `create(proj, String, FileType)` gives
+  a read-only, syntax-highlighted content; `createEditable(proj, String, FileType)`
+  is the editable variant (read it back via `DocumentContent.getDocument().getText()`).
+  `create(String)` is the plain variant.
+- **`FileEditor` extends `UserDataHolder`** (no method defaults in this build) →
+  extend `UserDataHolderBase()` so `getUserData`/`putUserData` are supplied; a
+  bare `: FileEditor` fails with "does not implement abstract members".
+- **`LightVirtualFile` has no `(String, FileType)` constructor** — use the 1-arg
+  `(String)` (defaults to plain text + empty content, which the editor ignores).
+  It's `com.intellij.testFramework.*` but ships in `intellij.platform.core.jar`
+  (runtime-available); `FileEditorProvider`/`FileEditorManager`/`FileEditorPolicy`
+  live in `intellij.platform.analysis.jar`.
 
 Gson is bundled in the IntelliJ Platform (`lib/gson-*.jar`) — no extra dependency.
 

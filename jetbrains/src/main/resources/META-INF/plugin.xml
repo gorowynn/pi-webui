@@ -13,5 +13,8 @@
                     anchor="right"
                     factoryClass="com.gorowynn.piwebui.PiWebuiToolWindowFactory"/>
         <applicationService serviceImplementation="com.gorowynn.piwebui.PiWebuiSettings"/>
+        <!-- Shows pi edit/write changes as a diff in a CENTER editor tab (in the
+             main IDE window), with the 4 Approve/Deny buttons. -->
+        <fileEditorProvider implementation="com.gorowynn.piwebui.DiffReviewEditorProvider"/>
     </extensions>
 </idea-plugin>

@@ -72,7 +72,12 @@ interface CommandContext {
 	hasUI: boolean;
 	ui: {
 		notify(msg: string, level: "info" | "warning"): void;
-		select(msg: string, options: string[]): Promise<string | null>;
+		select(
+			msg: string,
+			options: string[],
+		): Promise<
+			string | { label?: string; oldFull?: string; newFull?: string } | null
+		>;
 	};
 }
 interface SessionContext extends CommandContext {}
@@ -402,18 +407,53 @@ export default function (pi: ExtensionAPI) {
 			if (typeof t === "string" && t) preview = `${selector} — ${t}`;
 		}
 		preview = preview.length > 400 ? `${preview.slice(0, 400)} …` : preview;
-		const choice = await ctx.ui.select(
+		const raw = await ctx.ui.select(
 			`🔐 Allow ${event.toolName}?\n\n  ${preview}`,
 			[ALLOW_ONCE, ALLOW_SESSION, ALLOW_ALWAYS, DENY],
 		);
 
-		if (choice === ALLOW_ONCE) return;
+		// The IDE diff / editable webui modal may resolve with {label, oldFull,
+		// newFull} when the user EDITED pi's proposal (vs. a bare label string).
+		// Feed the edited text back by mutating event.input in place — pi then
+		// applies the user's version, so its context stays consistent (no stale
+		// file, no clobber). No edit → plain label string. (docs: event.input is
+		// mutable; mutations affect execution, no re-validation.)
+		const edited =
+			raw && typeof raw === "object"
+				? {
+						label: typeof raw.label === "string" ? raw.label : DENY,
+						oldFull: typeof raw.oldFull === "string" ? raw.oldFull : "",
+						newFull: typeof raw.newFull === "string" ? raw.newFull : "",
+					}
+				: null;
+		const choice = edited ? edited.label : typeof raw === "string" ? raw : null;
+
+		// Apply the user's edits (one-shot) on any ALLOW. edit/write carry edits;
+		// harmless no-op for everything else.
+		const applyEdits = () => {
+			if (!edited || !event.input) return;
+			if (event.toolName === "write") {
+				event.input.content = edited.newFull;
+			} else if (event.toolName === "edit") {
+				// Whole-file replace → result is exactly the user's version.
+				event.input.edits = [
+					{ oldText: edited.oldFull, newText: edited.newFull },
+				];
+			}
+		};
+
+		if (choice === ALLOW_ONCE) {
+			applyEdits();
+			return;
+		}
 		if (choice === ALLOW_SESSION) {
 			sessionAllow.add(key);
+			applyEdits();
 			return;
 		}
 		if (choice === ALLOW_ALWAYS) {
 			saveAllowAlways(event.toolName, selector, loadConfig());
+			applyEdits();
 			return;
 		}
 
