@@ -510,6 +510,107 @@ function renderSubagentView(host, details, density) {
 	html += "</div>";
 	setSafeHtml(host, html);
 }
+// ---- edit diff: syntax highlight via vendored highlight.js ----
+// ponytail: highlight the WHOLE file once (so multi-line tokens like block
+// comments / strings stay correct), then split the HTML on newlines while
+// rebalancing open <span>s so each diff row is standalone valid HTML.
+function splitHtmlLines(html) {
+	const lines = [];
+	let cur = "";
+	const stack = []; // open span class strings
+	const tokRe = /<[^>]*>|[^<]+/g;
+	let m;
+	while ((m = tokRe.exec(html))) {
+		const tok = m[0];
+		if (tok[0] === "<") {
+			if (tok[1] === "/") {
+				if (stack.length) stack.pop();
+				cur += tok;
+			} else if (tok.endsWith("/>")) {
+				cur += tok;
+			} else {
+				stack.push((tok.match(/class="([^"]*)"/) || [, ""])[1]);
+				cur += tok;
+			}
+		} else {
+			const parts = tok.split("\n");
+			for (let i = 0; i < parts.length; i++) {
+				if (i > 0) {
+					for (let k = stack.length - 1; k >= 0; k--) cur += "</span>";
+					lines.push(cur);
+					cur = stack.map((c) => `<span class="${c}">`).join("");
+				}
+				cur += parts[i];
+			}
+		}
+	}
+	lines.push(cur);
+	return lines;
+}
+function highlightLines(text, lang) {
+	if (!window.hljs || !text) return null;
+	try {
+		const res =
+			lang && hljs.getLanguage(lang)
+				? hljs.highlight(text, { language: lang })
+				: hljs.highlightAuto(text);
+		return splitHtmlLines(res.value);
+	} catch (_e) {
+		return null;
+	}
+}
+// map a file path to an hljs language id; unknowns fall through to getLanguage.
+function langOf(path) {
+	const e = (path || "").match(/\.([a-z0-9]+)$/i);
+	if (!e) return null;
+	const map = {
+		js: "javascript",
+		jsx: "javascript",
+		mjs: "javascript",
+		cjs: "javascript",
+		ts: "typescript",
+		tsx: "typescript",
+		py: "python",
+		rb: "ruby",
+		go: "go",
+		rs: "rust",
+		java: "java",
+		kt: "kotlin",
+		kts: "kotlin",
+		scala: "scala",
+		css: "css",
+		less: "less",
+		scss: "scss",
+		html: "xml",
+		htm: "xml",
+		xml: "xml",
+		md: "markdown",
+		markdown: "markdown",
+		sh: "bash",
+		bash: "bash",
+		zsh: "bash",
+		yml: "yaml",
+		yaml: "yaml",
+		toml: "ini",
+		json: "json",
+		jsonc: "json",
+		c: "c",
+		h: "c",
+		cpp: "cpp",
+		cc: "cpp",
+		cxx: "cpp",
+		hpp: "cpp",
+		cs: "csharp",
+		php: "php",
+		swift: "swift",
+		sql: "sql",
+		dockerfile: "dockerfile",
+		makefile: "makefile",
+		vue: "xml",
+		svelte: "xml",
+	};
+	return map[e[1].toLowerCase()] || e[1].toLowerCase();
+}
 // ---- edit diff: LCS line diff from oldText/newText args ----
 // ponytail: O(n*m) Uint32Array DP table. Fine for typical edits; swap for
 // Myers if huge files start lagging the UI.
@@ -587,24 +688,55 @@ function diffRows(a, b) {
 	}
 	return rows;
 }
-function rowsToSides(rows) {
+function rowsToSides(rows, hlOld, hlNew) {
 	const left = [],
 		right = [];
 	let on = 0, // old file line counter
 		nn = 0; // new file line counter
+	const hl = (arr, i) => (arr && arr[i] != null ? arr[i] : null);
 	rows.forEach((r) => {
 		if (r.kind === "ctx") {
-			left.push({ s: r.left, cls: "ln-ctx", num: ++on });
-			right.push({ s: r.right, cls: "ln-ctx", num: ++nn });
+			left.push({
+				s: r.left,
+				cls: "ln-ctx",
+				num: ++on,
+				html: hl(hlOld, on - 1),
+			});
+			right.push({
+				s: r.right,
+				cls: "ln-ctx",
+				num: ++nn,
+				html: hl(hlNew, nn - 1),
+			});
 		} else if (r.kind === "del") {
-			left.push({ s: r.left, cls: "ln-del", num: ++on });
+			left.push({
+				s: r.left,
+				cls: "ln-del",
+				num: ++on,
+				html: hl(hlOld, on - 1),
+			});
 			right.push({ s: null, cls: "ln-empty", num: null });
 		} else if (r.kind === "add") {
 			left.push({ s: null, cls: "ln-empty", num: null });
-			right.push({ s: r.right, cls: "ln-add", num: ++nn });
+			right.push({
+				s: r.right,
+				cls: "ln-add",
+				num: ++nn,
+				html: hl(hlNew, nn - 1),
+			});
 		} else {
-			left.push({ s: r.left, cls: "ln-del", num: ++on });
-			right.push({ s: r.right, cls: "ln-add", num: ++nn });
+			left.push({
+				s: r.left,
+				cls: "ln-del",
+				num: ++on,
+				html: hl(hlOld, on - 1),
+			});
+			right.push({
+				s: r.right,
+				cls: "ln-add",
+				num: ++nn,
+				html: hl(hlNew, nn - 1),
+			});
 		}
 	});
 	return { left, right, maxNum: Math.max(on, nn) };
@@ -613,7 +745,12 @@ function sideHtml(lines) {
 	return lines
 		.map((l) => {
 			const num = l.num == null ? "\u00a0" : String(l.num);
-			const txt = l.s == null || l.s === "" ? "\u00a0" : esc(l.s);
+			const txt =
+				l.html != null
+					? l.html
+					: l.s == null || l.s === ""
+						? "\u00a0"
+						: esc(l.s);
 			return `<span class="sx-line ${l.cls}"><span class="sx-gnum">${num}</span><span class="sx-ltxt">${txt}</span></span>`;
 		})
 		.join("");
@@ -653,6 +790,7 @@ function findStartLine(path, oldText, newText) {
 // numbers stay pinned during horizontal scroll.
 function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 	const ro = !!(opt && opt.readOnly);
+	const cap = !!(opt && opt.capture);
 	const baseOld = oldText == null ? "" : String(oldText);
 	const baseNew = newText == null ? "" : String(newText);
 	// ponytail: diffLines is O(n*m) with a full Uint32Array — a 10k×10k edit
@@ -676,7 +814,12 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 				gutter: gutterCh(Math.max(on, nn)),
 			};
 		}
-		const sides = rowsToSides(diffRows(o, n));
+		const lang = langOf(path);
+		const sides = rowsToSides(
+			diffRows(o, n),
+			highlightLines(o, lang),
+			highlightLines(n, lang),
+		);
 		return {
 			leftHtml: sideHtml(sides.left),
 			rightHtml: sideHtml(sides.right),
@@ -689,7 +832,7 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 		`<div class="dpath">${esc(path || "(no path)")}${isWrite ? ' <span class="sx-tag">write</span>' : ""}</div>` +
 			`<div class="sxs" style="--sx-gutter:${init.gutter}">` +
 			`<div class="sx-col sx-old"><div class="sx-hdr">\u2212 original</div><div class="sx-body sx-left">${init.leftHtml}</div></div>` +
-			`<div class="sx-col sx-new"><div class="sx-hdr">+ edited${ro ? "" : ' <button class="sx-apply" type="button">Apply</button>'}</div>` +
+			`<div class="sx-col sx-new"><div class="sx-hdr">+ ${cap ? "proposal" : "edited"}${ro || cap ? "" : ' <button class="sx-apply" type="button">Apply</button>'}</div>` +
 			(ro
 				? `<div class="sx-body sx-right">${init.rightHtml}</div>`
 				: `<div class="sx-edit"><div class="sx-body sx-hlbody" aria-hidden="true">${init.rightHtml}</div><textarea class="sx-ta" spellcheck="false" wrap="off"></textarea></div>`) +
@@ -770,11 +913,12 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 		});
 	});
 	let baselineNew = baseNew;
-	applyBtn.addEventListener("click", () =>
-		applyEdit(path, baselineNew, ta.value, isWrite, applyBtn, () => {
-			baselineNew = ta.value;
-		}),
-	);
+	if (applyBtn)
+		applyBtn.addEventListener("click", () =>
+			applyEdit(path, baselineNew, ta.value, isWrite, applyBtn, () => {
+				baselineNew = ta.value;
+			}),
+		);
 }
 // applyEdit: read current file, splice the edited hunk in (edit tool) or
 // replace it wholesale (write tool), then POST to /api/write. For edits we
@@ -1392,6 +1536,7 @@ function applyTodoOp(args) {
 	renderTodos();
 }
 function renderTodos() {
+	updatePlanBadge();
 	// ponytail: hide once every task is finished — a fully-done list has done
 	// its job; lingering checkmarks are clutter. State is kept (a later plan/add
 	// re-opens the panel), and persistTodos already saved it for reload safety.
@@ -1423,6 +1568,207 @@ function renderTodos() {
 		tpBody.appendChild(row);
 	});
 }
+
+// ---- plan/spec viewer: header pill opens SDD artifacts + the live todo plan ----
+// ponytail: skills/sdd writes .sdd/{type}_{slug}_{DDMMYYYY}.md (plan/spec/tasks/
+// verify); the server (/api/plan-state) globs .sdd and returns them newest-first
+// as {phase,slug,date,rel,mtime}. The badge signals the *latest active* set's
+// current phase (a set is "finished" once it reaches verify); the viewer lists
+// every doc as history + a phase stepper that nudges the next missing phase.
+let planArtifacts = [];
+const PHASE_RANK = { plan: 0, spec: 1, tasks: 2, verify: 3 };
+const PHASE_NEXT = { plan: "spec", spec: "tasks", tasks: "verify" };
+// group artifacts into SDD runs by slug+date (legacy fixed-name files share one set)
+function planSets() {
+	const map = new Map();
+	for (const a of planArtifacts) {
+		const key = (a.slug || "") + "|" + (a.date || "");
+		let s = map.get(key);
+		if (!s) {
+			s = { slug: a.slug || "", date: a.date || "", arts: [], mtime: 0 };
+			map.set(key, s);
+		}
+		s.arts.push(a);
+		if ((a.mtime || 0) > s.mtime) s.mtime = a.mtime;
+	}
+	return [...map.values()];
+}
+// highest phase reached in a set + whether the run is complete (verify = terminal)
+function setSummary(s) {
+	let rank = -1,
+		phase = null;
+	for (const a of s.arts) {
+		const r = PHASE_RANK[a.phase];
+		if (r != null && r > rank) {
+			rank = r;
+			phase = a.phase;
+		}
+	}
+	return {
+		slug: s.slug,
+		date: s.date,
+		mtime: s.mtime,
+		phase,
+		finished: phase === "verify",
+	};
+}
+// the most-recent set that hasn't reached verify — what the badge signals
+function activeSet() {
+	let best = null;
+	for (const s of planSets()) {
+		const sum = setSummary(s);
+		if (sum.finished) continue;
+		if (!best || sum.mtime > best.mtime) best = sum;
+	}
+	return best;
+}
+function todoActive() {
+	return todos.length > 0 && !todos.every((t) => t.status === "finished");
+}
+function updatePlanBadge() {
+	const b = document.getElementById("plan-badge");
+	if (!b) return;
+	const set = activeSet();
+	const hasTodo = todoActive();
+	const labels = [];
+	if (set) labels.push(set.slug ? set.phase + " · " + set.slug : set.phase);
+	if (hasTodo) labels.push("todo");
+	if (!labels.length) {
+		b.hidden = true;
+		return;
+	}
+	b.hidden = false;
+	const cnt = document.getElementById("plan-count");
+	if (cnt) cnt.textContent = labels.join("  ·  ");
+	// title: current phase + the next expected phase (a nudge), then a hint
+	const parts = [];
+	if (set) {
+		const where = set.slug ? ' "' + set.slug + '"' : "";
+		parts.push("current: " + set.phase + where);
+		if (PHASE_NEXT[set.phase]) parts.push("next: " + PHASE_NEXT[set.phase]);
+	}
+	if (hasTodo) parts.push("todo in progress");
+	b.title = parts.join("  ·  ") + " — click to open";
+}
+function refreshPlanState() {
+	fetch("/api/plan-state")
+		.then((r) => r.json())
+		.then((j) => {
+			planArtifacts = j && Array.isArray(j.artifacts) ? j.artifacts : [];
+			updatePlanBadge();
+		})
+		.catch(() => {});
+}
+function planDocTabs() {
+	const tabs = planArtifacts.map((a) => ({
+		key: "file:" + a.rel,
+		label: a.slug ? a.phase + " · " + a.slug : a.phase,
+		rel: a.rel,
+		art: a,
+	}));
+	if (todos.length) tabs.push({ key: "todo", label: "todo" });
+	return tabs;
+}
+function todosAsMarkdown() {
+	if (!todos.length) return "_(no tasks)_";
+	const done = todos.filter((t) => t.status === "finished").length;
+	const lines = ["**" + done + "/" + todos.length + "**\n"];
+	for (const t of todos) {
+		const mark =
+			t.status === "finished" ? "x" : t.status === "started" ? "~" : " ";
+		lines.push("- [" + mark + "] #" + t.id + " " + t.subject);
+	}
+	return lines.join("\n");
+}
+async function renderPlanDoc(container, tab) {
+	setSafeHtml(container, '<p class="um-hint">loading\u2026</p>');
+	let mdText;
+	if (tab.key === "todo") {
+		mdText = todosAsMarkdown();
+	} else {
+		const r = await fetch("/api/file?path=" + encodeURIComponent(tab.rel));
+		const j = await r.json();
+		if (!j || !j.ok) {
+			setSafeHtml(
+				container,
+				'<p class="um-err">\u26a0 ' +
+					esc((j && j.error) || "read failed") +
+					"</p>",
+			);
+			return;
+		}
+		mdText = j.content || "_(empty)_";
+	}
+	setSafeHtml(container, md(mdText));
+	highlightCode(container);
+}
+// phase stepper for the active tab's set: ● reached / ○ pending, current in accent.
+// Reinforces the workflow by making the next missing phase visible at a glance.
+function stepperHtml(art) {
+	if (!art) return "";
+	const key = (art.slug || "") + "|" + (art.date || "");
+	const s = planSets().find(
+		(x) => (x.slug || "") + "|" + (x.date || "") === key,
+	);
+	if (!s) return "";
+	const sum = setSummary(s);
+	const curRank = PHASE_RANK[sum.phase];
+	let html = '<div class="sdd-stepper">';
+	for (const ph of ["plan", "spec", "tasks", "verify"]) {
+		const reached = PHASE_RANK[ph] <= curRank;
+		const isCur = ph === sum.phase && !sum.finished;
+		html +=
+			'<span class="ss-step ' +
+			(reached ? "done " : "") +
+			(isCur ? "cur" : "") +
+			'">' +
+			(reached ? "●" : "○") +
+			" " +
+			ph +
+			"</span>";
+	}
+	return html + "</div>";
+}
+function openPlanViewer() {
+	const tabs = planDocTabs();
+	if (!tabs.length) return;
+	showModal(
+		'<h3>plan &amp; spec</h3><div class="doc-stepper"></div><div class="doc-tabs"></div><div class="doc-body"></div>',
+		true,
+	);
+	card.classList.add("wide");
+	const stepper = card.querySelector(".doc-stepper");
+	const strip = card.querySelector(".doc-tabs");
+	const body = card.querySelector(".doc-body");
+	let active = 0;
+	const paint = () => {
+		[...strip.children].forEach((b, i) =>
+			b.classList.toggle("active", i === active),
+		);
+		const t = tabs[active];
+		setSafeHtml(stepper, t && t.art ? stepperHtml(t.art) : "");
+		renderPlanDoc(body, t);
+	};
+	tabs.forEach((t, i) => {
+		const b = document.createElement("button");
+		b.className = "sx-tab";
+		b.type = "button";
+		b.textContent = t.label;
+		b.onclick = () => {
+			active = i;
+			paint();
+		};
+		strip.appendChild(b);
+	});
+	paint();
+}
+(function initPlanBadge() {
+	const b = document.getElementById("plan-badge");
+	if (b) b.addEventListener("click", openPlanViewer);
+	refreshPlanState();
+	// ponytail: the 30s poll is declared with the other timers below so it joins
+	// the visibilitychange pause/resume (idle-waste fix, c34fb6f family).
+})();
 
 // ---- ask_user_question: rich modal, answer flows back as the tool result ----
 // pi-webui extension shadows the npm tool (which auto-declines in RPC mode:
@@ -2005,34 +2351,107 @@ async function buildDiffPayload() {
 	};
 }
 
+// ponytail: the editable approval modal shows the WHOLE file otherwise. Window
+// to the hunks + context lines so you approve the actual change, not 500 lines.
+// Handles N hunks: one contiguous span from first-hunk-start to last-hunk-end
+// (forward-search each so non-unique oldTexts resolve in file order, matching
+// buildDiffPayload's sequential replace). old/new stay a matched old→new pair
+// that's an exact substring of the file (pi replaces it), so the safeguard
+// contract holds. Returns null (→ whole-file) when any oldText isn't found or
+// the span already covers the whole file. Write is never narrowed: safeguard
+// sets content=newFull, so newFull must be the entire file.
+const DIFF_CONTEXT_DEFAULT = 4;
+// read fresh each call (no mutable module state — GOTCHAS #8); the stepper
+// just writes localStorage then rebuild() re-reads it.
+function getDiffCtx() {
+	const n = parseInt(localStorage.getItem("pi:diffCtx"), 10);
+	return Number.isFinite(n)
+		? Math.max(0, Math.min(80, n))
+		: DIFF_CONTEXT_DEFAULT;
+}
+function narrowEditRegions(fileText, edits, ctx) {
+	if (!fileText || !edits || !edits.length) return null;
+	const fileLines = fileText.split("\n");
+	let cursor = 0;
+	const spans = [];
+	for (const e of edits) {
+		const oldT = e.oldText || "";
+		if (!oldT) return null;
+		const idx = fileText.indexOf(oldT, cursor); // forward search → file order
+		if (idx < 0) return null;
+		const startLine = fileText.slice(0, idx).split("\n").length - 1;
+		spans.push([startLine, startLine + oldT.split("\n").length]);
+		cursor = idx + oldT.length;
+	}
+	const a = Math.max(0, Math.min(...spans.map((s) => s[0])) - ctx);
+	const b = Math.min(
+		fileLines.length,
+		Math.max(...spans.map((s) => s[1])) + ctx,
+	);
+	if (b - a >= fileLines.length) return null; // span already covers whole file
+	const oldWin = fileLines.slice(a, b).join("\n");
+	let newWin = oldWin;
+	for (const e of edits) {
+		if (!newWin.includes(e.oldText)) return null;
+		newWin = newWin.replace(e.oldText, e.newText || "");
+	}
+	return { old: oldWin, new: newWin };
+}
+
 // Editable side-by-side for the standalone approval modal: left = current file
 // (read-only), right = pi's proposal (editable <textarea>). Returns a getter
 // (label) => label | {label, oldFull, newFull} so the button handler ships the
 // edit back over the SAME extension_ui_response channel safeguard reads —
 // safeguard mutates pi's event.input from oldFull/newFull, so pi applies the
 // user's edited version (context stays consistent).
-function mountEditableDiff(container, oldText, newText) {
-	const wrap = document.createElement("div");
-	wrap.className = "sx-edit";
-	const left = document.createElement("textarea");
-	left.className = "sx-edit-left";
-	left.value = oldText;
-	left.readOnly = true;
-	left.spellcheck = false;
-	const right = document.createElement("textarea");
-	right.className = "sx-edit-right";
-	right.value = newText;
-	right.spellcheck = false;
-	wrap.appendChild(left);
-	wrap.appendChild(right);
+function mountEditableDiff(container, oldText, newText, path) {
+	// reuse the highlighted, diff-colored side-by-side (left read-only, right
+	// editable); capture mode drops the Apply button + disk write so the
+	// approval buttons below capture the edited text instead.
+	const host = document.createElement("div");
+	host.className = "sx-host";
 	container.classList.add("wide");
-	container.querySelector(".opts").before(wrap);
+	container.querySelector(".opts").before(host);
+	mountSideBySide(host, path || "", oldText, newText, false, { capture: true });
+	const ta = host.querySelector(".sx-ta");
 	return (label) => {
-		const edited = right.value;
+		const edited = ta.value;
 		return edited === newText
 			? label
 			: { label, oldFull: oldText, newFull: edited };
 	};
+}
+
+// ponytail: −/N/+ stepper in the new-column header to tune context lines
+// around the hunks. Persisted (pi:diffCtx). Only mounted for edits (write
+// can't narrow — its newFull must be the whole content). rebuild re-mounts the
+// textarea, so set context BEFORE tweaking the proposal (a change drops
+// in-flight edits).
+function installCtxStepper(card, enabled, rebuild) {
+	const hdr = card.querySelector(".sx-new .sx-hdr");
+	if (!hdr || !enabled || hdr.querySelector(".sx-ctx")) return;
+	const wrap = document.createElement("span");
+	wrap.className = "sx-ctx";
+	wrap.title = "context lines around the change";
+	const dec = document.createElement("button");
+	dec.type = "button";
+	dec.className = "sx-ctx-btn";
+	dec.textContent = "\u2212";
+	const num = document.createElement("span");
+	num.className = "sx-ctx-n";
+	num.textContent = String(getDiffCtx());
+	const inc = document.createElement("button");
+	inc.type = "button";
+	inc.className = "sx-ctx-btn";
+	inc.textContent = "+";
+	const apply = (v) => {
+		localStorage.setItem("pi:diffCtx", String(Math.max(0, Math.min(80, v))));
+		rebuild();
+	};
+	dec.onclick = () => apply(getDiffCtx() - 1);
+	inc.onclick = () => apply(getDiffCtx() + 1);
+	wrap.append(dec, num, inc);
+	hdr.append(wrap);
 }
 
 // The webui permission modal, factored out so the IDE-diff path can fall back
@@ -2065,7 +2484,35 @@ async function openSelectModal(req) {
 	let editedValue = null; // (label) => label | {label, oldFull, newFull}
 	if (isEditWrite) {
 		const payload = await buildDiffPayload();
-		editedValue = mountEditableDiff(card, payload.leftText, payload.rightText);
+		// ponytail: build (and rebuild, on context-stepper change) the narrowed
+		// editable diff. Reuses the one fetched payload (file unchanged) — just
+		// re-windows. Re-mounting recreates the textarea, so set context BEFORE
+		// tweaking the proposal (a change drops in-flight edits). Write is never
+		// narrowed (newFull must be the whole content).
+		const buildDiff = () => {
+			let oldT = payload.leftText;
+			let newT = payload.rightText;
+			if (
+				payload.op === "edit" &&
+				Array.isArray(payload.edits) &&
+				payload.edits.length
+			) {
+				const nr = narrowEditRegions(
+					payload.leftText,
+					payload.edits,
+					getDiffCtx(),
+				);
+				if (nr) {
+					oldT = nr.old;
+					newT = nr.new;
+				}
+			}
+			const prev = card.querySelector(".sx-host");
+			if (prev) prev.remove();
+			editedValue = mountEditableDiff(card, oldT, newT, payload.path);
+			installCtxStepper(card, payload.op === "edit", buildDiff);
+		};
+		buildDiff();
 	} else {
 		const stack = renderEditDiffPreviews(card);
 		if (stack) {
@@ -2761,6 +3208,7 @@ const STATS_FAST = 3000,
 let statsTimer = setInterval(refreshStats, STATS_IDLE);
 let healthTimer = setInterval(refreshHealth, 6000);
 let usageTimer = setInterval(refreshUsageBar, 60000);
+let planTimer = setInterval(refreshPlanState, 30000);
 function rescheduleStats() {
 	clearInterval(statsTimer);
 	statsTimer = setInterval(refreshStats, streaming ? STATS_FAST : STATS_IDLE);
@@ -2770,13 +3218,16 @@ document.addEventListener("visibilitychange", () => {
 		clearInterval(statsTimer);
 		clearInterval(healthTimer);
 		clearInterval(usageTimer);
+		clearInterval(planTimer);
 	} else {
 		refreshStats();
 		refreshHealth();
 		refreshUsageBar();
+		refreshPlanState();
 		rescheduleStats();
 		healthTimer = setInterval(refreshHealth, 6000);
 		usageTimer = setInterval(refreshUsageBar, 60000);
+		planTimer = setInterval(refreshPlanState, 30000);
 	}
 });
 es.onmessage = (ev) => {

@@ -6,6 +6,36 @@
 
 ## Changelog
 
+### 2026-07-17 — fix(server): missing static asset crashed the whole server (ERR_HTTP_HEADERS_SENT)
+
+- **What:** A `GET` for a whitelisted `STATIC` asset whose backing file was missing threw `ERR_HTTP_HEADERS_SENT` and killed the **entire** `server.js` process (taking every SSE client down with it). Root cause: the handler did `res.writeHead(200, …)` **before** `fs.readFileSync(…)`, so an ENOENT fell into the `catch`, which then tried `res.writeHead(404)` on a response that had already sent its 200 status line.
+- **Fix:** read the file **first**, then commit the 200 — if the read throws, no headers are sent yet and the `catch` can emit a clean 404. A bad asset request now degrades gracefully instead of crashing the process.
+- **Trigger:** `usage-provider.js` was deleted from the working tree (`git status: D`) but still registered in `STATIC`, loaded by `index.html`, and required by `test/usage-provider.test.js` — so every page load hit the crash path. Restored the file from git (deletion was accidental; a deliberate removal would also strip the `<script>` tag, `STATIC` entry, and test).
+- **Verified:** `node test/usage-provider.test.js` passes; simulating the exact failure (missing `vendor/highlight.css`) now returns `404` with the server staying alive (next request `200`).
+- **Files:** `server.js` (STATIC handler, read-before-writeHead); `usage-provider.js` (restored).
+
+### 2026-07-17 — feat(sdd): reinforce the plan/spec workflow + `{type}_{slug}_{date}.md` naming
+
+- **What:** SDD artifacts now use `.sdd/{type}_{slug}_{DDMMYYYY}.md` (plan/spec/tasks/verify, e.g. `.sdd/plan_usage-tracking_17072026.md`) instead of fixed `plan.md`/`spec.md`/…, so multiple efforts coexist as history. The header pill badges the **latest active** set's current phase (+ slug) and the viewer gains a **phase stepper** (`● reached / ○ pending`, current in accent) that nudges the next missing phase.
+- **Why:** reinforce usage of the SDD workflow — the badge now signals *what's relevant* (a set is finished once it reaches `verify`; todo only while unfinished) and the viewer makes the progression visible. Asked-and-answered scope: skill+docs **and** UI reinforcement; latest-active in badge, full history in viewer.
+- **How:** `server.js /api/plan-state` globs `.sdd/*.md` and parses `{type}_{slug}_{8-digit-date}` (+ legacy fixed names incl. `verify-report.md` back-compat), returning `{phase,slug,date,rel,mtime}` newest-first. `app.js` groups artifacts into sets (`slug|date`), `activeSet()` picks the newest non-`verify` set for the badge, `planDocTabs()` lists all as history, and `stepperHtml()` renders the per-set progression above the doc body. Naming adopted in `skills/sdd/SKILL.md` (Phase 1 picks slug+date, reused verbatim) + a "when to use" directive; `AGENTS.md` file-map row updated.
+- **Files:** `skills/sdd/SKILL.md`; `server.js` (`/api/plan-state`); `app.js` (`planSets`/`setSummary`/`activeSet`/`updatePlanBadge`/`planDocTabs`/`stepperHtml`/`openPlanViewer`); `style.css` (`.sdd-stepper`/`.ss-step`); `AGENTS.md`.
+
+### 2026-07-16 — feat(webui): highlight + enlarge the editable approval diff
+
+- **What:** the editable approval modal (edit/write, when not using the IDE diff) now renders the same syntax-highlighted, diff-colored side-by-side as the transcript diff, instead of two plain `<textarea>`s. The right pane stays editable (tweak pi's proposal before approving); the captured edit goes back via the permission response, so nothing is written to disk until you choose Allow.
+- **How:** `mountSideBySide` gained a `capture` option (omits the Apply button + `applyEdit` disk-write; keeps the transparent-textarea overlay + live re-highlight). `mountEditableDiff` now delegates to it and reads `.sx-ta`'s value. The modal call passes `payload.path` so the diff highlights by language.
+- **Sizing:** modal diff height raised from ~440–460px to `min(72vh, 720px)`; the old modal-only `.sx-edit` textarea rules (which would have clobbered the transparent `.sx-ta` overlay and broken `.sx-edit`'s positioning) were dropped in favor of a matching `#modal .sx-ta` height rule. The wide card already spans up to 96vw.
+- **Files:** `app.js` (`mountSideBySide` capture option, `mountEditableDiff`, `openSelectModal`); `style.css` (modal diff heights, dropped dead textarea rules).
+
+### 2026-07-16 — feat(webui): syntax-highlight the edit/write diff view
+
+- **What:** the side-by-side edit/write diff (transcript + permission-modal preview) now renders code with the vendored highlight.js (GitHub-Dark), matching the JetBrains IDE diff. Each side is highlighted as a whole file (so multi-line tokens — block comments, strings — stay correct), then split into per-line HTML with open `<span>`s rebalanced at every newline.
+- **Why:** the diff plumbing already carried `hlOld`/`hlNew` params and "live re-highlight" comments, but no highlight call was ever wired in, and per-line `.sx-ltxt` text-color overrides would have masked it anyway — so the webui diff read as flat monochrome text next to Rider's native diff.
+- **Visibility:** diff line backgrounds raised from ~10% to ~20% alpha; the per-line red/green *text* tint was dropped so syntax colors show on changed lines (gutter number + background keep the add/del cue).
+- **Editable pane:** `compute()` re-highlights on every input, so the editable new pane now truly live-highlights (the comment was aspirational before).
+- **Files:** `app.js` (`splitHtmlLines`/`highlightLines`/`langOf`, wired into `rowsToSides`/`sideHtml`/`mountSideBySide.compute`); `style.css` (diff backgrounds + dropped `.sx-ltxt` overrides).
+
 ### 2026-07-16 — fix(usage): pair each quota window with its reset
 
 - Header quota cards are compact side-by-side panels; every window returned by

@@ -68,9 +68,9 @@ body {
 }
 header {
 	display: flex;
-	gap: 10px;
+	gap: 8px;
 	align-items: center;
-	padding: 8px 12px;
+	padding: 5px 12px;
 	background: var(--panel);
 	border-bottom: 1px solid var(--border);
 	flex: 0 0 auto;
@@ -85,8 +85,8 @@ header button {
 	color: var(--text);
 	border: 1px solid var(--border);
 	border-radius: var(--r);
-	padding: 4px 8px;
-	font-size: 13px;
+	padding: 2px 7px;
+	font-size: 12px;
 	cursor: pointer;
 }
 header select {
@@ -596,20 +596,14 @@ pre code.hljs {
 }
 .sx-old .sx-line.ln-del,
 .sx-new .sx-line.ln-add {
-	background: #f287791a;
+	background: #f2877933;
 }
 .sx-new .sx-line.ln-add {
-	background: #a6cc701a;
-}
-.sx-old .sx-line.ln-del .sx-ltxt {
-	color: #f0a0b0;
+	background: #a6cc7033;
 }
 .sx-old .sx-line.ln-del .sx-gnum {
 	color: #f0a0b0;
 	opacity: 0.8;
-}
-.sx-new .sx-line.ln-add .sx-ltxt {
-	color: #b5e89a;
 }
 .sx-new .sx-line.ln-add .sx-gnum {
 	color: #b5e89a;
@@ -646,6 +640,7 @@ pre code.hljs {
 	white-space: pre;
 	background: transparent;
 	color: transparent;
+	-webkit-text-fill-color: transparent;
 	caret-color: var(--text);
 	border: 0;
 	outline: none;
@@ -669,6 +664,39 @@ pre code.hljs {
 	opacity: 0.5;
 	cursor: default;
 }
+/* context-lines stepper in the editable diff header (−/N/+). Reuses the
+   small-button look of .sx-apply. */
+.sx-ctx {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	margin-left: auto;
+}
+.sx-ctx-btn {
+	font: inherit;
+	font-size: 13px;
+	line-height: 1;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	border: 1px solid var(--border);
+	border-radius: var(--r);
+	background: var(--panel2);
+	color: var(--muted);
+	cursor: pointer;
+}
+.sx-ctx-btn:hover {
+	color: var(--accent);
+	border-color: var(--accent);
+}
+.sx-ctx-n {
+	min-width: 16px;
+	text-align: center;
+	font-size: 11px;
+	color: var(--muted);
+	text-transform: none;
+	letter-spacing: 0;
+}
 .sx-tag {
 	font-size: 10px;
 	color: var(--warn);
@@ -683,49 +711,50 @@ pre code.hljs {
 	white-space: pre-wrap;
 }
 /* read-only diff preview inside the permission modal */
+/* ponytail: .card.wide is a flex column so the diff fills the modal height
+   (was fixed 72vh bodies with dead space below). The diff host flexes between
+   the h3 and the .opts buttons; each column body/textarea fills its column. */
 #modal .card.wide {
 	max-height: 92vh;
+	display: flex;
+	flex-direction: column;
 }
-#modal .sxs .sx-body {
-	height: min(54vh, 460px);
+#modal .card.wide > .sx-tabs-wrap {
+	flex: 1 1 auto;
+	min-height: 0;
 }
 #modal .sx-host {
 	margin-top: 4px;
-}
-/* editable side-by-side (standalone approval modal): left = current (readOnly),
-   right = pi's proposal (editable). The IDE plugin has the native diff; this
-   is the webui fallback. */
-#modal .sx-edit {
+	flex: 1 1 auto;
+	min-height: 0;
 	display: flex;
-	gap: 6px;
-	margin-top: 6px;
+	flex-direction: column;
 }
-#modal .sx-edit textarea {
-	flex: 1 1 0;
-	min-width: 0;
-	height: min(50vh, 440px);
-	resize: vertical;
-	background: var(--panel);
-	color: var(--text);
-	border: 1px solid var(--border);
-	border-radius: var(--r);
-	padding: 6px;
-	font:
-		12px / 1.45 ui-monospace,
-		SFMono-Regular,
-		Menlo,
-		Consolas,
-		monospace;
-	white-space: pre;
-	overflow: auto;
-	tab-size: 2;
+#modal .sxs {
+	flex: 1 1 auto;
+	min-height: 0;
 }
-#modal .sx-edit-left {
-	opacity: 0.85;
+#modal .sxs .sx-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	height: auto;
+}
+/* editable approval modal: .sx-edit flexes to fill its column; the .sx-ta
+   transparent overlay fills .sx-edit so it tracks the highlight rows behind it
+   (was fixed 72vh, which left dead space below the scrollbar). */
+#modal .sx-edit {
+	flex: 1 1 auto;
+	min-height: 0;
+}
+#modal .sx-ta {
+	height: 100%;
+	min-height: 0;
 }
 /* tab strip when multiple edit hunks need reviewing */
 .sx-tabs-wrap {
 	margin: 8px 0 4px;
+	display: flex;
+	flex-direction: column;
 }
 .sx-tabs {
 	display: flex;
@@ -759,7 +788,10 @@ pre code.hljs {
 	display: none;
 }
 .sx-panel.active {
-	display: block;
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
 }
 .tool .dpath {
 	color: var(--muted);
@@ -1162,7 +1194,10 @@ textarea:focus {
 	font-size: 10px;
 	margin-bottom: 4px;
 }
-#modal textarea,
+/* ponytail: exclude .sx-ta — it's a transparent overlay on the diff highlight,
+   not a real input. Without :not(.sx-ta) this rule (1,1,1) beats .sx-ta (0,1,0)
+   and renders the proposal overlay as a second visible plaintext box. */
+#modal textarea:not(.sx-ta),
 #modal input[type="text"] {
 	width: 100%;
 	background: var(--panel2);
@@ -1466,7 +1501,7 @@ textarea:focus-visible,
 	flex-direction: row;
 	gap: 8px;
 	margin: 0 8px;
-	padding: 3px 8px;
+	padding: 2px 8px;
 	border: 1px solid transparent;
 	border-radius: var(--r);
 	cursor: pointer;
@@ -1845,4 +1880,83 @@ textarea:focus-visible,
 #settings-back.open {
 	opacity: 1;
 	pointer-events: auto;
+}
+
+/* plan/spec header pill + tabbed viewer modal */
+.plan-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 8px;
+	font-size: 12px;
+	color: var(--accent);
+	background: var(--panel2);
+	border: 1px solid var(--border);
+	border-radius: var(--r);
+	cursor: pointer;
+}
+.plan-pill[hidden] {
+	display: none;
+}
+.plan-pill:hover {
+	background: var(--accent);
+	color: #0b0e14;
+}
+/* SDD phase stepper (plan→spec→tasks→verify) at the top of the plan viewer.
+   ● reached / ○ pending; current phase in accent. Nudges the next missing phase. */
+.sdd-stepper {
+	display: flex;
+	gap: 10px;
+	flex-wrap: wrap;
+	margin: 0 0 8px;
+	padding: 6px 8px;
+	background: var(--panel2);
+	border: 1px solid var(--border);
+	border-radius: var(--r);
+	font-size: 12px;
+	color: var(--muted);
+}
+.sdd-stepper:empty {
+	display: none;
+}
+.ss-step.done {
+	color: var(--ok);
+}
+.ss-step.cur {
+	color: var(--accent);
+	font-weight: 700;
+}
+.doc-tabs {
+	display: flex;
+	gap: 2px;
+	border-bottom: 1px solid var(--border);
+	margin: 4px 0 8px;
+	overflow-x: auto;
+	scrollbar-width: thin;
+}
+.doc-body {
+	max-height: 68vh;
+	overflow: auto;
+	padding: 2px 4px 8px;
+	font-size: 13px;
+	line-height: 1.55;
+}
+.doc-body h1,
+.doc-body h2,
+.doc-body h3 {
+	margin: 0.6em 0 0.3em;
+}
+.doc-body pre code {
+	display: block;
+	padding: 8px 10px;
+	overflow-x: auto;
+	font-size: 12px;
+}
+.doc-body table {
+	border-collapse: collapse;
+}
+.doc-body td,
+.doc-body th {
+	border: 1px solid var(--border);
+	padding: 2px 8px;
 }

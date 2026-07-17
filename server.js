@@ -579,14 +579,18 @@ const server = http.createServer(async (req, res) => {
 	if (req.method === "GET" && STATIC[url.pathname]) {
 		const a = STATIC[url.pathname];
 		try {
+			// Read FIRST: if the asset is missing, committing a 200 status line
+			// here would make the catch's writeHead(404) throw ERR_HTTP_HEADERS_SENT
+			// and crash the whole server (taking every SSE client with it).
 			// ponytail: no-cache so editing app.js/style.css + browser refresh always
 			// picks up the change (the documented dev loop). Without it the browser
 			// heuristically caches and serves stale JS after an edit.
+			const data = fs.readFileSync(path.join(__dirname, a.file));
 			res.writeHead(200, {
 				"Content-Type": a.type,
 				"Cache-Control": "no-cache, no-transform",
 			});
-			return res.end(fs.readFileSync(path.join(__dirname, a.file)));
+			return res.end(data);
 		} catch {
 			res.writeHead(404);
 			return res.end("not found");
@@ -817,6 +821,47 @@ const server = http.createServer(async (req, res) => {
 		// derived from PI_CWD — no client path is accepted, so nothing escapes it.
 		res.writeHead(200, { "Content-Type": "application/json" });
 		return res.end(JSON.stringify({ ok: true, sessions: listSessions() }));
+	}
+
+	if (req.method === "GET" && url.pathname === "/api/plan-state") {
+		// ponytail: detect SDD plan/spec/tasks/verify artifacts under .sdd. Naming
+		// convention is {type}_{slug}_{DDMMYYYY}.md (skills/sdd/SKILL.md), which lets
+		// multiple efforts coexist as history; legacy fixed names (plan.md,
+		// verify-report.md, ...) still match for back-compat. Fixed dir + parsed
+		// filenames under PI_CWD — no client path, so no traversal surface;
+		// contents read via sandboxed /api/file. Sorted newest-first so the client
+		// can pick the "latest active" set for the badge and list the rest as history.
+		const parseArtifact = (name) => {
+			const base = name.replace(/\.md$/i, "");
+			if (!base) return null;
+			if (base === "verify-report")
+				return { phase: "verify", slug: "", date: "" }; // legacy
+			let m = base.match(/^(plan|spec|tasks|verify)_(.*)_(\d{8})$/);
+			if (m) return { phase: m[1], slug: m[2], date: m[3] };
+			m = base.match(/^(plan|spec|tasks|verify)(?:_(.+))?$/);
+			if (m) return { phase: m[1], slug: m[2] || "", date: "" }; // legacy
+			return null;
+		};
+		const out = [];
+		try {
+			const dir = path.join(PI_CWD, ".sdd");
+			for (const name of fs.readdirSync(dir)) {
+				if (!/\.md$/i.test(name)) continue;
+				const p = parseArtifact(name);
+				if (!p) continue;
+				const rel = ".sdd/" + name;
+				let mtime = 0;
+				try {
+					mtime = fs.statSync(path.join(dir, name)).mtimeMs;
+				} catch {}
+				out.push({ ...p, rel, mtime });
+			}
+		} catch {
+			/* no .sdd dir yet — no SDD run started */
+		}
+		out.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+		res.writeHead(200, { "Content-Type": "application/json" });
+		return res.end(JSON.stringify({ ok: true, artifacts: out }));
 	}
 
 	res.writeHead(404);

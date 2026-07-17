@@ -14,29 +14,45 @@ architectural drift by strictly separating **Planning**, **Specification**,
 **CRITICAL RULE:** You are FORBIDDEN from generating implementation code (source
 files) until the user has explicitly approved the `tasks.md` file in Phase 3.
 
+## Naming Convention
+
+Every artifact uses `{type}_{slug}_{DDMMYYYY}.md` under `.sdd/`:
+
+- **type** = `plan` | `spec` | `tasks` | `verify`
+- **slug** = short kebab-case topic (e.g. `usage-tracking`), chosen in Phase 1
+  and reused **verbatim** in every later phase so one effort's four files group
+  together (and multiple efforts can coexist as history)
+- **DDMMYYYY** = creation date (e.g. `17072026` = 17 Jul 2026)
+
+Example run: `.sdd/plan_usage-tracking_17072026.md`,
+`.sdd/spec_usage-tracking_17072026.md`, `.sdd/tasks_usage-tracking_17072026.md`,
+`.sdd/verify_usage-tracking_17072026.md`.
+
 ## Workflow Phases
 
-### Phase 1: High-Level Plan (`.sdd/plan.md`)
+### Phase 1: High-Level Plan (`.sdd/plan_{slug}_{DDMMYYYY}.md`)
 
 **Goal:** Define the "What" and "Why" without technical implementation details.
 
 **Action:**
 
 1. Analyze the user request.
-2. Generate `.sdd/plan.md` containing:
+2. Pick the `slug` (short kebab-case topic) and today's `DDMMYYYY`, then generate
+   `.sdd/plan_{slug}_{DDMMYYYY}.md` containing:
    - **Problem Statement:** What are we solving?
    - **Business Goals:** Why is this valuable?
    - **Constraints:** Hard limits (time, tech, budget).
    - **Success Criteria:** How do we know we are done?
 3. **STOP** and ask: "Does this plan align with your goals? (Yes/No)"
 
-### Phase 2: Detailed Specification (`.sdd/spec.md`)
+### Phase 2: Detailed Specification (`.sdd/spec_{slug}_{DDMMYYYY}.md`)
 
 **Goal:** Define the functional contract and edge cases.
 
 **Action:**
 
-1. Upon Plan approval, generate `.sdd/spec.md` containing:
+1. Upon Plan approval, generate `.sdd/spec_{slug}_{DDMMYYYY}.md` (same slug/date)
+   containing:
    - **User Stories:** As a [user], I want [feature] so that [benefit].
    - **Functional Requirements:** Precise, ID-tagged behavior descriptions
      (`FR-1`, `FR-2`, …) so tests can trace back to them.
@@ -44,13 +60,14 @@ files) until the user has explicitly approved the `tasks.md` file in Phase 3.
    - **Edge Cases:** Error handling, empty states, limits.
 2. **STOP** and ask: "Is this specification complete and accurate? (Yes/No)"
 
-### Phase 3: Implementation Plan & TiCoder Tests (`.sdd/tasks.md`)
+### Phase 3: Implementation Plan & TiCoder Tests (`.sdd/tasks_{slug}_{DDMMYYYY}.md`)
 
 **Goal:** Define the "How", execution order, and validation tests.
 
 **Action:**
 
-1. Upon Spec approval, generate `.sdd/tasks.md` containing:
+1. Upon Spec approval, generate `.sdd/tasks_{slug}_{DDMMYYYY}.md` (same slug/date)
+   containing:
    - **Task List:** Atomic, ordered steps (e.g., "Create DB schema", "Add API endpoint").
    - **Dependencies:** Which task blocks which.
    - **TiCoder Test Suite:** For EACH task, define the specific unit tests that must
@@ -72,7 +89,7 @@ files) until the user has explicitly approved the `tasks.md` file in Phase 3.
 1. Upon Task approval, execute the **first task** only.
 2. **Code Generation:** Write code specifically to pass the approved tests for this task.
 3. **Test Execution:** Run the tests.
-   - If **Pass**: Mark task as `[x]` in `.sdd/tasks.md` and proceed to next task.
+   - If **Pass**: Mark task as `[x]` in the tasks file and proceed to next task.
    - If **Fail**: Debug and fix code until tests pass. Do not proceed until green.
 4. **Verification:** After all tasks are complete, generate `.sdd/verify-report.md`
    summarizing the outcome and mapping each FR to its passing test.
