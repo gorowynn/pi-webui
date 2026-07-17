@@ -1458,14 +1458,14 @@ textarea:focus-visible,
 	}
 }
 
-/* ---- z.ai usage bar (inline in header, click for details) ---- */
+/* ---- provider quota bar (inline in header, click for details) ---- */
 #usagebar {
 	display: none;
 	flex: 1 1 auto;
-	min-width: 240px;
+	min-width: 300px;
 	flex-direction: row;
-	gap: 24px;
-	margin: 0 12px;
+	gap: 8px;
+	margin: 0 8px;
 	padding: 3px 8px;
 	border: 1px solid transparent;
 	border-radius: var(--r);
@@ -1479,34 +1479,44 @@ textarea:focus-visible,
 #usagebar.peak {
 	border-color: var(--warn);
 }
-.ub-row {
+.ub-window {
 	flex: 1 1 0;
+	min-width: 0;
 	display: flex;
-	align-items: center;
-	gap: 8px;
-	font-size: 12px;
+	flex-direction: column;
+	gap: 2px;
+}
+.ub-head {
+	display: flex;
+	justify-content: space-between;
+	gap: 4px;
+	font-size: 11px;
 	min-width: 0;
 }
 .ub-lbl {
-	flex: 0 0 auto;
-	width: 46px;
 	color: var(--muted);
 	white-space: nowrap;
 }
 .ub-track {
-	flex: 1 1 auto;
-	min-width: 40px;
+	display: block;
+	min-width: 0;
 	height: 7px;
 	background: #00000060;
 	border: 1px solid var(--border);
 	border-radius: var(--r);
 	overflow: hidden;
 }
-.ub-val {
-	flex: 0 0 auto;
+.ub-val,
+.ub-reset {
 	color: var(--muted);
 	font-family: ui-monospace, Menlo, Consolas, monospace;
 	white-space: nowrap;
+}
+.ub-val {
+	font-size: 11px;
+}
+.ub-reset {
+	font-size: 10px;
 }
 .ub-fill {
 	display: block;

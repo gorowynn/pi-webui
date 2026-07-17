@@ -40,6 +40,10 @@ const STATIC = {
 		file: "vendor/markdown-it.min.js",
 		type: "text/javascript; charset=utf-8",
 	},
+	"/usage-provider.js": {
+		file: "usage-provider.js",
+		type: "text/javascript; charset=utf-8",
+	},
 	"/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
 };
 
@@ -245,6 +249,44 @@ function zaiUsage(key) {
 		);
 		req.on("error", reject);
 		req.setTimeout(8000, () => req.destroy(new Error("z.ai timeout")));
+		req.end();
+	});
+}
+
+// ponytail: Codex's OAuth access token stays server-side in pi's auth store.
+// The undocumented usage endpoint may change; hide the bar on any failure.
+function codexTokenFromAuth() {
+	try {
+		const credential = JSON.parse(fs.readFileSync(AUTH_FILE, "utf8"))[
+			"openai-codex"
+		];
+		return credential?.type === "oauth" && typeof credential.access === "string"
+			? credential.access
+			: "";
+	} catch {
+		return "";
+	}
+}
+function codexUsage(token) {
+	return new Promise((resolve, reject) => {
+		const req = https.request(
+			{
+				hostname: "chatgpt.com",
+				path: "/backend-api/wham/usage",
+				method: "GET",
+				headers: {
+					Authorization: "Bearer " + token,
+					Accept: "application/json",
+				},
+			},
+			(resp) => {
+				let body = "";
+				resp.on("data", (c) => (body += c));
+				resp.on("end", () => resolve({ status: resp.statusCode, body }));
+			},
+		);
+		req.on("error", reject);
+		req.setTimeout(8000, () => req.destroy(new Error("ChatGPT usage timeout")));
 		req.end();
 	});
 }
@@ -625,6 +667,38 @@ const server = http.createServer(async (req, res) => {
 			return res.end('{"ok":true}');
 		} catch (e) {
 			res.writeHead(500, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+
+	if (req.method === "GET" && url.pathname === "/api/codex-usage") {
+		const token = codexTokenFromAuth();
+		if (!token) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end('{"ok":false,"error":"no ChatGPT/Codex login"}');
+		}
+		try {
+			const { status, body } = await codexUsage(token);
+			let data = null;
+			try {
+				data = JSON.parse(body);
+			} catch {}
+			const error =
+				data?.error?.message ||
+				data?.detail ||
+				(status >= 300 ? "usage request failed" : null);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({
+					ok: status >= 200 && status < 300 && data !== null && !error,
+					status,
+					data,
+					error,
+					raw: data ? null : body.slice(0, 2000),
+				}),
+			);
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: false, error: e.message }));
 		}
 	}

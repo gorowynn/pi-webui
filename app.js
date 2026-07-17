@@ -1,4 +1,10 @@
 const $ = (id) => document.getElementById(id);
+function setSafeHtml(el, html) {
+	// markdown output is sanitized by md.js; other dynamic fragments use esc().
+	const range = document.createRange();
+	range.selectNodeContents(el);
+	el.replaceChildren(range.createContextualFragment(html));
+}
 const transcript = $("transcript");
 const inputEl = $("input");
 const sendBtn = $("send");
@@ -134,10 +140,13 @@ if (jumpBottom)
 function addUser(text) {
 	const m = document.createElement("div");
 	m.className = "msg";
-	m.innerHTML = `<div class="bubble user"><div class="role you">you</div></div>`;
+	setSafeHtml(
+		m,
+		`<div class="bubble user"><div class="role you">you</div></div>`,
+	);
 	const b = m.querySelector(".user");
 	const span = document.createElement("div");
-	span.innerHTML = md(text);
+	setSafeHtml(span, md(text));
 	b.appendChild(span);
 	transcript.appendChild(m);
 	pinned = true;
@@ -154,9 +163,9 @@ function addUser(text) {
 function addAssistantText(text) {
 	const m = document.createElement("div");
 	m.className = "msg";
-	m.innerHTML = `<div class="bubble"><div class="role">assistant</div></div>`;
+	setSafeHtml(m, `<div class="bubble"><div class="role">assistant</div></div>`);
 	const p = document.createElement("div");
-	p.innerHTML = md(text);
+	setSafeHtml(p, md(text));
 	m.querySelector(".bubble").appendChild(p);
 	transcript.appendChild(m);
 	scrollDown();
@@ -165,7 +174,7 @@ function addAssistantText(text) {
 function newAssistantBubble() {
 	const m = document.createElement("div");
 	m.className = "msg";
-	m.innerHTML = `<div class="bubble"><div class="role">assistant</div></div>`;
+	setSafeHtml(m, `<div class="bubble"><div class="role">assistant</div></div>`);
 	transcript.appendChild(m);
 	cur = {
 		bubble: m.querySelector(".bubble"),
@@ -199,7 +208,7 @@ function renderText(force) {
 		const now = performance.now();
 		if (!force && now - lastTextPaint < 120) return;
 		lastTextPaint = now;
-		cur.textPar.innerHTML = md(cur.textBuf);
+		setSafeHtml(cur.textPar, md(cur.textBuf));
 		autoscroll();
 	}
 }
@@ -280,7 +289,7 @@ function finalizeBubble(content) {
 		return;
 	}
 	const role = cur.bubble.querySelector(".role");
-	cur.bubble.innerHTML = "";
+	setSafeHtml(cur.bubble, "");
 	if (role) cur.bubble.appendChild(role);
 	// reset per-block cursors so renderAssistantContent creates FRESH nodes instead
 	// of painting into the live-streamed (now detached) ones it still points at.
@@ -306,10 +315,12 @@ function ensureThink(active) {
 	if (!cur || cur.thinkEl) return;
 	const d = document.createElement("details");
 	d.className = "think" + (active ? " thinking" : "");
-	d.innerHTML =
+	setSafeHtml(
+		d,
 		`<summary><span class="tspin"></span><span class="tcaret">▸</span>` +
-		`<span class="tlabel">${active ? "thinking" : "thoughts"}</span>` +
-		`<span class="tcount"></span></summary><div class="tbody"></div>`;
+			`<span class="tlabel">${active ? "thinking" : "thoughts"}</span>` +
+			`<span class="tcount"></span></summary><div class="tbody"></div>`,
+	);
 	const body = d.querySelector(".tbody");
 	cur.bubble.appendChild(d);
 	cur.thinkEl = body;
@@ -321,7 +332,7 @@ function ensureThink(active) {
 	d.addEventListener("toggle", () => {
 		// ponytail: thinking is markdown now (renderThink uses md()). Paint the
 		// parsed buffer on open so a collapsed trace shows formatted, not raw.
-		if (d.open) body.innerHTML = md(d.__buf || "");
+		if (d.open) setSafeHtml(body, md(d.__buf || ""));
 	});
 }
 function finalizeThink() {
@@ -358,7 +369,7 @@ function renderThink(force) {
 	lastThinkPaint = now;
 	// expensive body paint only when visible or finalizing
 	if (force || cur.thinkDetails.open) {
-		cur.thinkEl.innerHTML = md(buf);
+		setSafeHtml(cur.thinkEl, md(buf));
 		autoscroll();
 	}
 }
@@ -387,7 +398,10 @@ function toolBlock(id, name, args, running) {
 		const a = args ? JSON.stringify(args) : "";
 		// two-line head: line 1 = caret + tool name, line 2 = the call args.
 		const argsHtml = a ? `<code>${esc(a)}</code>` : "";
-		el.innerHTML = `<summary class="head"><span class="trow"><span class="caret">▸</span><span class="name">${esc(name || "tool")}</span></span>${argsHtml}</summary><div class="out"></div>`;
+		setSafeHtml(
+			el,
+			`<summary class="head"><span class="trow"><span class="caret">▸</span><span class="name">${esc(name || "tool")}</span></span>${argsHtml}</summary><div class="out"></div>`,
+		);
 		transcript.appendChild(el);
 		wrap = { el, out: el.querySelector(".out") };
 		toolBlocks.set(id, wrap);
@@ -494,7 +508,7 @@ function renderSubagentView(host, details, density) {
 		html += `<div class="sa-items">${childItems(r.messages, itemLimit)}</div>`;
 	}
 	html += "</div>";
-	host.innerHTML = html;
+	setSafeHtml(host, html);
 }
 // ---- edit diff: LCS line diff from oldText/newText args ----
 // ponytail: O(n*m) Uint32Array DP table. Fine for typical edits; swap for
@@ -670,15 +684,17 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 		};
 	};
 	const init = compute(baseOld, baseNew);
-	host.innerHTML =
+	setSafeHtml(
+		host,
 		`<div class="dpath">${esc(path || "(no path)")}${isWrite ? ' <span class="sx-tag">write</span>' : ""}</div>` +
-		`<div class="sxs" style="--sx-gutter:${init.gutter}">` +
-		`<div class="sx-col sx-old"><div class="sx-hdr">\u2212 original</div><div class="sx-body sx-left">${init.leftHtml}</div></div>` +
-		`<div class="sx-col sx-new"><div class="sx-hdr">+ edited${ro ? "" : ' <button class="sx-apply" type="button">Apply</button>'}</div>` +
-		(ro
-			? `<div class="sx-body sx-right">${init.rightHtml}</div>`
-			: `<div class="sx-edit"><div class="sx-body sx-hlbody" aria-hidden="true">${init.rightHtml}</div><textarea class="sx-ta" spellcheck="false" wrap="off"></textarea></div>`) +
-		`</div></div>`;
+			`<div class="sxs" style="--sx-gutter:${init.gutter}">` +
+			`<div class="sx-col sx-old"><div class="sx-hdr">\u2212 original</div><div class="sx-body sx-left">${init.leftHtml}</div></div>` +
+			`<div class="sx-col sx-new"><div class="sx-hdr">+ edited${ro ? "" : ' <button class="sx-apply" type="button">Apply</button>'}</div>` +
+			(ro
+				? `<div class="sx-body sx-right">${init.rightHtml}</div>`
+				: `<div class="sx-edit"><div class="sx-body sx-hlbody" aria-hidden="true">${init.rightHtml}</div><textarea class="sx-ta" spellcheck="false" wrap="off"></textarea></div>`) +
+			`</div></div>`,
+	);
 	const leftBody = host.querySelector(".sx-left");
 	const rightBody = host.querySelector(".sx-right, .sx-hlbody");
 	let ta = null; // set only in editable mode
@@ -694,7 +710,7 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 			body.querySelectorAll(".sx-line").forEach((line) => {
 				const gnum = line.querySelector(".sx-gnum");
 				if (line.classList.contains("ln-empty")) {
-					if (gnum) gnum.innerHTML = "\u00a0";
+					if (gnum) setSafeHtml(gnum, "\u00a0");
 				} else {
 					n++;
 					if (gnum) gnum.textContent = String(n);
@@ -741,8 +757,8 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 	const repaint = () => {
 		const c = compute(baseOld, ta.value);
 		host.querySelector(".sxs").style.setProperty("--sx-gutter", c.gutter);
-		rightBody.innerHTML = c.rightHtml;
-		leftBody.innerHTML = c.leftHtml;
+		setSafeHtml(rightBody, c.rightHtml);
+		setSafeHtml(leftBody, c.leftHtml);
 		if (lineStart > 1) patchGutters(lineStart);
 	};
 	ta.addEventListener("input", () => {
@@ -934,7 +950,7 @@ function openModal() {
 function showModal(html, free) {
 	// reset any per-modal modifier (e.g. .wide) so it can't leak across opens
 	card.className = "card";
-	card.innerHTML = html;
+	setSafeHtml(card, html);
 	openModal();
 	if (free) {
 		modalFree = true;
@@ -1038,17 +1054,72 @@ function zaiLimits(data) {
 	}
 	return out;
 }
+function codexLimits(data) {
+	const rate = data && data.rate_limit;
+	if (!rate || typeof rate !== "object") return [];
+	return [
+		["primary_window", "Short"],
+		["secondary_window", "Long"],
+	]
+		.map(([key, fallback]) => {
+			const w = rate[key];
+			if (!w || typeof w.used_percent !== "number") return null;
+			const seconds = Number(w.limit_window_seconds || 0);
+			const resetAfter = Number(w.reset_after_seconds);
+			const resetAt = w.reset_at;
+			const resetMs = Number.isFinite(resetAfter)
+				? Date.now() + resetAfter * 1000
+				: typeof resetAt === "number"
+					? resetAt * 1000
+					: typeof resetAt === "string"
+						? Date.parse(resetAt)
+						: NaN;
+			const label =
+				seconds > 0 && seconds % 86400 === 0
+					? `${seconds / 86400}d`
+					: seconds > 0 && seconds % 3600 === 0
+						? `${seconds / 3600}h`
+						: fallback;
+			return {
+				label,
+				pct: w.used_percent,
+				windowMs: seconds * 1000,
+				reset: Number.isFinite(resetMs) ? new Date(resetMs) : null,
+			};
+		})
+		.filter(Boolean);
+}
 function pctOf(b) {
-	if (typeof b.pct === "number") return b.pct;
+	if (typeof b.pct === "number") return Math.max(0, Math.min(100, b.pct));
 	return b.total > 0 ? Math.min(100, (b.used / b.total) * 100) : 0;
+}
+function quotaValue(b) {
+	const left = Math.max(0, 100 - pctOf(b));
+	if (typeof b.used === "number")
+		return `${fmtTokens(Math.max(0, b.total - b.used))} left / ${fmtTokens(b.total)} · ${left.toFixed(1)}%`;
+	return `${left.toFixed(1)}% left`;
+}
+function quotaEndpoint(provider) {
+	return usageViewKind(provider) === "codex-quota"
+		? "/api/codex-usage"
+		: "/api/zai-usage";
+}
+function quotaLimits(provider, data) {
+	return usageViewKind(provider) === "codex-quota"
+		? codexLimits(data)
+		: zaiLimits(data);
+}
+async function fetchQuotaUsage(provider) {
+	const opt =
+		usageViewKind(provider) === "zai-quota"
+			? { headers: { "X-ZAI-Key": getZaiKey() } }
+			: undefined;
+	return fetch(quotaEndpoint(provider), opt).then((r) => r.json());
 }
 function zaiBarHtml(b) {
 	const pct = pctOf(b);
 	const cls = pct >= 90 ? "hi" : pct >= 70 ? "mid" : "lo";
-	const val =
-		typeof b.used === "number"
-			? `${Number(b.used).toLocaleString()} / ${Number(b.total).toLocaleString()} · ${pct.toFixed(1)}%`
-			: `${pct.toFixed(1)}%`;
+	const val = quotaValue(b);
 	const sub = [b.window, b.reset ? `resets ${b.reset.toLocaleString()}` : ""]
 		.filter(Boolean)
 		.join(" · ");
@@ -1091,47 +1162,25 @@ function inPeakHours() {
 	const h = new Date().getUTCHours();
 	return h >= 6 && h < 10;
 }
-// Full-width inline bar: token usage (bar + %) and reset countdown (bar +
-// time remaining). Tokens row colors by how close to the limit; the reset row
-// is a calm accent (it just tracks progress toward the next window).
+// Compact cards keep both Codex windows visible in the narrow header. Each
+// quota bar owns the reset text directly beneath it, so their values can't mix.
 function renderUsageInline(bars) {
-	if (!bars.length) return "";
-	const tok =
-		bars.find((b) => b.label === "Tokens") ||
-		bars.find((b) => typeof b.total === "number") ||
-		bars[0];
-	// soonest nextResetTime across all limits; keep its bar so the Reset fill
-	// uses THAT limit's windowMs (not the Tokens window — they can differ).
-	const resetBar =
-		bars.filter((b) => b.reset).sort((a, b) => a.reset - b.reset)[0] || null;
-	const reset = resetBar ? resetBar.reset : null;
-	const rows = [];
-	{
-		const pct = pctOf(tok);
-		const cls = pct >= 90 ? "hi" : pct >= 70 ? "mid" : "lo";
-		const val =
-			typeof tok.used === "number"
-				? `${fmtTokens(tok.used)} / ${fmtTokens(tok.total)} · ${pct.toFixed(1)}%`
-				: `${pct.toFixed(1)}%`;
-		rows.push(
-			`<div class="ub-row"><span class="ub-lbl">Tokens</span>` +
-				`<span class="ub-track" title="${esc(tok.label)}: ${esc(val)}"><span class="ub-fill ${cls}" style="width:${pct}%"></span></span>` +
-				`<span class="ub-val">${esc(val)}</span></div>`,
-		);
-	}
-	if (reset) {
-		const remain = reset - Date.now();
-		const wm = (resetBar && resetBar.windowMs) || 0;
-		// fill = elapsed / window; windowMs is nominal so clamp to [0,100].
-		const fill =
-			wm > 0 ? Math.max(0, Math.min(100, (1 - remain / wm) * 100)) : 0;
-		rows.push(
-			`<div class="ub-row"><span class="ub-lbl">Reset</span>` +
-				`<span class="ub-track"><span class="ub-fill time" style="width:${fill}%"></span></span>` +
-				`<span class="ub-val">in ${fmtDur(remain)}</span></div>`,
-		);
-	}
-	return rows.join("");
+	return bars
+		.slice(0, 2)
+		.map((bar) => {
+			const pct = pctOf(bar);
+			const cls = pct >= 90 ? "hi" : pct >= 70 ? "mid" : "lo";
+			const val = quotaValue(bar);
+			const remain = bar.reset ? bar.reset - Date.now() : null;
+			const reset = remain != null ? `reset in ${fmtDur(remain)}` : "";
+			return (
+				`<div class="ub-window" title="${esc(bar.label)}: ${esc(val)}${reset ? `; ${reset}` : ""}">` +
+				`<div class="ub-head"><span class="ub-lbl">${esc(bar.label)}</span><span class="ub-val">${esc(val)}</span></div>` +
+				`<span class="ub-track"><span class="ub-fill ${cls}" style="width:${pct}%"></span></span>` +
+				`<span class="ub-reset">${esc(reset)}</span></div>`
+			);
+		})
+		.join("");
 }
 function usageKeyForm() {
 	return (
@@ -1142,11 +1191,44 @@ function usageKeyForm() {
 		`<div class="row"><button>Save &amp; load</button></div></form>`
 	);
 }
-async function renderUsage() {
-	const u = await fetch("/api/zai-usage", {
-		headers: { "X-ZAI-Key": getZaiKey() },
-	}).then((r) => r.json());
-	if (!u.ok && u.error === "no API key" && !getZaiKey()) return usageKeyForm();
+function usageProviderLabel(provider) {
+	return /codex/i.test(provider || "") ? "ChatGPT/Codex" : provider || "model";
+}
+let sessionUsage = null;
+function renderSessionUsage(provider) {
+	const t = sessionUsage;
+	if (!t)
+		return `<p class="um-hint">${esc(usageProviderLabel(provider))} session usage is loading…</p>`;
+	const rows = [
+		["input", t.input],
+		["output", t.output],
+		["cache read", t.cacheRead],
+		["cache write", t.cacheWrite],
+		["total", t.total],
+	]
+		.map(
+			([label, value]) =>
+				`<div class="um-bar"><div class="um-head"><span class="um-lbl">${label}</span><span class="um-val">${typeof value === "number" ? fmtTokens(value) : "—"} tokens</span></div></div>`,
+		)
+		.join("");
+	return (
+		`<div class="um-meta"><span>${esc(usageProviderLabel(provider))} · pi session</span></div>` +
+		rows +
+		`<p class="um-hint">Subscription allowance is available in your provider account; pi RPC reports session tokens only.</p>`
+	);
+}
+async function renderUsage(provider) {
+	if (usageViewKind(provider) === "session")
+		return renderSessionUsage(provider);
+	const u = await fetchQuotaUsage(provider);
+	if (provider !== currentProvider) return null;
+	if (
+		!u.ok &&
+		usageViewKind(provider) === "zai-quota" &&
+		u.error === "no API key" &&
+		!getZaiKey()
+	)
+		return usageKeyForm();
 	if (!u.ok)
 		return (
 			`<p class="um-err">\u26a0 ${esc(u.error || "request failed")}` +
@@ -1155,7 +1237,7 @@ async function renderUsage() {
 				? `<details class="um-raw"><summary>response</summary><pre>${esc(u.raw)}</pre></details>`
 				: "")
 		);
-	const bars = zaiLimits(u.data);
+	const bars = quotaLimits(provider, u.data);
 	const barsHtml = bars.length
 		? bars.map(zaiBarHtml).join("")
 		: `<p class="um-err">no quota fields found in the response</p>`;
@@ -1174,14 +1256,17 @@ async function renderUsage() {
 	);
 }
 async function showUsage() {
-	showModal(`<h3>z.ai usage</h3><p class="um-hint">loading\u2026</p>`, true);
+	const provider = currentProvider;
+	const title = `${usageProviderLabel(provider)} usage`;
+	showModal(`<h3>${esc(title)}</h3><p class="um-hint">loading\u2026</p>`, true);
 	let inner;
 	try {
-		inner = await renderUsage();
+		inner = await renderUsage(provider);
 	} catch (e) {
 		inner = `<p class="um-err">\u26a0 ${esc(e.message)}</p>`;
 	}
-	card.innerHTML = `<h3>z.ai usage</h3>` + inner;
+	if (provider !== currentProvider) return showUsage();
+	setSafeHtml(card, `<h3>${esc(title)}</h3>` + inner);
 	const rb = card.querySelector("#um-refresh");
 	if (rb) rb.onclick = showUsage;
 	const form = card.querySelector("#um-key-form");
@@ -1194,38 +1279,47 @@ async function showUsage() {
 		};
 }
 
-// ---- usage bar: inline in header, polls every 60s ----
-// Compact glance of the same z.ai data; click for the full modal. The server
-// resolves the key (ZAI_API_KEY -> auth.json zai.key -> X-ZAI-Key header), so we
-// must NOT pre-gate on a local key — a key in auth.json (where pi itself reads
-// it) would otherwise hide the bar. Let the server's "no API key" response be
-// the only gate (same shape the modal uses).
+// ---- usage bar: matches the active model provider ----
 const usageBar = $("usagebar");
+function renderSessionUsageInline(provider) {
+	const total = sessionUsage && sessionUsage.total;
+	return `<div class="ub-row"><span class="ub-lbl">${esc(usageProviderLabel(provider))}</span><span class="ub-val">${typeof total === "number" ? `${fmtTokens(total)} tokens` : "loading…"}</span></div>`;
+}
 async function refreshUsageBar() {
+	const provider = currentProvider;
+	if (!provider) {
+		usageBar.style.display = "none";
+		return;
+	}
+	if (usageViewKind(provider) === "session") {
+		setSafeHtml(usageBar, renderSessionUsageInline(provider));
+		usageBar.style.display = "flex";
+		usageBar.classList.remove("peak");
+		usageBar.title = `${usageProviderLabel(provider)} session usage — click for details`;
+		return;
+	}
 	let u;
 	try {
-		u = await fetch("/api/zai-usage", {
-			headers: { "X-ZAI-Key": getZaiKey() },
-		}).then((r) => r.json());
+		u = await fetchQuotaUsage(provider);
 	} catch {
 		return;
 	}
+	if (provider !== currentProvider) return;
 	if (!u.ok) {
 		usageBar.style.display = "none";
 		return;
 	}
-	const bars = zaiLimits(u.data);
+	const bars = quotaLimits(provider, u.data);
 	if (!bars.length) {
 		usageBar.style.display = "none";
 		return;
 	}
-	usageBar.innerHTML = renderUsageInline(bars);
+	setSafeHtml(usageBar, renderUsageInline(bars));
 	usageBar.style.display = "flex";
-	// peak-hours signal: subtle warn-colored border on the bar itself.
 	usageBar.classList.toggle("peak", inPeakHours());
+	usageBar.title = `${usageProviderLabel(provider)} quota — click for details`;
 }
 usageBar.onclick = showUsage;
-usageBar.title = "z.ai usage — click for details";
 
 // ---- todo panel: incremental state from the `todo` tool ----
 // The `todo` tool (extensions/pi_minimal_webui/todo.ts) sends one ACTION per
@@ -1310,7 +1404,7 @@ function renderTodos() {
 	todopanel.style.display = "block";
 	const done = todos.filter((t) => t.status === "finished").length;
 	tpCount.textContent = `${done}/${todos.length}`;
-	tpBody.innerHTML = "";
+	setSafeHtml(tpBody, "");
 	todos.forEach((t, i) => {
 		const cls =
 			t.status === "finished"
@@ -1322,7 +1416,10 @@ function renderTodos() {
 			t.status === "finished" ? "✓" : t.status === "started" ? "●" : "○";
 		const row = document.createElement("div");
 		row.className = "ti " + cls;
-		row.innerHTML = `<span class="ck ${cls}">${ck}</span><span class="id">#${t.id != null ? esc(String(t.id)) : i + 1}</span><span class="sbj">${esc(t.subject)}</span>`;
+		setSafeHtml(
+			row,
+			`<span class="ck ${cls}">${ck}</span><span class="id">#${t.id != null ? esc(String(t.id)) : i + 1}</span><span class="sbj">${esc(t.subject)}</span>`,
+		);
 		tpBody.appendChild(row);
 	});
 }
@@ -1402,7 +1499,7 @@ function askQuestion(args) {
 		const hasPreview =
 			!multi && opts.some((o) => o.preview && o.preview.length);
 
-		card.innerHTML = "";
+		setSafeHtml(card, "");
 		const form = document.createElement("div");
 		form.className = "qform";
 
@@ -1410,17 +1507,21 @@ function askQuestion(args) {
 		if (total > 1) {
 			const prog = document.createElement("div");
 			prog.className = "qprog";
-			prog.innerHTML =
+			setSafeHtml(
+				prog,
 				`<div class="qsteps">Step ${qi + 1} of ${total}</div>` +
-				`<div class="qbar"><i style="width:${((qi + 1) / total) * 100}%"></i></div>`;
+					`<div class="qbar"><i style="width:${((qi + 1) / total) * 100}%"></i></div>`,
+			);
 			form.appendChild(prog);
 		}
 
 		const blk = document.createElement("div");
 		blk.className = "qblk";
-		blk.innerHTML =
+		setSafeHtml(
+			blk,
 			(q.header ? `<span class="qchip">${esc(q.header)}</span>` : "") +
-			`<p class="qq">${esc(q.question)}</p>`;
+				`<p class="qq">${esc(q.question)}</p>`,
+		);
 
 		const body = document.createElement("div");
 		body.className = "qbody" + (hasPreview ? " split" : "");
@@ -1430,11 +1531,13 @@ function askQuestion(args) {
 		const optBtn = (o, lbl) => {
 			const b = document.createElement("button");
 			b.className = "qopt";
-			b.innerHTML =
+			setSafeHtml(
+				b,
 				`<span class="qlbl">${esc(lbl)}</span>` +
-				(o.description
-					? `<span class="qdesc">${esc(o.description)}</span>`
-					: "");
+					(o.description
+						? `<span class="qdesc">${esc(o.description)}</span>`
+						: ""),
+			);
 			return b;
 		};
 
@@ -1460,7 +1563,10 @@ function askQuestion(args) {
 			});
 			const submit = document.createElement("button");
 			submit.className = "qopt qsubmit";
-			submit.innerHTML = `<span class="qlbl">Submit${chosen.size ? " (" + chosen.size + ")" : ""}</span>`;
+			setSafeHtml(
+				submit,
+				`<span class="qlbl">Submit${chosen.size ? " (" + chosen.size + ")" : ""}</span>`,
+			);
 			submit.onclick = () => choose(qi, [...chosen]);
 			list.appendChild(submit);
 		} else {
@@ -1497,9 +1603,11 @@ function askQuestion(args) {
 			const pane = document.createElement("div");
 			pane.className = "qprev";
 			const show = (o) => {
-				pane.innerHTML =
+				setSafeHtml(
+					pane,
 					`<div class="qprev-h">preview</div>` +
-					`<pre class="qprev-b">${esc((o && o.preview) || "")}</pre>`;
+						`<pre class="qprev-b">${esc((o && o.preview) || "")}</pre>`,
+				);
 			};
 			show(opts.find((o) => o.preview && o.preview.length) || opts[0]);
 			list.querySelectorAll(".qopt").forEach((b, i) => {
@@ -1970,8 +2078,10 @@ async function openSelectModal(req) {
 		const b = document.createElement("button");
 		const val = o.label;
 		const desc = o.description;
-		b.innerHTML =
-			esc(val) + (desc ? `<span class='desc'>${esc(desc)}</span>` : "");
+		setSafeHtml(
+			b,
+			esc(val) + (desc ? `<span class='desc'>${esc(desc)}</span>` : ""),
+		);
 		if (
 			maxSev >= 3 &&
 			/\b(allow|permit|approve|yes|run|execute|continue)\b/.test(
@@ -2046,7 +2156,10 @@ function uiRequest(req) {
 		if (!Array.isArray(lines) || lines.length === 0) {
 			widget.style.display = "none";
 		} else {
-			widget.innerHTML = `<div class="whead">${esc(req.widgetKey || "widget")}</div>${esc(lines.join("\n"))}`;
+			setSafeHtml(
+				widget,
+				`<div class="whead">${esc(req.widgetKey || "widget")}</div>${esc(lines.join("\n"))}`,
+			);
 			widget.style.display = "block";
 		}
 		return;
@@ -2183,7 +2296,10 @@ function renderMessage(msg) {
 	} else if (msg.role === "bashExecution") {
 		const el = document.createElement("details");
 		el.className = "tool done";
-		el.innerHTML = `<summary class="head"><span class="trow"><span class="caret">▸</span><span class="name">bash</span></span><code>${esc(msg.command || "")}</code></summary><div class="out">${esc(msg.output || "")}</div>`;
+		setSafeHtml(
+			el,
+			`<summary class="head"><span class="trow"><span class="caret">▸</span><span class="name">bash</span></span><code>${esc(msg.command || "")}</code></summary><div class="out">${esc(msg.output || "")}</div>`,
+		);
 		transcript.appendChild(el);
 	}
 }
@@ -2329,7 +2445,7 @@ function handle(payload) {
 			// subagent: show the agent/mode + an empty live view immediately, so the
 			// box reads as "running scout (lookup)" before the first update lands.
 			if (payload.toolName === "subagent") {
-				const w = toolBlocks.get(payload.toolCallId);
+				var w = toolBlocks.get(payload.toolCallId);
 				if (w)
 					renderSubagentView(
 						w.out,
@@ -2393,8 +2509,8 @@ function handle(payload) {
 					// rich side-by-side diff; the new pane is editable + applyable
 					w.el.classList.add("hasdiff");
 					w.el.open = true;
-					w.out.innerHTML = "";
-					const ea = w.args;
+					setSafeHtml(w.out, "");
+					var ea = w.args;
 					if (
 						payload.toolName === "edit" &&
 						Array.isArray(ea.edits) &&
@@ -2402,12 +2518,12 @@ function handle(payload) {
 					) {
 						ea.edits.forEach((e, idx) => {
 							if (ea.edits.length > 1) {
-								const dh = document.createElement("div");
+								var dh = document.createElement("div");
 								dh.className = "dhunk";
 								dh.textContent = `edit ${idx + 1}/${ea.edits.length}`;
 								w.out.appendChild(dh);
 							}
-							const host = document.createElement("div");
+							var host = document.createElement("div");
 							host.className = "sx-host";
 							w.out.appendChild(host);
 							mountSideBySide(
@@ -2419,13 +2535,13 @@ function handle(payload) {
 							);
 						});
 					} else if (payload.toolName === "write") {
-						const host = document.createElement("div");
+						var host = document.createElement("div");
 						host.className = "sx-host";
 						w.out.appendChild(host);
 						mountSideBySide(host, ea.path || "", null, ea.content || "", true);
 					}
 					if (t) {
-						const rt = document.createElement("div");
+						var rt = document.createElement("div");
 						rt.className = "sx-restext";
 						rt.textContent = t;
 						w.out.appendChild(rt);
@@ -2441,7 +2557,7 @@ function handle(payload) {
 					) {
 						renderSubagentView(w.out, payload.result.details, subagentDensity);
 						if (t) {
-							const rt = document.createElement("div");
+							var rt = document.createElement("div");
 							rt.className = "sa-foot";
 							rt.textContent = t;
 							w.out.appendChild(rt);
@@ -2500,7 +2616,7 @@ function handle(payload) {
 				r.result.estimatedTokensAfter != null &&
 				r.result.tokensBefore > 0
 			) {
-				const pct = Math.round(
+				var pct = Math.round(
 					(1 - r.result.estimatedTokensAfter / r.result.tokensBefore) * 100,
 				);
 				note(
@@ -2684,10 +2800,10 @@ es.onmessage = (ev) => {
 					setCompacting(true);
 					setActivity("compacting context…", true);
 				}
-				const mid = modelIdOf(p.data.model);
-				if (mid) {
-					currentModelId = mid;
+				if (setCurrentModel(p.data.model)) {
 					applyCurrentModel();
+					refreshUsageBar();
+					refreshStats();
 				}
 				curSessionFile = p.data.sessionFile || null;
 				refreshPonytailMode(p.data.sessionFile);
@@ -2696,7 +2812,7 @@ es.onmessage = (ev) => {
 				p.data &&
 				Array.isArray(p.data.messages)
 			) {
-				transcript.innerHTML = "";
+				setSafeHtml(transcript, "");
 				toolBlocks.clear();
 				p.data.messages.forEach(renderMessage);
 				scrollDown();
@@ -2714,6 +2830,10 @@ es.onmessage = (ev) => {
 				populateModels(p.data.models);
 			} else if (p.id === "sb-stats" && p.data) {
 				const t = p.data.tokens || {};
+				if (usageViewKind(currentProvider) === "session") {
+					sessionUsage = t;
+					refreshUsageBar();
+				}
 				sb.tok.textContent = `${fmt(t.input)}↓ ${fmt(t.output)}↑`;
 				// cache hit rate = cacheRead / total input. pi's `input` is the NON-cached
 				// portion only (Anthropic convention), so total = input + cacheRead —
@@ -2734,10 +2854,10 @@ es.onmessage = (ev) => {
 						? `${cu.percent.toFixed(0)}% (${fmt(cu.tokens)}/${fmt(cu.contextWindow)})`
 						: "—";
 			} else if (p.command === "set_model" && p.data) {
-				const mid = modelIdOf(p.data);
-				if (mid) {
-					currentModelId = mid;
-					localStorage.setItem("pi:model", mid);
+				if (setCurrentModel(p.data)) {
+					localStorage.setItem("pi:model", currentModelId);
+					refreshUsageBar();
+					refreshStats();
 				}
 			} else if (
 				(p.command === "switch_session" || p.command === "new_session") &&
@@ -2773,10 +2893,19 @@ es.onerror = () => {
 // ponytail: get_available_models returns no current id, so reconcile from
 // get_state.model (truth) + a localStorage hint for the very first load.
 let currentModelId = null;
+let currentProvider = null;
 let curSessionFile = null; // active session file (get_state) — highlights the current row in the sessions list
 const savedModelId = localStorage.getItem("pi:model");
 function modelIdOf(m) {
 	return m && m.provider && m.id ? m.provider + "/" + m.id : null;
+}
+function setCurrentModel(m) {
+	const id = modelIdOf(m);
+	if (!id) return false;
+	if (currentProvider !== m.provider) sessionUsage = null;
+	currentModelId = id;
+	currentProvider = m.provider;
+	return true;
 }
 function applyCurrentModel() {
 	const id = currentModelId || savedModelId;
@@ -2798,7 +2927,7 @@ function applyCurrentModel() {
 }
 function populateModels(models) {
 	availableModels = Array.isArray(models) ? models : [];
-	modelSel.innerHTML = "";
+	setSafeHtml(modelSel, "");
 	if (!availableModels.length) {
 		const o = document.createElement("option");
 		o.textContent = "no models";
@@ -2819,7 +2948,11 @@ modelSel.onchange = () => {
 	try {
 		const v = JSON.parse(modelSel.value);
 		currentModelId = v.provider + "/" + v.modelId;
+		if (currentProvider !== v.provider) sessionUsage = null;
+		currentProvider = v.provider;
 		localStorage.setItem("pi:model", currentModelId);
+		refreshUsageBar();
+		refreshStats();
 		api({ type: "set_model", provider: v.provider, modelId: v.modelId });
 	} catch {}
 };
@@ -2874,7 +3007,7 @@ function populateTierSelects() {
 	for (const tier of Object.keys(tierSels)) {
 		const sel = tierSels[tier];
 		const cur = sel.dataset.model || TIER_DEFAULTS[tier];
-		sel.innerHTML = "";
+		setSafeHtml(sel, "");
 		for (const m of availableModels) {
 			const id = m.provider + "/" + m.id;
 			const o = document.createElement("option");
@@ -3003,27 +3136,35 @@ async function showSessions() {
 	}
 	const rows = (data.ok && data.sessions) || [];
 	if (!data.ok) {
-		card.innerHTML = `<h3>Sessions</h3><p class="um-hint">${esc(
-			data.error || "failed to load",
-		)}</p>`;
+		setSafeHtml(
+			card,
+			`<h3>Sessions</h3><p class="um-hint">${esc(
+				data.error || "failed to load",
+			)}</p>`,
+		);
 		return;
 	}
 	if (!rows.length) {
-		card.innerHTML = `<h3>Sessions</h3><p class="um-hint">no sessions yet</p>`;
+		setSafeHtml(
+			card,
+			`<h3>Sessions</h3><p class="um-hint">no sessions yet</p>`,
+		);
 		return;
 	}
-	card.innerHTML = `<h3>Sessions</h3><div class="sessions"></div>`;
+	setSafeHtml(card, `<h3>Sessions</h3><div class="sessions"></div>`);
 	const host = card.querySelector(".sessions");
 	rows.forEach((s) => {
 		const current = curSessionFile && pathEq(s.path, curSessionFile);
 		const row = document.createElement("div");
 		row.className = "srow" + (current ? " current" : "");
-		row.innerHTML =
+		setSafeHtml(
+			row,
 			`<div class="smeta"><span class="sdate">${esc(
 				fmtSessionDate(s.when),
 			)}</span><span class="scount">${s.messages || 0} msg${
 				current ? " · current" : ""
-			}</span></div>` + `<div class="sprev">${esc(s.preview)}</div>`;
+			}</span></div>` + `<div class="sprev">${esc(s.preview)}</div>`,
+		);
 		row.onclick = () => resumeSession(s.path, current);
 		host.appendChild(row);
 	});
@@ -3032,7 +3173,7 @@ function resumeSession(sessionPath, current) {
 	hideModal();
 	if (current) return; // already active — nothing to resume
 	setTodos([]); // fresh todo panel for the resumed session
-	transcript.innerHTML = "";
+	setSafeHtml(transcript, "");
 	toolBlocks.clear();
 	api({ type: "switch_session", sessionPath, id: "resume" });
 }
@@ -3097,11 +3238,14 @@ function updatePalette() {
 	hidePalette();
 }
 function renderPalette() {
-	palette.innerHTML = "";
+	setSafeHtml(palette, "");
 	palItems.forEach((c, i) => {
 		const d = document.createElement("div");
 		d.className = "item" + (i === palSel ? " sel" : "");
-		d.innerHTML = `<span class="nm">/${esc(c.name)}</span> <span class="ds">${esc(c.description || c.source || "")}</span>`;
+		setSafeHtml(
+			d,
+			`<span class="nm">/${esc(c.name)}</span> <span class="ds">${esc(c.description || c.source || "")}</span>`,
+		);
 		d.onclick = () => {
 			inputEl.value = "/" + c.name + " ";
 			autosize();

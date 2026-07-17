@@ -6,6 +6,23 @@
 
 ## Changelog
 
+### 2026-07-16 — fix(usage): pair each quota window with its reset
+
+- Header quota cards are compact side-by-side panels; every window returned by
+  ChatGPT retains its own remaining allowance bar and reset countdown.
+
+### 2026-07-16 — feat(usage): show ChatGPT/Codex subscription quota
+
+- **What:** `openai-codex` now uses its authenticated ChatGPT usage endpoint. The header shows remaining short-window quota and time until reset; the modal includes both available rate-limit windows.
+- **Security:** `server.js` reads the OAuth access token only from pi's existing `auth.json` and keeps it server-side.
+- **Fallback:** if ChatGPT changes or rejects the undocumented endpoint, the quota bar hides and the usage modal reports the request failure; session token reporting remains for unsupported providers.
+
+### 2026-07-16 — feat(usage): match the active model provider
+
+- **What:** `app.js` now shows z.ai quota only for z.ai models. ChatGPT/Codex and other providers show pi RPC session input, output, cache-read, cache-write, and total tokens instead.
+- **Limit:** ChatGPT subscription allowance is not exposed by pi RPC, so the UI directs users to their provider account rather than guessing a quota or reading OAuth credentials.
+- **Files:** `usage-provider.js` provides the tested classifier; it is loaded before `app.js`, whitelisted by `server.js`, and included in the npm package. `test/usage-provider.test.js` covers z.ai, Codex, and fallback routing.
+
 > Newest first. Format: `### YYYY-MM-DD — <area>: <one-line summary>` then
 > bullet detail (what + why + file). One entry per meaningful chunk of work.
 
