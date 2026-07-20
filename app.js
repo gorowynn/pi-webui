@@ -866,12 +866,17 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 			.style.setProperty("--sx-gutter", gutterCh(maxNum));
 	};
 	if (!isWrite && baseOld) {
-		findStartLine(path, baseOld, baseNew).then((start) => {
+		// ponytail: caller may pass a precomputed start line (a multi-hunk
+		// edit that already fetched the file once to badge its hunks) - use
+		// it directly instead of a second /api/file hit.
+		const applyStart = (start) => {
 			if (start) {
 				lineStart = start;
 				patchGutters(start);
 			}
-		});
+		};
+		if (opt && opt.startLine != null) applyStart(opt.startLine);
+		else findStartLine(path, baseOld, baseNew).then(applyStart);
 	}
 	// scroll sync: bidirectional, guarded against feedback loops
 	let syncing = false;
@@ -2276,6 +2281,7 @@ function renderEditDiffPreviews(container) {
 	wrap.appendChild(strip);
 	container.appendChild(wrap);
 	const panels = [];
+	const tabs = [];
 	items.forEach((it, i) => {
 		const tab = document.createElement("button");
 		tab.type = "button";
@@ -2290,6 +2296,7 @@ function renderEditDiffPreviews(container) {
 			panels.forEach((p, j) => p.classList.toggle("active", i === j));
 		};
 		strip.appendChild(tab);
+		tabs.push(tab);
 	});
 	items.forEach((it, i) => {
 		const panel = document.createElement("div");
@@ -2301,6 +2308,32 @@ function renderEditDiffPreviews(container) {
 		panels.push(panel);
 		it.build(host);
 	});
+	// ponytail: badge each tab with the hunk's real file line so far-apart
+	// edits are obvious at a glance. One fetch; per-panel gutters already
+	// show line numbers via mountSideBySide. Best-effort, never blocks.
+	if (isEdit && inp.path) {
+		fetch("/api/file?path=" + encodeURIComponent(inp.path))
+			.then((r) => r.json())
+			.then((j) => (j && j.ok && j.content != null ? j.content : null))
+			.then((content) => {
+				if (!content) return;
+				tabs.forEach((tab, i) => {
+					const e = inp.edits[i];
+					if (!e) return;
+					for (const needle of [e.oldText, e.newText]) {
+						if (!needle) continue;
+						const at = content.indexOf(needle);
+						if (at >= 0) {
+							const start = content.slice(0, at).split("\n").length;
+							tab.textContent += " \u00b7 L" + start;
+							tab.title = tab.textContent;
+						break;
+						}
+					}
+				});
+			})
+			.catch(() => {});
+	}
 	return wrap;
 }
 async function diffInIde(req) {
@@ -2963,9 +2996,22 @@ function handle(payload) {
 						Array.isArray(ea.edits) &&
 						ea.edits.length
 					) {
+						// ponytail: one /api/file fetch for the whole edit call, reused
+						// to badge each hunk with its real file line (far-apart edits
+						// become obvious) and seed the diff gutters without a per-hunk
+						// refetch. Misses fall back to the 1-based default.
+						const ePath = ea.path || "";
+						const fileP = ePath
+							? fetch("/api/file?path=" + encodeURIComponent(ePath))
+								.then((r) => r.json())
+								.then((j) => (j && j.ok && j.content != null ? j.content : null))
+								.catch(() => null)
+							: Promise.resolve(null);
 						ea.edits.forEach((e, idx) => {
-							if (ea.edits.length > 1) {
-								var dh = document.createElement("div");
+							const multi = ea.edits.length > 1;
+							var dh = null;
+							if (multi) {
+								dh = document.createElement("div");
 								dh.className = "dhunk";
 								dh.textContent = `edit ${idx + 1}/${ea.edits.length}`;
 								w.out.appendChild(dh);
@@ -2973,13 +3019,24 @@ function handle(payload) {
 							var host = document.createElement("div");
 							host.className = "sx-host";
 							w.out.appendChild(host);
-							mountSideBySide(
-								host,
-								ea.path || "",
-								e.oldText || "",
-								e.newText || "",
-								false,
-							);
+							fileP.then((content) => {
+								let start = null;
+								if (content) {
+									for (const needle of [e.oldText, e.newText]) {
+										if (!needle) continue;
+										const at = content.indexOf(needle);
+										if (at >= 0) {
+											start = content.slice(0, at).split("\n").length;
+											break;
+										}
+									}
+								}
+								if (dh && start)
+									dh.textContent = `edit ${idx + 1}/${ea.edits.length} \u00b7 L${start}`;
+								mountSideBySide(host, ePath, e.oldText || "", e.newText || "", false, {
+									startLine: start,
+								});
+							});
 						});
 					} else if (payload.toolName === "write") {
 						var host = document.createElement("div");
