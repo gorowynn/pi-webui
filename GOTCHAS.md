@@ -1,0 +1,115 @@
+<!-- markdownlint-disable MD013 MD060 -->
+
+# GOTCHAS.md — pi-webui
+
+The full conventions & gotchas, kept out of `AGENTS.md` (which is auto-loaded
+by pi every session) to save context. `AGENTS.md` holds a **keyword index**
+that points here by number.
+
+**Read the matching entry before editing the area it covers** — these are
+load-bearing invariants that cost real time (or security) when violated.
+Numbering is stable and is referenced as `GOTCHAS.md #N` from `AGENTS.md` and
+`CHANGELOG.md`. When you learn a new gotcha, add it here **and** add its
+keyword to the index in `AGENTS.md`.
+
+1. **`follow_up` is snake_case on the wire** (`"follow_up"`, not `"followUp"`;
+   `streamingBehavior` is the separate camelCase field). app.js maps
+   `followUp`→`follow_up` in `send()`. Source of truth:
+   `dist/modes/rpc/rpc-types.d.ts`.
+2. **Never `readline` for framing** — it splits on Unicode line separators that
+   are valid inside JSON strings. The bridge splits on `\n` only.
+3. **`ASK_MARKER` has one source of truth: `server.js`** → exports
+   `process.env.PI_WEBUI_ASK_MARKER` (read by the extension) + injects
+   `window.__PI_ASK_MARKER` (read by app.js); both keep a standalone fallback.
+   If you change it, change all three + run the round-trip self-check.
+4. **`safePath` must use `fs.realpathSync`**, not `path.resolve` (resolve does
+   *not* follow symlinks). Resolve both base and target (resolve the existing
+   parent for not-yet-existing write targets) or a symlink inside `PI_CWD` aimed
+   at `~/.ssh` slips through.
+5. **`api()` attaches a no-op `.catch`** — fire-and-forget callers
+   (refreshStats, init, buttons) never throw unhandled, awaited callers (send)
+   still get rejections. Keep the pattern for new fire-and-forget fetches.
+6. **Diff LCS guards at 4M cells** — skip the O(n·m) path above that to avoid
+   locking the UI. Manual Apply bails on non-unique hunks.
+7. **Permission-modal diff preview reads `curToolName`/`curToolArgs`**
+   (`renderEditDiffPreviews`) — snapshot at `tool_execution_start`, cleared at
+   `tool_execution_end`. No diff = start didn't carry `args`, or the tool isn't
+   `edit`/`write`. Tool boxes + previews render from `tool_execution_*` only
+   (`toolcall_*` is intentionally unhandled).
+8. **Mutable top-level closure state in app.js** (~26 module-scope `let`s:
+   `cur`, `curToolName`/`curToolArgs`, `streaming`, `pinned`, `lastScrollTop`,
+   `todos`, `askId`, `pendingAskArgs`, `compacting`, `commands`,
+   `currentModelId`, `curSessionFile`, `modalFree`, `palSel`/`palItems`,
+   `lastThinkPaint`, `renderRaf`, `lastActivity`, `lastFocus`,
+   `availableModels`, `subagentDensity`, 3 interval handles, …). Fine at this
+   size; it's the one to watch before adding more (see AGENTS.md open work).
+9. **One live pi session at a time** (shared process across tabs); the
+   **⏱ Sessions** button (`GET /api/sessions` + `switch_session` RPC) swaps it
+   to a past session file and repaints via `get_messages`/`get_state`.
+   Multi-tab/concurrent sessions = later. On crash the bridge restarts after
+   1s (exponential backoff).
+10. **Security baseline (don't regress):** CSRF + DNS-rebinding gate on POSTs,
+    SSE backpressure (drops stalled clients), markdown-it `html:false` (raw
+    HTML escaped) + `validateLink` (blocks `javascript:`/`data:`/`vbscript:`
+    hrefs), 1MB body cap.
+11. **Load order: `vendor/markdown-it.min.js` → `md.js` →
+    `vendor/highlight.min.js` → `app.js`.** markdown-it MUST load before md.js
+    (its shim). All three are served via the `server.js` `STATIC` whitelist.
+    `highlightCode(cur.bubble)` runs at the end of `renderAssistantContent` —
+    the single hljs chokepoint.
+12. **`esc()` lives ONLY in `md.js`** (static entity map, null-safe→`""`).
+    app.js has ~40 call sites using the global. Don't re-add a local `esc` to
+    app.js — it would silently shadow + drift (the old copy returned `"null"`
+    for null input).
+13. **Assistant text + thinking stream LIVE, then finalize from pi's
+    AUTHORITATIVE message.** `scheduleRender`→`renderText`/`renderThink` per
+    rAF during deltas; `finalizeBubble(payload.message.content)` at
+    `message_end` is the authoritative re-render (`renderAssistantContent`,
+    shared with `renderMessage`/reload). Live view self-corrects because
+    markdown-it renders partial input as literal/partial form and the
+    `message_end` finalize re-renders from authoritative
+    `payload.message.content`. **Diagnostic: if text looks wrong persistently
+    (not just mid-stream) it must ALSO be wrong after reload** (same
+    authoritative input) — if not, suspect `payload.message` absent/empty at
+    `message_end`, where the `cur.content` fallback would reintroduce the old
+    symptom. (History of the live-streaming fix/re-enable is in CHANGELOG.)
+14. **Subagent live view reads `partialResult.details`, not `.content`.** The
+    `subagent` tool streams its whole state
+    (`{mode, results:[{agent,model,turns,exitCode,messages,usage}]}`) via
+    `onUpdate`→`partialResult.details`; `agent-session.js` forwards
+    `partialResult` whole on every `tool_execution_update`. `app.js`
+    `renderSubagentView` renders details at start/update/end. **Density** is a
+    sidebar toggle (`pi:sa-density`): `full` = child calls + text, `compact` =
+    status + calls.
+15. **Settings sidebar** `<aside id="settings">` (fixed right drawer; ⚙ opens,
+    ✕/backdrop/Esc closes). Model/thinking/pony selects moved here from the
+    header (keep their IDs → existing `onchange` unchanged). 3 tier selects
+    POST `/api/subagent-tiers` → `~/.pi/agent/subagent-tiers.json` (re-read each
+    call). `subagentDensity` = module-scope `let` set from its select.
+16. **JetBrains plugin build is version-pinned (load-bearing):** IntelliJ
+    Platform Gradle Plugin **2.7.0** + Foojay resolver **1.0.0**; Kotlin
+    **2.4.0**; `instrumentCode = false`. `DiffContentFactory` lives in
+    `com.intellij.diff` (NOT `.contents`, where `DiffContent` is). `local()`
+    builds against the auto-detected installed IDE. **Why each pin matters +
+    full build notes: [`jetbrains/README.md`](jetbrains/README.md).**
+17. **Don't build `jetbrains/` from pi's git-bash** — `./gradlew` crashes the
+    shell (0xC0000005 on the `java` exec); every `BUILD EXIT=0` is a silent
+    no-op and `build/` reflects the user's Rider build, not the agent's. Build
+    in Rider or a real terminal. Verify Kotlin APIs with `javap`
+    (`~/.jdks/ms-25.0.3/bin/javap.exe -classpath "<rider>/lib/*"`), not
+    gradlew. The webui side IS testable here (`node --check app.js` + greps).
+    Plugin diff-gate surface: the diff renders as a **CENTER editor tab in the
+    main IDE window** (not a floating `DialogWrapper`) — `DiffReviewEditorProvider`
+    (`plugin.xml`: `HIDE_DEFAULT_EDITOR`+`DumbAware`) builds `DiffReviewEditor`
+    over an in-memory `DiffReviewFile` (`LightVirtualFile` carrying payload +
+    the decision callback); native diff uses `DiffContentFactory.create`/
+    `createEditable` over a resolved `VirtualFile`; 4 safeguard buttons in a
+    top bar; a decision closes the tab, a tab-✕/close fails closed → `Deny`
+    via `dispose()`. A user-edited proposal yields bridge value
+    `{label, oldFull, newFull}`; `safeguard.ts` then mutates pi's `event.input`
+    (`write`→`content`, `edit`→`edits=[{oldText,newText}]`) so pi applies the
+    user's version — the standalone webui modal does the same via
+    `mountEditableDiff`. `javap` facts: `LightVirtualFile` is
+    `com.intellij.testFramework.*` but ships in `intellij.platform.core.jar`
+    (runtime-available); `FileEditorProvider`/`FileEditorManager`/`FileEditorPolicy`
+    are in `intellij.platform.analysis.jar`.

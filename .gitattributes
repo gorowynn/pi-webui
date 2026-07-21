@@ -1,0 +1,11 @@
+# ponytail: force LF in the working tree. Without this, core.autocrlf=true on
+# Windows + a formatter that writes CRLF makes the edit tool's exact-substring
+# match fail ("replacement produced identical content") whenever oldText is LF
+# and the on-disk file has drifted to CRLF. eol=lf overrides autocrlf for git;
+# .editorconfig covers formatters that don't read git attributes.
+* text=auto eol=lf
+*.js   text eol=lf
+*.css  text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.md   text eol=lf

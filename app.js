@@ -1,4 +1,10 @@
 const $ = (id) => document.getElementById(id);
+function setSafeHtml(el, html) {
+	// markdown output is sanitized by md.js; other dynamic fragments use esc().
+	const range = document.createRange();
+	range.selectNodeContents(el);
+	el.replaceChildren(range.createContextualFragment(html));
+}
 const transcript = $("transcript");
 const inputEl = $("input");
 const sendBtn = $("send");
@@ -15,6 +21,10 @@ const actLabel = $("act-label");
 
 let streaming = false;
 let commands = []; // [{name, description, source}]
+let availableModels = []; // from get_available_models; drives model + tier selects
+// subagent live-view density, set from the sidebar toggle. localStorage hint
+// mirrors the pi:model / pi:todos idiom; default "full".
+let subagentDensity = localStorage.getItem("pi:sa-density") || "full";
 const toolBlocks = new Map(); // toolCallId -> {head, out}
 let cur = null; // {bubble, textPar, textBuf, thinkEl, thinkBuf}
 // ponytail: the tool currently awaiting/under a permission prompt. Set at
@@ -49,7 +59,9 @@ const stripAnsi = (s) => String(s).replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
 
 function nearBottom() {
 	return (
-		transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <
+		transcript.scrollHeight -
+			transcript.scrollTop -
+			transcript.clientHeight <
 		120
 	);
 }
@@ -67,25 +79,85 @@ transcript.addEventListener("scroll", () => {
 	// chunk landed (scrollHeight grew), nearBottom() read false, and the log
 	// stopped following and drifted to the middle. Re-pin whenever we're back
 	// near the bottom.
-	if (nearBottom()) pinned = true;
-	else if (top + 4 < lastScrollTop) pinned = false;
+	if (nearBottom()) {
+		pinned = true;
+		unread = 0;
+	} else if (top + 4 < lastScrollTop) {
+		pinned = false;
+	}
 	lastScrollTop = top;
+	refreshJump();
 });
+// ponytail: coalesce autoscroll to ONE rAF. It's called from every streaming
+// hot site (renderText, renderThink, toolBlock, tool_execution_end); each
+// synchronous scrollHeight read forces layout, so a burst of N onmessage tasks
+// = N forced layouts in a frame (the [Violation] forced-reflow + slow 'message'
+// handler). One rAF collapses them to one layout/scroll per frame. scrollDown()
+// (explicit snap-to-bottom) stays synchronous — it's one-off, never in a burst.
+let scrollRaf = 0;
 function autoscroll() {
-	if (pinned) scrollDown();
+	if (scrollRaf) return;
+	scrollRaf = requestAnimationFrame(() => {
+		scrollRaf = 0;
+		if (pinned) transcript.scrollTop = transcript.scrollHeight;
+	});
 }
+// ponytail: keep pinned users glued to the bottom when transcript layout
+// changes for ANY reason, not just streaming renders. <details> expanders
+// (tool blocks auto-opening for diffs / auto-closing on long results, thinking
+// traces the user opens) and async diff content (mountSideBySide fetches
+// /api/file, then lays out AFTER the trailing autoscroll already ran) all
+// change scrollHeight outside the render cycle and used to drift the viewport
+// off the bottom ("autoscroll doesn't behave correctly"). One observer catches
+// them; autoscroll() is rAF-coalesced + pinned-gated, so this is cheap and
+// self-suppresses when the user scrolled up to read.
+new MutationObserver(() => autoscroll()).observe(transcript, {
+	childList: true,
+	subtree: true,
+	attributes: true,
+	attributeFilter: ["open"],
+});
+// ponytail: chat-app scroll affordance. Sticky-bottom while near the bottom
+// (autoscroll follows); scroll up to read and a floating "↓ N new" pill surfaces
+// so new output isn't silently missed. Click it (or scroll back, or send) →
+// re-pin + snap. unread = assistant turns that landed while scrolled away.
+let unread = 0;
+const jumpBottom = document.getElementById("jump-bottom");
+function refreshJump() {
+	if (!jumpBottom) return;
+	const show = !pinned;
+	if (jumpBottom.classList.contains("show") !== show)
+		jumpBottom.classList.toggle("show", show);
+	const lbl = unread > 0 ? `↓ ${unread} new` : "↓";
+	if (jumpBottom.textContent !== lbl) jumpBottom.textContent = lbl;
+}
+if (jumpBottom)
+	jumpBottom.addEventListener("click", () => {
+		pinned = true;
+		unread = 0;
+		refreshJump();
+		transcript.scrollTo({
+			top: transcript.scrollHeight,
+			behavior: "smooth",
+		});
+	});
 
 function addUser(text) {
 	const m = document.createElement("div");
 	m.className = "msg";
-	m.innerHTML = `<div class="bubble user"><div class="role you">you</div></div>`;
+	setSafeHtml(
+		m,
+		`<div class="bubble user"><div class="role you">you</div></div>`,
+	);
 	const b = m.querySelector(".user");
 	const span = document.createElement("div");
-	span.innerHTML = md(text);
+	setSafeHtml(span, md(text));
 	b.appendChild(span);
 	transcript.appendChild(m);
 	pinned = true;
+	unread = 0;
 	scrollDown();
+	refreshJump();
 }
 // ponytail: render an extension `notify` payload as a real assistant
 // message in the transcript (markdown-formatted). Used for substantial /
@@ -96,9 +168,12 @@ function addUser(text) {
 function addAssistantText(text) {
 	const m = document.createElement("div");
 	m.className = "msg";
-	m.innerHTML = `<div class="bubble"><div class="role">assistant</div></div>`;
+	setSafeHtml(
+		m,
+		`<div class="bubble"><div class="role">assistant</div></div>`,
+	);
 	const p = document.createElement("div");
-	p.innerHTML = md(text);
+	setSafeHtml(p, md(text));
 	m.querySelector(".bubble").appendChild(p);
 	transcript.appendChild(m);
 	scrollDown();
@@ -107,7 +182,10 @@ function addAssistantText(text) {
 function newAssistantBubble() {
 	const m = document.createElement("div");
 	m.className = "msg";
-	m.innerHTML = `<div class="bubble"><div class="role">assistant</div></div>`;
+	setSafeHtml(
+		m,
+		`<div class="bubble"><div class="role">assistant</div></div>`,
+	);
 	transcript.appendChild(m);
 	cur = {
 		bubble: m.querySelector(".bubble"),
@@ -118,6 +196,8 @@ function newAssistantBubble() {
 		thinkLabel: null,
 		thinkCount: null,
 		thinkBuf: "",
+		content: [], // raw {type:"text"|"thinking"} blocks; streamed live + finalized at message_end
+		_blk: null, // block currently being filled by *_delta
 	};
 	return cur;
 }
@@ -128,21 +208,111 @@ function ensureTextPar() {
 	cur.bubble.appendChild(p);
 	cur.textPar = p;
 }
-function renderText() {
+// ponytail: throttle text paints to ~8/s while streaming (renderThink is
+// 300ms for the same reason) — re-parsing the WHOLE growing buffer through
+// markdown-it every rAF saturates the main thread on long messages: scroll
+// freezes and renders stall (looks like "messages don't update"). force=true
+// bypasses for the authoritative final render (renderAssistantContent).
+let lastTextPaint = 0;
+function renderText(force) {
 	if (cur && cur.textPar) {
-		cur.textPar.innerHTML = md(cur.textBuf);
+		const now = performance.now();
+		if (!force && now - lastTextPaint < 120) return;
+		lastTextPaint = now;
+		setSafeHtml(cur.textPar, md(cur.textBuf));
 		autoscroll();
 	}
 }
-// ponytail: assistant text is NOT painted incrementally — it commits once
-// fully received (text_end / message_end) for a clean final render, while the
-// thinking block above it still streams live via renderThink(). Guarded so a
-// missing/empty buffer (or a turn with no text) is a no-op.
-function commitText() {
-	if (!cur || !cur.textBuf) return;
-	ensureTextPar();
-	cur.textPar.innerHTML = md(cur.textBuf);
-	autoscroll();
+// ponytail: drop blocks with no text/thinking — a text_start that never got a
+// delta, or an assistant turn that went straight to tool calls, would leave an
+// empty bubble otherwise. Shared by live (finalizeBubble) and reload
+// (renderMessage) so both suppress empty messages identically.
+function nonEmptyContent(content) {
+	return (content || []).filter(
+		(b) =>
+			(b.type === "text" && b.text) ||
+			(b.type === "thinking" && b.thinking),
+	);
+}
+// ponytail: syntax-highlight code blocks via the vendored highlight.js
+// (vendor/highlight.min.js, loaded before app.js). Pure post-process over the
+// DOM renderAssistantContent just built — md.js already emits
+// <pre><code class="language-xxx">. Gated so a missing/removed asset degrades
+// silently to today's uncolored output. Ceiling: highlightElement is sync per
+// block; a pathological paste could jank, fine for normal code. Re-render
+// builds fresh nodes (finalizeBubble resets cursors, gotcha #13) so no
+// stale-highlight guarding is needed; the dataset check is belt-and-suspenders.
+function highlightCode(root) {
+	if (!window.hljs || !root) return;
+	root.querySelectorAll("pre code").forEach((el) => {
+		if (el.dataset.highlighted) return;
+		try {
+			hljs.highlightElement(el);
+		} catch (e) {}
+	});
+}
+// ponytail: the AUTHORITATIVE render path for assistant text + thinking blocks,
+// shared by message_end (finalizeBubble) and reload (renderMessage). Text ALSO
+// streams live now (scheduleRender→renderText, re-enabled with markdown-it), but
+// this is the definitive render from pi's payload.message.content — so live and
+// reload read byte-identical input and can't diverge. Thinking streams live via
+// renderThink (now md()); this re-renders its finalized form.
+function renderAssistantContent(content) {
+	for (const b of nonEmptyContent(content)) {
+		if (b.type === "text") {
+			cur.textBuf = b.text || "";
+			ensureTextPar();
+			renderText(true);
+			cur.textPar = null;
+			cur.textBuf = "";
+		} else if (b.type === "thinking") {
+			cur.thinkBuf = b.thinking || "";
+			ensureThink(false);
+			renderThink(true);
+			cur.thinkDetails = null;
+			cur.thinkLabel = null;
+			cur.thinkCount = null;
+			cur.thinkEl = null;
+			cur.thinkBuf = "";
+		}
+	}
+	highlightCode(cur.bubble);
+}
+// definitive render into cur's bubble, replacing any live-streamed nodes (keeps
+// the .role label). Called from message_end (normal, with pi's AUTHORITATIVE
+// message.content) and agent_end (safety net, falls back to accumulated
+// cur.content if message_end never fired).
+//
+// ponytail: the authoritative source matters. message_end carries the final
+// AssistantMessage pi assembles server-side — the SAME object it persists and
+// returns via get_messages (reload). Deltas re-accumulated in the browser are
+// lossy/corruptible in the SSE transport (dropped/merged words, stripped
+// spaces — the "renders broken until reload" bug). Rendering from
+// payload.message.content makes live read byte-identical input to reload, so
+// the two can't diverge regardless of transport hiccups.
+function finalizeBubble(content) {
+	if (!cur) return;
+	const src = content != null ? content : cur.content;
+	// nothing renderable (tool-only / truly-empty turn) — drop the whole message
+	// so no stray "assistant" label is left. cur.bubble is .bubble; .msg wraps it.
+	if (!nonEmptyContent(src).length) {
+		const msg = cur.bubble.parentElement;
+		if (msg) msg.remove();
+		return;
+	}
+	const role = cur.bubble.querySelector(".role");
+	setSafeHtml(cur.bubble, "");
+	if (role) cur.bubble.appendChild(role);
+	// reset per-block cursors so renderAssistantContent creates FRESH nodes instead
+	// of painting into the live-streamed (now detached) ones it still points at.
+	cur.textPar = null;
+	cur.textBuf = "";
+	cur.thinkEl = null;
+	cur.thinkDetails = null;
+	cur.thinkLabel = null;
+	cur.thinkCount = null;
+	cur.thinkBuf = "";
+	renderAssistantContent(src);
 }
 // ponytail: thinking-block lifecycle. The <details> carries its own
 // state: the .thinking class swaps the summary indicator from caret to
@@ -157,10 +327,12 @@ function ensureThink(active) {
 	if (!cur || cur.thinkEl) return;
 	const d = document.createElement("details");
 	d.className = "think" + (active ? " thinking" : "");
-	d.innerHTML =
+	setSafeHtml(
+		d,
 		`<summary><span class="tspin"></span><span class="tcaret">▸</span>` +
-		`<span class="tlabel">${active ? "thinking" : "thoughts"}</span>` +
-		`<span class="tcount"></span></summary><div class="tbody"></div>`;
+			`<span class="tlabel">${active ? "thinking" : "thoughts"}</span>` +
+			`<span class="tcount"></span></summary><div class="tbody"></div>`,
+	);
 	const body = d.querySelector(".tbody");
 	cur.bubble.appendChild(d);
 	cur.thinkEl = body;
@@ -170,7 +342,9 @@ function ensureThink(active) {
 	// opened a collapsed trace — paint whatever we have right now (the
 	// streaming path skips body paints while closed).
 	d.addEventListener("toggle", () => {
-		if (d.open) body.textContent = d.__buf || body.textContent || "";
+		// ponytail: thinking is markdown now (renderThink uses md()). Paint the
+		// parsed buffer on open so a collapsed trace shows formatted, not raw.
+		if (d.open) setSafeHtml(body, md(d.__buf || ""));
 	});
 }
 function finalizeThink() {
@@ -207,20 +381,22 @@ function renderThink(force) {
 	lastThinkPaint = now;
 	// expensive body paint only when visible or finalizing
 	if (force || cur.thinkDetails.open) {
-		cur.thinkEl.textContent = buf;
+		setSafeHtml(cur.thinkEl, md(buf));
 		autoscroll();
 	}
 }
-// ponytail: coalesce per-token paints to one rAF. md() parses the whole
-// buffer each call, so per-token renderText is O(n²) and freezes long
-// answers. Delta handlers schedule; _end/finalize paths still render
-// directly for an immediate final paint.
+// ponytail: coalesce live paints to one rAF. BOTH text and thinking stream
+// live now (re-enabled with markdown-it — partial input renders its literal/
+// partial form, and message_end finalize corrects to the authoritative text;
+// see gotcha #13). renderText/renderThink each guard on their own cursor, so a
+// rAF for one no-ops the other. thinking_end/finalize paint directly for an
+// immediate final paint.
 let renderRaf = 0;
 function scheduleRender() {
 	if (renderRaf) return;
 	renderRaf = requestAnimationFrame(() => {
 		renderRaf = 0;
-		renderText(); // both no-op unless their buffer/element exists
+		renderText();
 		renderThink();
 	});
 }
@@ -234,7 +410,10 @@ function toolBlock(id, name, args, running) {
 		const a = args ? JSON.stringify(args) : "";
 		// two-line head: line 1 = caret + tool name, line 2 = the call args.
 		const argsHtml = a ? `<code>${esc(a)}</code>` : "";
-		el.innerHTML = `<summary class="head"><span class="trow"><span class="caret">▸</span><span class="name">${esc(name || "tool")}</span></span>${argsHtml}</summary><div class="out"></div>`;
+		setSafeHtml(
+			el,
+			`<summary class="head"><span class="trow"><span class="caret">▸</span><span class="name">${esc(name || "tool")}</span></span>${argsHtml}</summary><div class="out"></div>`,
+		);
 		transcript.appendChild(el);
 		wrap = { el, out: el.querySelector(".out") };
 		toolBlocks.set(id, wrap);
@@ -244,6 +423,211 @@ function toolBlock(id, name, args, running) {
 	return wrap;
 }
 
+// ---- subagent live view ----
+// The `subagent` tool streams its live state via partialResult.details
+// {mode, results:[{agent, model, turns, exitCode, messages:[...child tool calls +
+// partial output...], usage}]}. agent-session.js forwards partialResult whole, so
+// everything below is already arriving on tool_execution_update — this just renders
+// it instead of dropping it. Same details land once more at tool_execution_end.
+// ponytail: keep it compact — collapsed shows agent+model+status+recent child
+// actions; the density toggle (sidebar) trims to status-only. See docs/plans.md.
+const SUBAGENT_TIERS = {
+	// model id prefix → tier label + color (matches subagent.ts TIERS defaults)
+	"glm-5.2": { label: "capable", color: "var(--accent)" },
+	"glm-5-turbo": { label: "implement", color: "var(--cyan)" },
+	"glm-5.1": { label: "implement", color: "var(--cyan)" },
+	"glm-4.5-air": { label: "lookup", color: "var(--muted)" },
+};
+function tierOf(model) {
+	if (!model) return null;
+	for (const k in SUBAGENT_TIERS)
+		if (model.includes(k)) return SUBAGENT_TIERS[k];
+	return null;
+}
+function describeChildCall(name, args) {
+	if (name === "bash")
+		return "$ " + String((args && args.command) || "").slice(0, 50);
+	if (name === "read")
+		return "read " + ((args && (args.path || args.file_path)) || "");
+	if (name === "edit" || name === "write")
+		return name + " " + ((args && args.path) || "");
+	if (name === "grep" || name === "find")
+		return (
+			name + " " + ((args && args.pattern) || (args && args.path) || "")
+		);
+	if (name === "ls") return "ls " + ((args && args.path) || ".");
+	return name || "?";
+}
+// render one child's messages as a compact stream of recent actions + any text
+function childItems(messages, limit) {
+	const items = [];
+	for (const msg of messages || []) {
+		if (msg.role !== "assistant") continue;
+		for (const part of msg.content || []) {
+			if (part.type === "toolCall")
+				items.push({
+					k: "call",
+					t: describeChildCall(part.name, part.arguments),
+				});
+			else if (part.type === "text" && part.text && part.text.trim())
+				items.push({ k: "text", t: part.text });
+		}
+	}
+	const out = limit ? items.slice(-limit) : items;
+	return out
+		.map((it) =>
+			it.k === "call"
+				? `<div class="sa-call">→ ${esc(it.t)}</div>`
+				: `<div class="sa-text">${esc(it.t.split("\n").slice(0, 3).join(" ").slice(0, 120))}</div>`,
+		)
+		.join("");
+}
+function statusIcon(r) {
+	if (r.exitCode === -1) return "⏳";
+	if (
+		r.exitCode !== 0 ||
+		r.stopReason === "error" ||
+		r.stopReason === "aborted"
+	)
+		return "✗";
+	return "✓";
+}
+// density: "full" = child actions + text; "compact" = status + actions only
+function renderSubagentView(host, details, density) {
+	if (!details || !details.results || !details.results.length) {
+		host.textContent = "";
+		return;
+	}
+	const mode = details.mode || "single";
+	let html = `<div class="sa sa-${esc(mode)}">`;
+	if (mode === "parallel") {
+		const done = details.results.filter((r) => r.exitCode !== -1).length;
+		const run = details.results.length - done;
+		html += `<div class="sa-sum">${done}/${details.results.length} done${run ? `, ${run} running` : ""}</div>`;
+	} else if (mode === "chain") {
+		const ok = details.results.filter((r) => r.exitCode === 0).length;
+		html += `<div class="sa-sum">chain ${ok}/${details.results.length} steps</div>`;
+	}
+	const itemLimit = density === "compact" ? 4 : 8;
+	for (const r of details.results) {
+		const t = tierOf(r.model);
+		const tier = t
+			? ` <span class="sa-tier" style="color:${t.color}">${esc(t.label)}</span>`
+			: "";
+		const model = r.model
+			? ` <span class="sa-model">${esc(r.model.split("/").pop())}</span>`
+			: "";
+		const turns = r.turns
+			? ` <span class="sa-turns">${r.turns}t</span>`
+			: "";
+		html += `<div class="sa-row"><span class="sa-ic">${statusIcon(r)}</span><span class="sa-agent">${esc(r.agent)}</span>${tier}${model}${turns}</div>`;
+		html += `<div class="sa-items">${childItems(r.messages, itemLimit)}</div>`;
+	}
+	html += "</div>";
+	setSafeHtml(host, html);
+}
+// ---- edit diff: syntax highlight via vendored highlight.js ----
+// ponytail: highlight the WHOLE file once (so multi-line tokens like block
+// comments / strings stay correct), then split the HTML on newlines while
+// rebalancing open <span>s so each diff row is standalone valid HTML.
+function splitHtmlLines(html) {
+	const lines = [];
+	let cur = "";
+	const stack = []; // open span class strings
+	const tokRe = /<[^>]*>|[^<]+/g;
+	let m;
+	while ((m = tokRe.exec(html))) {
+		const tok = m[0];
+		if (tok[0] === "<") {
+			if (tok[1] === "/") {
+				if (stack.length) stack.pop();
+				cur += tok;
+			} else if (tok.endsWith("/>")) {
+				cur += tok;
+			} else {
+				stack.push((tok.match(/class="([^"]*)"/) || [, ""])[1]);
+				cur += tok;
+			}
+		} else {
+			const parts = tok.split("\n");
+			for (let i = 0; i < parts.length; i++) {
+				if (i > 0) {
+					for (let k = stack.length - 1; k >= 0; k--)
+						cur += "</span>";
+					lines.push(cur);
+					cur = stack.map((c) => `<span class="${c}">`).join("");
+				}
+				cur += parts[i];
+			}
+		}
+	}
+	lines.push(cur);
+	return lines;
+}
+function highlightLines(text, lang) {
+	if (!window.hljs || !text) return null;
+	try {
+		const res =
+			lang && hljs.getLanguage(lang)
+				? hljs.highlight(text, { language: lang })
+				: hljs.highlightAuto(text);
+		return splitHtmlLines(res.value);
+	} catch (_e) {
+		return null;
+	}
+}
+// map a file path to an hljs language id; unknowns fall through to getLanguage.
+function langOf(path) {
+	const e = (path || "").match(/\.([a-z0-9]+)$/i);
+	if (!e) return null;
+	const map = {
+		js: "javascript",
+		jsx: "javascript",
+		mjs: "javascript",
+		cjs: "javascript",
+		ts: "typescript",
+		tsx: "typescript",
+		py: "python",
+		rb: "ruby",
+		go: "go",
+		rs: "rust",
+		java: "java",
+		kt: "kotlin",
+		kts: "kotlin",
+		scala: "scala",
+		css: "css",
+		less: "less",
+		scss: "scss",
+		html: "xml",
+		htm: "xml",
+		xml: "xml",
+		md: "markdown",
+		markdown: "markdown",
+		sh: "bash",
+		bash: "bash",
+		zsh: "bash",
+		yml: "yaml",
+		yaml: "yaml",
+		toml: "ini",
+		json: "json",
+		jsonc: "json",
+		c: "c",
+		h: "c",
+		cpp: "cpp",
+		cc: "cpp",
+		cxx: "cpp",
+		hpp: "cpp",
+		cs: "csharp",
+		php: "php",
+		swift: "swift",
+		sql: "sql",
+		dockerfile: "dockerfile",
+		makefile: "makefile",
+		vue: "xml",
+		svelte: "xml",
+	};
+	return map[e[1].toLowerCase()] || e[1].toLowerCase();
+}
 // ---- edit diff: LCS line diff from oldText/newText args ----
 // ponytail: O(n*m) Uint32Array DP table. Fine for typical edits; swap for
 // Myers if huge files start lagging the UI.
@@ -312,7 +696,12 @@ function diffRows(a, b) {
 				const d = dels[k],
 					a2 = adds[k];
 				rows.push({
-					kind: d != null && a2 != null ? "mod" : d != null ? "del" : "add",
+					kind:
+						d != null && a2 != null
+							? "mod"
+							: d != null
+								? "del"
+								: "add",
 					left: d != null ? d : null,
 					right: a2 != null ? a2 : null,
 				});
@@ -321,24 +710,55 @@ function diffRows(a, b) {
 	}
 	return rows;
 }
-function rowsToSides(rows) {
+function rowsToSides(rows, hlOld, hlNew) {
 	const left = [],
 		right = [];
 	let on = 0, // old file line counter
 		nn = 0; // new file line counter
+	const hl = (arr, i) => (arr && arr[i] != null ? arr[i] : null);
 	rows.forEach((r) => {
 		if (r.kind === "ctx") {
-			left.push({ s: r.left, cls: "ln-ctx", num: ++on });
-			right.push({ s: r.right, cls: "ln-ctx", num: ++nn });
+			left.push({
+				s: r.left,
+				cls: "ln-ctx",
+				num: ++on,
+				html: hl(hlOld, on - 1),
+			});
+			right.push({
+				s: r.right,
+				cls: "ln-ctx",
+				num: ++nn,
+				html: hl(hlNew, nn - 1),
+			});
 		} else if (r.kind === "del") {
-			left.push({ s: r.left, cls: "ln-del", num: ++on });
+			left.push({
+				s: r.left,
+				cls: "ln-del",
+				num: ++on,
+				html: hl(hlOld, on - 1),
+			});
 			right.push({ s: null, cls: "ln-empty", num: null });
 		} else if (r.kind === "add") {
 			left.push({ s: null, cls: "ln-empty", num: null });
-			right.push({ s: r.right, cls: "ln-add", num: ++nn });
+			right.push({
+				s: r.right,
+				cls: "ln-add",
+				num: ++nn,
+				html: hl(hlNew, nn - 1),
+			});
 		} else {
-			left.push({ s: r.left, cls: "ln-del", num: ++on });
-			right.push({ s: r.right, cls: "ln-add", num: ++nn });
+			left.push({
+				s: r.left,
+				cls: "ln-del",
+				num: ++on,
+				html: hl(hlOld, on - 1),
+			});
+			right.push({
+				s: r.right,
+				cls: "ln-add",
+				num: ++nn,
+				html: hl(hlNew, nn - 1),
+			});
 		}
 	});
 	return { left, right, maxNum: Math.max(on, nn) };
@@ -347,7 +767,12 @@ function sideHtml(lines) {
 	return lines
 		.map((l) => {
 			const num = l.num == null ? "\u00a0" : String(l.num);
-			const txt = l.s == null || l.s === "" ? "\u00a0" : esc(l.s);
+			const txt =
+				l.html != null
+					? l.html
+					: l.s == null || l.s === ""
+						? "\u00a0"
+						: esc(l.s);
 			return `<span class="sx-line ${l.cls}"><span class="sx-gnum">${num}</span><span class="sx-ltxt">${txt}</span></span>`;
 		})
 		.join("");
@@ -387,6 +812,7 @@ function findStartLine(path, oldText, newText) {
 // numbers stay pinned during horizontal scroll.
 function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 	const ro = !!(opt && opt.readOnly);
+	const cap = !!(opt && opt.capture);
 	const baseOld = oldText == null ? "" : String(oldText);
 	const baseNew = newText == null ? "" : String(newText);
 	// ponytail: diffLines is O(n*m) with a full Uint32Array — a 10k×10k edit
@@ -410,7 +836,12 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 				gutter: gutterCh(Math.max(on, nn)),
 			};
 		}
-		const sides = rowsToSides(diffRows(o, n));
+		const lang = langOf(path);
+		const sides = rowsToSides(
+			diffRows(o, n),
+			highlightLines(o, lang),
+			highlightLines(n, lang),
+		);
 		return {
 			leftHtml: sideHtml(sides.left),
 			rightHtml: sideHtml(sides.right),
@@ -418,15 +849,17 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 		};
 	};
 	const init = compute(baseOld, baseNew);
-	host.innerHTML =
+	setSafeHtml(
+		host,
 		`<div class="dpath">${esc(path || "(no path)")}${isWrite ? ' <span class="sx-tag">write</span>' : ""}</div>` +
-		`<div class="sxs" style="--sx-gutter:${init.gutter}">` +
-		`<div class="sx-col sx-old"><div class="sx-hdr">\u2212 original</div><div class="sx-body sx-left">${init.leftHtml}</div></div>` +
-		`<div class="sx-col sx-new"><div class="sx-hdr">+ edited${ro ? "" : ' <button class="sx-apply" type="button">Apply</button>'}</div>` +
-		(ro
-			? `<div class="sx-body sx-right">${init.rightHtml}</div>`
-			: `<div class="sx-edit"><div class="sx-body sx-hlbody" aria-hidden="true">${init.rightHtml}</div><textarea class="sx-ta" spellcheck="false" wrap="off"></textarea></div>`) +
-		`</div></div>`;
+			`<div class="sxs" style="--sx-gutter:${init.gutter}">` +
+			`<div class="sx-col sx-old"><div class="sx-hdr">\u2212 original</div><div class="sx-body sx-left">${init.leftHtml}</div></div>` +
+			`<div class="sx-col sx-new"><div class="sx-hdr">+ ${cap ? "proposal" : "edited"}${ro || cap ? "" : ' <button class="sx-apply" type="button">Apply</button>'}</div>` +
+			(ro
+				? `<div class="sx-body sx-right">${init.rightHtml}</div>`
+				: `<div class="sx-edit"><div class="sx-body sx-hlbody" aria-hidden="true">${init.rightHtml}</div><textarea class="sx-ta" spellcheck="false" wrap="off"></textarea></div>`) +
+			`</div></div>`,
+	);
 	const leftBody = host.querySelector(".sx-left");
 	const rightBody = host.querySelector(".sx-right, .sx-hlbody");
 	let ta = null; // set only in editable mode
@@ -442,7 +875,7 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 			body.querySelectorAll(".sx-line").forEach((line) => {
 				const gnum = line.querySelector(".sx-gnum");
 				if (line.classList.contains("ln-empty")) {
-					if (gnum) gnum.innerHTML = "\u00a0";
+					if (gnum) setSafeHtml(gnum, "\u00a0");
 				} else {
 					n++;
 					if (gnum) gnum.textContent = String(n);
@@ -450,17 +883,23 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 				}
 			});
 		}
-		host
-			.querySelector(".sxs")
-			.style.setProperty("--sx-gutter", gutterCh(maxNum));
+		host.querySelector(".sxs").style.setProperty(
+			"--sx-gutter",
+			gutterCh(maxNum),
+		);
 	};
 	if (!isWrite && baseOld) {
-		findStartLine(path, baseOld, baseNew).then((start) => {
+		// ponytail: caller may pass a precomputed start line (a multi-hunk
+		// edit that already fetched the file once to badge its hunks) - use
+		// it directly instead of a second /api/file hit.
+		const applyStart = (start) => {
 			if (start) {
 				lineStart = start;
 				patchGutters(start);
 			}
-		});
+		};
+		if (opt && opt.startLine != null) applyStart(opt.startLine);
+		else findStartLine(path, baseOld, baseNew).then(applyStart);
 	}
 	// scroll sync: bidirectional, guarded against feedback loops
 	let syncing = false;
@@ -489,8 +928,8 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 	const repaint = () => {
 		const c = compute(baseOld, ta.value);
 		host.querySelector(".sxs").style.setProperty("--sx-gutter", c.gutter);
-		rightBody.innerHTML = c.rightHtml;
-		leftBody.innerHTML = c.leftHtml;
+		setSafeHtml(rightBody, c.rightHtml);
+		setSafeHtml(leftBody, c.leftHtml);
 		if (lineStart > 1) patchGutters(lineStart);
 	};
 	ta.addEventListener("input", () => {
@@ -502,11 +941,12 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 		});
 	});
 	let baselineNew = baseNew;
-	applyBtn.addEventListener("click", () =>
-		applyEdit(path, baselineNew, ta.value, isWrite, applyBtn, () => {
-			baselineNew = ta.value;
-		}),
-	);
+	if (applyBtn)
+		applyBtn.addEventListener("click", () =>
+			applyEdit(path, baselineNew, ta.value, isWrite, applyBtn, () => {
+				baselineNew = ta.value;
+			}),
+		);
 }
 // applyEdit: read current file, splice the edited hunk in (edit tool) or
 // replace it wholesale (write tool), then POST to /api/write. For edits we
@@ -571,7 +1011,8 @@ async function applyEdit(path, baselineNew, edited, isWrite, btn, onOk) {
 // ---- working indicator: spinner + current activity ----
 function describeTool(name, args) {
 	if (!args) return name || "tool";
-	if (name === "edit" || name === "write") return `${name} ${args.path || ""}`;
+	if (name === "edit" || name === "write")
+		return `${name} ${args.path || ""}`;
 	if (name === "read") return `reading ${args.path || ""}`;
 	if (name === "bash")
 		return `bash: ${String(args.command || "").slice(0, 60)}`;
@@ -636,6 +1077,13 @@ let modalFree = false; // true = no pi latch pending; safe to close freely (Usag
 // card. Focus moves into the modal on open and back to the trigger on close.
 function onModalKey(e) {
 	if (e.key === "Escape") {
+		// settings drawer closes first (it's non-latching); only if it's closed do
+		// we hand Escape to the modal's pi-latch dismiss path.
+		if (settingsEl.classList.contains("open")) {
+			e.preventDefault();
+			closeSettings();
+			return;
+		}
 		e.preventDefault();
 		dismissModal();
 		return;
@@ -675,7 +1123,7 @@ function openModal() {
 function showModal(html, free) {
 	// reset any per-modal modifier (e.g. .wide) so it can't leak across opens
 	card.className = "card";
-	card.innerHTML = html;
+	setSafeHtml(card, html);
 	openModal();
 	if (free) {
 		modalFree = true;
@@ -762,7 +1210,8 @@ function zaiLimits(data) {
 	for (const l of limits) {
 		if (!l || typeof l !== "object") continue;
 		const base = {
-			label: LIMIT_TYPES[l.type] || (l.type || "quota").replace(/_/g, " "),
+			label:
+				LIMIT_TYPES[l.type] || (l.type || "quota").replace(/_/g, " "),
 			window: windowLabel(l),
 			windowMs: windowMs(l),
 			reset: l.nextResetTime ? new Date(l.nextResetTime) : null,
@@ -779,17 +1228,72 @@ function zaiLimits(data) {
 	}
 	return out;
 }
+function codexLimits(data) {
+	const rate = data && data.rate_limit;
+	if (!rate || typeof rate !== "object") return [];
+	return [
+		["primary_window", "Short"],
+		["secondary_window", "Long"],
+	]
+		.map(([key, fallback]) => {
+			const w = rate[key];
+			if (!w || typeof w.used_percent !== "number") return null;
+			const seconds = Number(w.limit_window_seconds || 0);
+			const resetAfter = Number(w.reset_after_seconds);
+			const resetAt = w.reset_at;
+			const resetMs = Number.isFinite(resetAfter)
+				? Date.now() + resetAfter * 1000
+				: typeof resetAt === "number"
+					? resetAt * 1000
+					: typeof resetAt === "string"
+						? Date.parse(resetAt)
+						: NaN;
+			const label =
+				seconds > 0 && seconds % 86400 === 0
+					? `${seconds / 86400}d`
+					: seconds > 0 && seconds % 3600 === 0
+						? `${seconds / 3600}h`
+						: fallback;
+			return {
+				label,
+				pct: w.used_percent,
+				windowMs: seconds * 1000,
+				reset: Number.isFinite(resetMs) ? new Date(resetMs) : null,
+			};
+		})
+		.filter(Boolean);
+}
 function pctOf(b) {
-	if (typeof b.pct === "number") return b.pct;
+	if (typeof b.pct === "number") return Math.max(0, Math.min(100, b.pct));
 	return b.total > 0 ? Math.min(100, (b.used / b.total) * 100) : 0;
+}
+function quotaValue(b) {
+	const left = Math.max(0, 100 - pctOf(b));
+	if (typeof b.used === "number")
+		return `${fmtTokens(Math.max(0, b.total - b.used))} left / ${fmtTokens(b.total)} · ${left.toFixed(1)}%`;
+	return `${left.toFixed(1)}% left`;
+}
+function quotaEndpoint(provider) {
+	return usageViewKind(provider) === "codex-quota"
+		? "/api/codex-usage"
+		: "/api/zai-usage";
+}
+function quotaLimits(provider, data) {
+	return usageViewKind(provider) === "codex-quota"
+		? codexLimits(data)
+		: zaiLimits(data);
+}
+async function fetchQuotaUsage(provider) {
+	const opt =
+		usageViewKind(provider) === "zai-quota"
+			? { headers: { "X-ZAI-Key": getZaiKey() } }
+			: undefined;
+	return fetch(quotaEndpoint(provider), opt).then((r) => r.json());
 }
 function zaiBarHtml(b) {
 	const pct = pctOf(b);
 	const cls = pct >= 90 ? "hi" : pct >= 70 ? "mid" : "lo";
-	const val =
-		typeof b.used === "number"
-			? `${Number(b.used).toLocaleString()} / ${Number(b.total).toLocaleString()} · ${pct.toFixed(1)}%`
-			: `${pct.toFixed(1)}%`;
+	const val = quotaValue(b);
 	const sub = [b.window, b.reset ? `resets ${b.reset.toLocaleString()}` : ""]
 		.filter(Boolean)
 		.join(" · ");
@@ -826,47 +1330,31 @@ function fmtDur(ms) {
 	if (m > 0) return `${m}m`;
 	return `${s}s`;
 }
-// Full-width inline bar: token usage (bar + %) and reset countdown (bar +
-// time remaining). Tokens row colors by how close to the limit; the reset row
-// is a calm accent (it just tracks progress toward the next window).
+// tokencost is higher 14:00–18:00 UTC+8 (= 06:00–10:00 UTC). Surfaced as a
+// badge on the usage bar; recomputed on each 60s poll so it's minute-accurate.
+function inPeakHours() {
+	const h = new Date().getUTCHours();
+	return h >= 6 && h < 10;
+}
+// Compact cards keep both Codex windows visible in the narrow header. Each
+// quota bar owns the reset text directly beneath it, so their values can't mix.
 function renderUsageInline(bars) {
-	if (!bars.length) return "";
-	const tok =
-		bars.find((b) => b.label === "Tokens") ||
-		bars.find((b) => typeof b.total === "number") ||
-		bars[0];
-	// soonest nextResetTime across all limits; keep its bar so the Reset fill
-	// uses THAT limit's windowMs (not the Tokens window — they can differ).
-	const resetBar =
-		bars.filter((b) => b.reset).sort((a, b) => a.reset - b.reset)[0] || null;
-	const reset = resetBar ? resetBar.reset : null;
-	const rows = [];
-	{
-		const pct = pctOf(tok);
-		const cls = pct >= 90 ? "hi" : pct >= 70 ? "mid" : "lo";
-		const val =
-			typeof tok.used === "number"
-				? `${fmtTokens(tok.used)} / ${fmtTokens(tok.total)} · ${pct.toFixed(1)}%`
-				: `${pct.toFixed(1)}%`;
-		rows.push(
-			`<div class="ub-row"><span class="ub-lbl">Tokens</span>` +
-				`<span class="ub-track" title="${esc(tok.label)}: ${esc(val)}"><span class="ub-fill ${cls}" style="width:${pct}%"></span></span>` +
-				`<span class="ub-val">${esc(val)}</span></div>`,
-		);
-	}
-	if (reset) {
-		const remain = reset - Date.now();
-		const wm = (resetBar && resetBar.windowMs) || 0;
-		// fill = elapsed / window; windowMs is nominal so clamp to [0,100].
-		const fill =
-			wm > 0 ? Math.max(0, Math.min(100, (1 - remain / wm) * 100)) : 0;
-		rows.push(
-			`<div class="ub-row"><span class="ub-lbl">Reset</span>` +
-				`<span class="ub-track"><span class="ub-fill time" style="width:${fill}%"></span></span>` +
-				`<span class="ub-val">in ${fmtDur(remain)}</span></div>`,
-		);
-	}
-	return rows.join("");
+	return bars
+		.slice(0, 2)
+		.map((bar) => {
+			const pct = pctOf(bar);
+			const cls = pct >= 90 ? "hi" : pct >= 70 ? "mid" : "lo";
+			const val = quotaValue(bar);
+			const remain = bar.reset ? bar.reset - Date.now() : null;
+			const reset = remain != null ? `reset in ${fmtDur(remain)}` : "";
+			return (
+				`<div class="ub-window" title="${esc(bar.label)}: ${esc(val)}${reset ? `; ${reset}` : ""}">` +
+				`<div class="ub-head"><span class="ub-lbl">${esc(bar.label)}</span><span class="ub-val">${esc(val)}</span></div>` +
+				`<span class="ub-track"><span class="ub-fill ${cls}" style="width:${pct}%"></span></span>` +
+				`<span class="ub-reset">${esc(reset)}</span></div>`
+			);
+		})
+		.join("");
 }
 function usageKeyForm() {
 	return (
@@ -877,11 +1365,46 @@ function usageKeyForm() {
 		`<div class="row"><button>Save &amp; load</button></div></form>`
 	);
 }
-async function renderUsage() {
-	const u = await fetch("/api/zai-usage", {
-		headers: { "X-ZAI-Key": getZaiKey() },
-	}).then((r) => r.json());
-	if (!u.ok && u.error === "no API key" && !getZaiKey()) return usageKeyForm();
+function usageProviderLabel(provider) {
+	return /codex/i.test(provider || "")
+		? "ChatGPT/Codex"
+		: provider || "model";
+}
+let sessionUsage = null;
+function renderSessionUsage(provider) {
+	const t = sessionUsage;
+	if (!t)
+		return `<p class="um-hint">${esc(usageProviderLabel(provider))} session usage is loading…</p>`;
+	const rows = [
+		["input", t.input],
+		["output", t.output],
+		["cache read", t.cacheRead],
+		["cache write", t.cacheWrite],
+		["total", t.total],
+	]
+		.map(
+			([label, value]) =>
+				`<div class="um-bar"><div class="um-head"><span class="um-lbl">${label}</span><span class="um-val">${typeof value === "number" ? fmtTokens(value) : "—"} tokens</span></div></div>`,
+		)
+		.join("");
+	return (
+		`<div class="um-meta"><span>${esc(usageProviderLabel(provider))} · pi session</span></div>` +
+		rows +
+		`<p class="um-hint">Subscription allowance is available in your provider account; pi RPC reports session tokens only.</p>`
+	);
+}
+async function renderUsage(provider) {
+	if (usageViewKind(provider) === "session")
+		return renderSessionUsage(provider);
+	const u = await fetchQuotaUsage(provider);
+	if (provider !== currentProvider) return null;
+	if (
+		!u.ok &&
+		usageViewKind(provider) === "zai-quota" &&
+		u.error === "no API key" &&
+		!getZaiKey()
+	)
+		return usageKeyForm();
 	if (!u.ok)
 		return (
 			`<p class="um-err">\u26a0 ${esc(u.error || "request failed")}` +
@@ -890,7 +1413,7 @@ async function renderUsage() {
 				? `<details class="um-raw"><summary>response</summary><pre>${esc(u.raw)}</pre></details>`
 				: "")
 		);
-	const bars = zaiLimits(u.data);
+	const bars = quotaLimits(provider, u.data);
 	const barsHtml = bars.length
 		? bars.map(zaiBarHtml).join("")
 		: `<p class="um-err">no quota fields found in the response</p>`;
@@ -909,14 +1432,20 @@ async function renderUsage() {
 	);
 }
 async function showUsage() {
-	showModal(`<h3>z.ai usage</h3><p class="um-hint">loading\u2026</p>`, true);
+	const provider = currentProvider;
+	const title = `${usageProviderLabel(provider)} usage`;
+	showModal(
+		`<h3>${esc(title)}</h3><p class="um-hint">loading\u2026</p>`,
+		true,
+	);
 	let inner;
 	try {
-		inner = await renderUsage();
+		inner = await renderUsage(provider);
 	} catch (e) {
 		inner = `<p class="um-err">\u26a0 ${esc(e.message)}</p>`;
 	}
-	card.innerHTML = `<h3>z.ai usage</h3>` + inner;
+	if (provider !== currentProvider) return showUsage();
+	setSafeHtml(card, `<h3>${esc(title)}</h3>` + inner);
 	const rb = card.querySelector("#um-refresh");
 	if (rb) rb.onclick = showUsage;
 	const form = card.querySelector("#um-key-form");
@@ -929,36 +1458,47 @@ async function showUsage() {
 		};
 }
 
-// ---- usage bar: inline next to the Usage button, polls every 60s ----
-// Compact glance of the same z.ai data; click for the full modal. The server
-// resolves the key (ZAI_API_KEY -> auth.json zai.key -> X-ZAI-Key header), so we
-// must NOT pre-gate on a local key — a key in auth.json (where pi itself reads
-// it) would otherwise hide the bar while the Usage button still works. Let the
-// server's "no API key" response be the only gate (same shape the modal uses).
+// ---- usage bar: matches the active model provider ----
 const usageBar = $("usagebar");
+function renderSessionUsageInline(provider) {
+	const total = sessionUsage && sessionUsage.total;
+	return `<div class="ub-row"><span class="ub-lbl">${esc(usageProviderLabel(provider))}</span><span class="ub-val">${typeof total === "number" ? `${fmtTokens(total)} tokens` : "loading…"}</span></div>`;
+}
 async function refreshUsageBar() {
+	const provider = currentProvider;
+	if (!provider) {
+		usageBar.style.display = "none";
+		return;
+	}
+	if (usageViewKind(provider) === "session") {
+		setSafeHtml(usageBar, renderSessionUsageInline(provider));
+		usageBar.style.display = "flex";
+		usageBar.classList.remove("peak");
+		usageBar.title = `${usageProviderLabel(provider)} session usage — click for details`;
+		return;
+	}
 	let u;
 	try {
-		u = await fetch("/api/zai-usage", {
-			headers: { "X-ZAI-Key": getZaiKey() },
-		}).then((r) => r.json());
+		u = await fetchQuotaUsage(provider);
 	} catch {
 		return;
 	}
+	if (provider !== currentProvider) return;
 	if (!u.ok) {
 		usageBar.style.display = "none";
 		return;
 	}
-	const bars = zaiLimits(u.data);
+	const bars = quotaLimits(provider, u.data);
 	if (!bars.length) {
 		usageBar.style.display = "none";
 		return;
 	}
-	usageBar.innerHTML = renderUsageInline(bars);
+	setSafeHtml(usageBar, renderUsageInline(bars));
 	usageBar.style.display = "flex";
+	usageBar.classList.toggle("peak", inPeakHours());
+	usageBar.title = `${usageProviderLabel(provider)} quota — click for details`;
 }
 usageBar.onclick = showUsage;
-usageBar.title = "z.ai usage — click for details";
 
 // ---- todo panel: incremental state from the `todo` tool ----
 // The `todo` tool (extensions/pi_minimal_webui/todo.ts) sends one ACTION per
@@ -1022,7 +1562,9 @@ function applyTodoOp(args) {
 			if (t) t.status = normStatus(u.status);
 		});
 	} else if (a === "remove") {
-		const drop = new Set((Array.isArray(args.ids) ? args.ids : []).map(String));
+		const drop = new Set(
+			(Array.isArray(args.ids) ? args.ids : []).map(String),
+		);
 		todos = todos.filter((t) => !drop.has(String(t.id)));
 	} else if (a === "clear") {
 		todos = [];
@@ -1031,6 +1573,7 @@ function applyTodoOp(args) {
 	renderTodos();
 }
 function renderTodos() {
+	updatePlanBadge();
 	// ponytail: hide once every task is finished — a fully-done list has done
 	// its job; lingering checkmarks are clutter. State is kept (a later plan/add
 	// re-opens the panel), and persistTodos already saved it for reload safety.
@@ -1043,7 +1586,7 @@ function renderTodos() {
 	todopanel.style.display = "block";
 	const done = todos.filter((t) => t.status === "finished").length;
 	tpCount.textContent = `${done}/${todos.length}`;
-	tpBody.innerHTML = "";
+	setSafeHtml(tpBody, "");
 	todos.forEach((t, i) => {
 		const cls =
 			t.status === "finished"
@@ -1055,10 +1598,214 @@ function renderTodos() {
 			t.status === "finished" ? "✓" : t.status === "started" ? "●" : "○";
 		const row = document.createElement("div");
 		row.className = "ti " + cls;
-		row.innerHTML = `<span class="ck ${cls}">${ck}</span><span class="id">#${t.id != null ? esc(String(t.id)) : i + 1}</span><span class="sbj">${esc(t.subject)}</span>`;
+		setSafeHtml(
+			row,
+			`<span class="ck ${cls}">${ck}</span><span class="id">#${t.id != null ? esc(String(t.id)) : i + 1}</span><span class="sbj">${esc(t.subject)}</span>`,
+		);
 		tpBody.appendChild(row);
 	});
 }
+
+// ---- plan/spec viewer: header pill opens SDD artifacts + the live todo plan ----
+// ponytail: skills/sdd writes .sdd/{type}_{slug}_{DDMMYYYY}.md (plan/spec/tasks/
+// verify); the server (/api/plan-state) globs .sdd and returns them newest-first
+// as {phase,slug,date,rel,mtime}. The badge signals the *latest active* set's
+// current phase (a set is "finished" once it reaches verify); the viewer lists
+// every doc as history + a phase stepper that nudges the next missing phase.
+let planArtifacts = [];
+const PHASE_RANK = { plan: 0, spec: 1, tasks: 2, verify: 3 };
+const PHASE_NEXT = { plan: "spec", spec: "tasks", tasks: "verify" };
+// group artifacts into SDD runs by slug+date (legacy fixed-name files share one set)
+function planSets() {
+	const map = new Map();
+	for (const a of planArtifacts) {
+		const key = (a.slug || "") + "|" + (a.date || "");
+		let s = map.get(key);
+		if (!s) {
+			s = { slug: a.slug || "", date: a.date || "", arts: [], mtime: 0 };
+			map.set(key, s);
+		}
+		s.arts.push(a);
+		if ((a.mtime || 0) > s.mtime) s.mtime = a.mtime;
+	}
+	return [...map.values()];
+}
+// highest phase reached in a set + whether the run is complete (verify = terminal)
+function setSummary(s) {
+	let rank = -1,
+		phase = null;
+	for (const a of s.arts) {
+		const r = PHASE_RANK[a.phase];
+		if (r != null && r > rank) {
+			rank = r;
+			phase = a.phase;
+		}
+	}
+	return {
+		slug: s.slug,
+		date: s.date,
+		mtime: s.mtime,
+		phase,
+		finished: phase === "verify",
+	};
+}
+// the most-recent set that hasn't reached verify — what the badge signals
+function activeSet() {
+	let best = null;
+	for (const s of planSets()) {
+		const sum = setSummary(s);
+		if (sum.finished) continue;
+		if (!best || sum.mtime > best.mtime) best = sum;
+	}
+	return best;
+}
+function todoActive() {
+	return todos.length > 0 && !todos.every((t) => t.status === "finished");
+}
+function updatePlanBadge() {
+	const b = document.getElementById("plan-badge");
+	if (!b) return;
+	const set = activeSet();
+	const hasTodo = todoActive();
+	const labels = [];
+	if (set) labels.push(set.slug ? set.phase + " · " + set.slug : set.phase);
+	if (hasTodo) labels.push("todo");
+	if (!labels.length) {
+		b.hidden = true;
+		return;
+	}
+	b.hidden = false;
+	const cnt = document.getElementById("plan-count");
+	if (cnt) cnt.textContent = labels.join("  ·  ");
+	// title: current phase + the next expected phase (a nudge), then a hint
+	const parts = [];
+	if (set) {
+		const where = set.slug ? ' "' + set.slug + '"' : "";
+		parts.push("current: " + set.phase + where);
+		if (PHASE_NEXT[set.phase]) parts.push("next: " + PHASE_NEXT[set.phase]);
+	}
+	if (hasTodo) parts.push("todo in progress");
+	b.title = parts.join("  ·  ") + " — click to open";
+}
+function refreshPlanState() {
+	fetch("/api/plan-state")
+		.then((r) => r.json())
+		.then((j) => {
+			planArtifacts = j && Array.isArray(j.artifacts) ? j.artifacts : [];
+			updatePlanBadge();
+		})
+		.catch(() => {});
+}
+function planDocTabs() {
+	const tabs = planArtifacts.map((a) => ({
+		key: "file:" + a.rel,
+		label: a.slug ? a.phase + " · " + a.slug : a.phase,
+		rel: a.rel,
+		art: a,
+	}));
+	if (todos.length) tabs.push({ key: "todo", label: "todo" });
+	return tabs;
+}
+function todosAsMarkdown() {
+	if (!todos.length) return "_(no tasks)_";
+	const done = todos.filter((t) => t.status === "finished").length;
+	const lines = ["**" + done + "/" + todos.length + "**\n"];
+	for (const t of todos) {
+		const mark =
+			t.status === "finished" ? "x" : t.status === "started" ? "~" : " ";
+		lines.push("- [" + mark + "] #" + t.id + " " + t.subject);
+	}
+	return lines.join("\n");
+}
+async function renderPlanDoc(container, tab) {
+	setSafeHtml(container, '<p class="um-hint">loading\u2026</p>');
+	let mdText;
+	if (tab.key === "todo") {
+		mdText = todosAsMarkdown();
+	} else {
+		const r = await fetch("/api/file?path=" + encodeURIComponent(tab.rel));
+		const j = await r.json();
+		if (!j || !j.ok) {
+			setSafeHtml(
+				container,
+				'<p class="um-err">\u26a0 ' +
+					esc((j && j.error) || "read failed") +
+					"</p>",
+			);
+			return;
+		}
+		mdText = j.content || "_(empty)_";
+	}
+	setSafeHtml(container, md(mdText));
+	highlightCode(container);
+}
+// phase stepper for the active tab's set: ● reached / ○ pending, current in accent.
+// Reinforces the workflow by making the next missing phase visible at a glance.
+function stepperHtml(art) {
+	if (!art) return "";
+	const key = (art.slug || "") + "|" + (art.date || "");
+	const s = planSets().find(
+		(x) => (x.slug || "") + "|" + (x.date || "") === key,
+	);
+	if (!s) return "";
+	const sum = setSummary(s);
+	const curRank = PHASE_RANK[sum.phase];
+	let html = '<div class="sdd-stepper">';
+	for (const ph of ["plan", "spec", "tasks", "verify"]) {
+		const reached = PHASE_RANK[ph] <= curRank;
+		const isCur = ph === sum.phase && !sum.finished;
+		html +=
+			'<span class="ss-step ' +
+			(reached ? "done " : "") +
+			(isCur ? "cur" : "") +
+			'">' +
+			(reached ? "●" : "○") +
+			" " +
+			ph +
+			"</span>";
+	}
+	return html + "</div>";
+}
+function openPlanViewer() {
+	const tabs = planDocTabs();
+	if (!tabs.length) return;
+	showModal(
+		'<h3>plan &amp; spec</h3><div class="doc-stepper"></div><div class="doc-tabs"></div><div class="doc-body"></div>',
+		true,
+	);
+	card.classList.add("wide");
+	const stepper = card.querySelector(".doc-stepper");
+	const strip = card.querySelector(".doc-tabs");
+	const body = card.querySelector(".doc-body");
+	let active = 0;
+	const paint = () => {
+		[...strip.children].forEach((b, i) =>
+			b.classList.toggle("active", i === active),
+		);
+		const t = tabs[active];
+		setSafeHtml(stepper, t && t.art ? stepperHtml(t.art) : "");
+		renderPlanDoc(body, t);
+	};
+	tabs.forEach((t, i) => {
+		const b = document.createElement("button");
+		b.className = "sx-tab";
+		b.type = "button";
+		b.textContent = t.label;
+		b.onclick = () => {
+			active = i;
+			paint();
+		};
+		strip.appendChild(b);
+	});
+	paint();
+}
+(function initPlanBadge() {
+	const b = document.getElementById("plan-badge");
+	if (b) b.addEventListener("click", openPlanViewer);
+	refreshPlanState();
+	// ponytail: the 30s poll is declared with the other timers below so it joins
+	// the visibilitychange pause/resume (idle-waste fix, c34fb6f family).
+})();
 
 // ---- ask_user_question: rich modal, answer flows back as the tool result ----
 // pi-webui extension shadows the npm tool (which auto-declines in RPC mode:
@@ -1135,7 +1882,7 @@ function askQuestion(args) {
 		const hasPreview =
 			!multi && opts.some((o) => o.preview && o.preview.length);
 
-		card.innerHTML = "";
+		setSafeHtml(card, "");
 		const form = document.createElement("div");
 		form.className = "qform";
 
@@ -1143,17 +1890,21 @@ function askQuestion(args) {
 		if (total > 1) {
 			const prog = document.createElement("div");
 			prog.className = "qprog";
-			prog.innerHTML =
+			setSafeHtml(
+				prog,
 				`<div class="qsteps">Step ${qi + 1} of ${total}</div>` +
-				`<div class="qbar"><i style="width:${((qi + 1) / total) * 100}%"></i></div>`;
+					`<div class="qbar"><i style="width:${((qi + 1) / total) * 100}%"></i></div>`,
+			);
 			form.appendChild(prog);
 		}
 
 		const blk = document.createElement("div");
 		blk.className = "qblk";
-		blk.innerHTML =
+		setSafeHtml(
+			blk,
 			(q.header ? `<span class="qchip">${esc(q.header)}</span>` : "") +
-			`<p class="qq">${esc(q.question)}</p>`;
+				`<p class="qq">${esc(q.question)}</p>`,
+		);
 
 		const body = document.createElement("div");
 		body.className = "qbody" + (hasPreview ? " split" : "");
@@ -1163,16 +1914,20 @@ function askQuestion(args) {
 		const optBtn = (o, lbl) => {
 			const b = document.createElement("button");
 			b.className = "qopt";
-			b.innerHTML =
+			setSafeHtml(
+				b,
 				`<span class="qlbl">${esc(lbl)}</span>` +
-				(o.description
-					? `<span class="qdesc">${esc(o.description)}</span>`
-					: "");
+					(o.description
+						? `<span class="qdesc">${esc(o.description)}</span>`
+						: ""),
+			);
 			return b;
 		};
 
 		if (multi) {
-			const chosen = new Set(Array.isArray(answers[qi]) ? answers[qi] : []);
+			const chosen = new Set(
+				Array.isArray(answers[qi]) ? answers[qi] : [],
+			);
 			opts.forEach((o) => {
 				const lbl = o.label;
 				const b = optBtn(o, lbl);
@@ -1193,7 +1948,10 @@ function askQuestion(args) {
 			});
 			const submit = document.createElement("button");
 			submit.className = "qopt qsubmit";
-			submit.innerHTML = `<span class="qlbl">Submit${chosen.size ? " (" + chosen.size + ")" : ""}</span>`;
+			setSafeHtml(
+				submit,
+				`<span class="qlbl">Submit${chosen.size ? " (" + chosen.size + ")" : ""}</span>`,
+			);
 			submit.onclick = () => choose(qi, [...chosen]);
 			list.appendChild(submit);
 		} else {
@@ -1210,7 +1968,10 @@ function askQuestion(args) {
 				inp.type = "text";
 				inp.placeholder = "Type something…";
 				const prev = answers[qi];
-				if (typeof prev === "string" && !opts.some((o) => o.label === prev))
+				if (
+					typeof prev === "string" &&
+					!opts.some((o) => o.label === prev)
+				)
 					inp.value = prev;
 				const ok = document.createElement("button");
 				ok.textContent = "Send";
@@ -1230,9 +1991,11 @@ function askQuestion(args) {
 			const pane = document.createElement("div");
 			pane.className = "qprev";
 			const show = (o) => {
-				pane.innerHTML =
+				setSafeHtml(
+					pane,
 					`<div class="qprev-h">preview</div>` +
-					`<pre class="qprev-b">${esc((o && o.preview) || "")}</pre>`;
+						`<pre class="qprev-b">${esc((o && o.preview) || "")}</pre>`,
+				);
 			};
 			show(opts.find((o) => o.preview && o.preview.length) || opts[0]);
 			list.querySelectorAll(".qopt").forEach((b, i) => {
@@ -1300,7 +2063,8 @@ function askQuestion(args) {
 				question: q.question,
 				kind: isOption ? "option" : "custom",
 				answer: a,
-				preview: isOption && opt && opt.preview ? opt.preview : undefined,
+				preview:
+					isOption && opt && opt.preview ? opt.preview : undefined,
 			};
 		});
 		api({
@@ -1356,7 +2120,12 @@ const RISK_RULES = [
 		"sql",
 		"destroys database data (DROP/TRUNCATE)",
 	],
-	[/\bmkfs(?:\.\w+)?\b/i, 3, "mkfs", "formats a filesystem -- erases the disk"],
+	[
+		/\bmkfs(?:\.\w+)?\b/i,
+		3,
+		"mkfs",
+		"formats a filesystem -- erases the disk",
+	],
 	[/\bdd\b[^|&;\n]*\bof=\/dev\//i, 3, "dd", "raw-writes to a block device"],
 	[
 		/\b(?:shutdown|reboot|halt|poweroff|init\s+0)\b/i,
@@ -1514,7 +2283,11 @@ function renderEditDiffPreviews(container) {
 			items.push({
 				label:
 					inp.edits.length > 1
-						? base + " \u00b7 edit " + (ei + 1) + "/" + inp.edits.length
+						? base +
+							" \u00b7 edit " +
+							(ei + 1) +
+							"/" +
+							inp.edits.length
 						: base,
 				build: (host) =>
 					mountSideBySide(
@@ -1531,9 +2304,16 @@ function renderEditDiffPreviews(container) {
 		items.push({
 			label: base + " \u00b7 write",
 			build: (host) =>
-				mountSideBySide(host, inp.path || "", null, inp.content || "", true, {
-					readOnly: true,
-				}),
+				mountSideBySide(
+					host,
+					inp.path || "",
+					null,
+					inp.content || "",
+					true,
+					{
+						readOnly: true,
+					},
+				),
 		});
 	}
 	if (!items.length) return null;
@@ -1555,6 +2335,7 @@ function renderEditDiffPreviews(container) {
 	wrap.appendChild(strip);
 	container.appendChild(wrap);
 	const panels = [];
+	const tabs = [];
 	items.forEach((it, i) => {
 		const tab = document.createElement("button");
 		tab.type = "button";
@@ -1569,6 +2350,7 @@ function renderEditDiffPreviews(container) {
 			panels.forEach((p, j) => p.classList.toggle("active", i === j));
 		};
 		strip.appendChild(tab);
+		tabs.push(tab);
 	});
 	items.forEach((it, i) => {
 		const panel = document.createElement("div");
@@ -1580,8 +2362,286 @@ function renderEditDiffPreviews(container) {
 		panels.push(panel);
 		it.build(host);
 	});
+	// ponytail: badge each tab with the hunk's real file line so far-apart
+	// edits are obvious at a glance. One fetch; per-panel gutters already
+	// show line numbers via mountSideBySide. Best-effort, never blocks.
+	if (isEdit && inp.path) {
+		fetch("/api/file?path=" + encodeURIComponent(inp.path))
+			.then((r) => r.json())
+			.then((j) => (j && j.ok && j.content != null ? j.content : null))
+			.then((content) => {
+				if (!content) return;
+				tabs.forEach((tab, i) => {
+					const e = inp.edits[i];
+					if (!e) return;
+					for (const needle of [e.oldText, e.newText]) {
+						if (!needle) continue;
+						const at = content.indexOf(needle);
+						if (at >= 0) {
+							const start = content
+								.slice(0, at)
+								.split("\n").length;
+							tab.textContent += " \u00b7 L" + start;
+							tab.title = tab.textContent;
+							break;
+						}
+					}
+				});
+			})
+			.catch(() => {});
+	}
 	return wrap;
 }
+async function diffInIde(req) {
+	const { id } = req;
+	try {
+		const payload = await buildDiffPayload();
+		const decision = await window.piWebuiOpenDiff(payload);
+		api({ type: "extension_ui_response", id, value: decision });
+	} catch (_e) {
+		toast("IDE diff unavailable — showing in webui", "warn");
+		openSelectModal(req);
+	}
+}
+
+// ponytail: left = current file via the existing /api/file endpoint (resolves
+// under PI_CWD); right = left with every edit hunk applied (first-occurrence
+// replace, like the edit tool), or the write content. Path resolution stays in
+// server.js — the plugin only renders left vs right.
+async function buildDiffPayload() {
+	const inp = curToolArgs || {};
+	const path = inp.path || "";
+	const filename = path.split(/[\\/]/).pop() || "change";
+	let leftText = "";
+	try {
+		const r = await fetch("/api/file?path=" + encodeURIComponent(path));
+		const j = await r.json();
+		if (j && j.ok && j.content != null) leftText = j.content;
+	} catch (_e) {
+		/* new / unreadable file → empty left */
+	}
+	let rightText = leftText;
+	const op = curToolName;
+	const edits = Array.isArray(inp.edits) ? inp.edits : [];
+	if (op === "edit")
+		for (const e of edits)
+			rightText = rightText.replace(e.oldText || "", e.newText || "");
+	else if (op === "write") rightText = inp.content || "";
+	// leftText/rightText are the fallback for paths not under the IDE project; the
+	// plugin prefers path+op+edits/content for a real, syntax-highlighted diff.
+	return {
+		filename,
+		path,
+		op,
+		edits,
+		content: inp.content || "",
+		leftText,
+		rightText,
+	};
+}
+
+// ponytail: the editable approval modal shows the WHOLE file otherwise. Window
+// to the hunks + context lines so you approve the actual change, not 500 lines.
+// Handles N hunks: one contiguous span from first-hunk-start to last-hunk-end
+// (forward-search each so non-unique oldTexts resolve in file order, matching
+// buildDiffPayload's sequential replace). old/new stay a matched old→new pair
+// that's an exact substring of the file (pi replaces it), so the safeguard
+// contract holds. Returns null (→ whole-file) when any oldText isn't found or
+// the span already covers the whole file. Write is never narrowed: safeguard
+// sets content=newFull, so newFull must be the entire file.
+const DIFF_CONTEXT_DEFAULT = 4;
+// read fresh each call (no mutable module state — GOTCHAS #8); the stepper
+// just writes localStorage then rebuild() re-reads it.
+function getDiffCtx() {
+	const n = parseInt(localStorage.getItem("pi:diffCtx"), 10);
+	return Number.isFinite(n)
+		? Math.max(0, Math.min(80, n))
+		: DIFF_CONTEXT_DEFAULT;
+}
+function narrowEditRegions(fileText, edits, ctx) {
+	if (!fileText || !edits || !edits.length) return null;
+	const fileLines = fileText.split("\n");
+	let cursor = 0;
+	const spans = [];
+	for (const e of edits) {
+		const oldT = e.oldText || "";
+		if (!oldT) return null;
+		const idx = fileText.indexOf(oldT, cursor); // forward search → file order
+		if (idx < 0) return null;
+		const startLine = fileText.slice(0, idx).split("\n").length - 1;
+		spans.push([startLine, startLine + oldT.split("\n").length]);
+		cursor = idx + oldT.length;
+	}
+	const a = Math.max(0, Math.min(...spans.map((s) => s[0])) - ctx);
+	const b = Math.min(
+		fileLines.length,
+		Math.max(...spans.map((s) => s[1])) + ctx,
+	);
+	if (b - a >= fileLines.length) return null; // span already covers whole file
+	const oldWin = fileLines.slice(a, b).join("\n");
+	let newWin = oldWin;
+	for (const e of edits) {
+		if (!newWin.includes(e.oldText)) return null;
+		newWin = newWin.replace(e.oldText, e.newText || "");
+	}
+	return { old: oldWin, new: newWin };
+}
+
+// Editable side-by-side for the standalone approval modal: left = current file
+// (read-only), right = pi's proposal (editable <textarea>). Returns a getter
+// (label) => label | {label, oldFull, newFull} so the button handler ships the
+// edit back over the SAME extension_ui_response channel safeguard reads —
+// safeguard mutates pi's event.input from oldFull/newFull, so pi applies the
+// user's edited version (context stays consistent).
+function mountEditableDiff(container, oldText, newText, path) {
+	// reuse the highlighted, diff-colored side-by-side (left read-only, right
+	// editable); capture mode drops the Apply button + disk write so the
+	// approval buttons below capture the edited text instead.
+	const host = document.createElement("div");
+	host.className = "sx-host";
+	container.classList.add("wide");
+	container.querySelector(".opts").before(host);
+	mountSideBySide(host, path || "", oldText, newText, false, {
+		capture: true,
+	});
+	const ta = host.querySelector(".sx-ta");
+	return (label) => {
+		const edited = ta.value;
+		return edited === newText
+			? label
+			: { label, oldFull: oldText, newFull: edited };
+	};
+}
+
+// ponytail: −/N/+ stepper in the new-column header to tune context lines
+// around the hunks. Persisted (pi:diffCtx). Only mounted for edits (write
+// can't narrow — its newFull must be the whole content). rebuild re-mounts the
+// textarea, so set context BEFORE tweaking the proposal (a change drops
+// in-flight edits).
+function installCtxStepper(card, enabled, rebuild) {
+	const hdr = card.querySelector(".sx-new .sx-hdr");
+	if (!hdr || !enabled || hdr.querySelector(".sx-ctx")) return;
+	const wrap = document.createElement("span");
+	wrap.className = "sx-ctx";
+	wrap.title = "context lines around the change";
+	const dec = document.createElement("button");
+	dec.type = "button";
+	dec.className = "sx-ctx-btn";
+	dec.textContent = "\u2212";
+	const num = document.createElement("span");
+	num.className = "sx-ctx-n";
+	num.textContent = String(getDiffCtx());
+	const inc = document.createElement("button");
+	inc.type = "button";
+	inc.className = "sx-ctx-btn";
+	inc.textContent = "+";
+	const apply = (v) => {
+		localStorage.setItem(
+			"pi:diffCtx",
+			String(Math.max(0, Math.min(80, v))),
+		);
+		rebuild();
+	};
+	dec.onclick = () => apply(getDiffCtx() - 1);
+	inc.onclick = () => apply(getDiffCtx() + 1);
+	wrap.append(dec, num, inc);
+	hdr.append(wrap);
+}
+
+// The webui permission modal, factored out so the IDE-diff path can fall back
+// to it. For edit/write it renders an EDITABLE side-by-side so the user can
+// tweak pi's proposal before approving; other tools get the read-only preview.
+async function openSelectModal(req) {
+	const { id } = req;
+	const opts = (req.options || []).map((o) =>
+		typeof o === "string" ? { label: o } : o,
+	);
+	const labels = opts.map((o) => (o.label || "").toLowerCase());
+	const isPermission =
+		labels.some((l) =>
+			/\b(allow|permit|approve|yes|run|execute|trust|continue)\b/.test(l),
+		) &&
+		labels.some((l) =>
+			/\b(block|deny|cancel|no|stop|reject|skip|abort)\b/.test(l),
+		);
+	let bodyHtml = "";
+	let maxSev = 0;
+	if (isPermission) {
+		const body = buildPermissionBody(req.title, req.message);
+		bodyHtml = body.html;
+		maxSev = body.maxSev;
+	}
+	showModal(
+		`<h3>${esc(req.title || "Choose")}</h3>${bodyHtml}<div class='opts'></div>`,
+	);
+	const isEditWrite = curToolName === "edit" || curToolName === "write";
+	let editedValue = null; // (label) => label | {label, oldFull, newFull}
+	if (isEditWrite) {
+		const payload = await buildDiffPayload();
+		// ponytail: build (and rebuild, on context-stepper change) the narrowed
+		// editable diff. Reuses the one fetched payload (file unchanged) — just
+		// re-windows. Re-mounting recreates the textarea, so set context BEFORE
+		// tweaking the proposal (a change drops in-flight edits). Write is never
+		// narrowed (newFull must be the whole content).
+		const buildDiff = () => {
+			let oldT = payload.leftText;
+			let newT = payload.rightText;
+			if (
+				payload.op === "edit" &&
+				Array.isArray(payload.edits) &&
+				payload.edits.length
+			) {
+				const nr = narrowEditRegions(
+					payload.leftText,
+					payload.edits,
+					getDiffCtx(),
+				);
+				if (nr) {
+					oldT = nr.old;
+					newT = nr.new;
+				}
+			}
+			const prev = card.querySelector(".sx-host");
+			if (prev) prev.remove();
+			editedValue = mountEditableDiff(card, oldT, newT, payload.path);
+			installCtxStepper(card, payload.op === "edit", buildDiff);
+		};
+		buildDiff();
+	} else {
+		const stack = renderEditDiffPreviews(card);
+		if (stack) {
+			card.classList.add("wide");
+			card.querySelector(".opts").before(stack);
+		}
+	}
+	const list = card.querySelector(".opts");
+	opts.forEach((o) => {
+		const b = document.createElement("button");
+		const val = o.label;
+		const desc = o.description;
+		setSafeHtml(
+			b,
+			esc(val) + (desc ? `<span class='desc'>${esc(desc)}</span>` : ""),
+		);
+		if (
+			maxSev >= 3 &&
+			/\b(allow|permit|approve|yes|run|execute|continue)\b/.test(
+				(val || "").toLowerCase(),
+			)
+		)
+			b.className = "danger";
+		b.onclick = () => {
+			hideModal();
+			api({
+				type: "extension_ui_response",
+				id,
+				value: editedValue ? editedValue(val) : val,
+			});
+		};
+		list.appendChild(b);
+	});
+}
+
 function uiRequest(req) {
 	const { id, method } = req;
 	// ponytail: ask_user_question latch. input(MARKER) arrives AFTER the user
@@ -1637,7 +2697,10 @@ function uiRequest(req) {
 		if (!Array.isArray(lines) || lines.length === 0) {
 			widget.style.display = "none";
 		} else {
-			widget.innerHTML = `<div class="whead">${esc(req.widgetKey || "widget")}</div>${esc(lines.join("\n"))}`;
+			setSafeHtml(
+				widget,
+				`<div class="whead">${esc(req.widgetKey || "widget")}</div>${esc(lines.join("\n"))}`,
+			);
 			widget.style.display = "block";
 		}
 		return;
@@ -1645,55 +2708,20 @@ function uiRequest(req) {
 
 	// dialog methods
 	if (method === "select") {
-		const opts = (req.options || []).map((o) =>
-			typeof o === "string" ? { label: o } : o,
-		);
-		// detect a permission-style prompt (Allow/Block, Yes/No) so we can show
-		// the risk banner for the command in question.
-		const labels = opts.map((o) => (o.label || "").toLowerCase());
-		const isPermission =
-			labels.some((l) =>
-				/\b(allow|permit|approve|yes|run|execute|trust|continue)\b/.test(l),
-			) &&
-			labels.some((l) =>
-				/\b(block|deny|cancel|no|stop|reject|skip|abort)\b/.test(l),
-			);
-		let bodyHtml = "";
-		let maxSev = 0;
-		if (isPermission) {
-			const body = buildPermissionBody(req.title, req.message);
-			bodyHtml = body.html;
-			maxSev = body.maxSev;
+		// ponytail: when the JetBrains plugin hosts this page it injects
+		// window.piWebuiOpenDiff — route edit/write approvals to the IDE's native
+		// diff dialog as the gate. The decision comes back over the SAME
+		// extension_ui_response channel with safeguard's option labels, so
+		// safeguard.ts (the security gate) is unchanged. Falls back to the modal
+		// if the bridge is absent or rejects.
+		if (
+			(curToolName === "edit" || curToolName === "write") &&
+			typeof window.piWebuiOpenDiff === "function"
+		) {
+			void diffInIde(req);
+			return;
 		}
-		showModal(
-			`<h3>${esc(req.title || "Choose")}</h3>${bodyHtml}<div class='opts'></div>`,
-		);
-		const stack = renderEditDiffPreviews(card);
-		if (stack) {
-			card.classList.add("wide");
-			card.querySelector(".opts").before(stack);
-		}
-		const list = card.querySelector(".opts");
-		opts.forEach((o) => {
-			const b = document.createElement("button");
-			const val = o.label;
-			const desc = o.description;
-			b.innerHTML =
-				esc(val) + (desc ? `<span class='desc'>${esc(desc)}</span>` : "");
-			// tint the approve option red on high-risk prompts
-			if (
-				maxSev >= 3 &&
-				/\b(allow|permit|approve|yes|run|execute|continue)\b/.test(
-					(val || "").toLowerCase(),
-				)
-			)
-				b.className = "danger";
-			b.onclick = () => {
-				hideModal();
-				api({ type: "extension_ui_response", id, value: val });
-			};
-			list.appendChild(b);
-		});
+		openSelectModal(req);
 	} else if (method === "confirm") {
 		const body = buildPermissionBody(req.title, req.message);
 		showModal(`<h3>${esc(req.title || "Confirm")}</h3>${body.html}`);
@@ -1785,24 +2813,11 @@ function renderMessage(msg) {
 				.join("\n");
 		addUser(txt);
 	} else if (msg.role === "assistant") {
-		newAssistantBubble();
-		for (const b of msg.content || []) {
-			if (b.type === "text") {
-				cur.textBuf = b.text;
-				ensureTextPar();
-				renderText();
-				cur.textPar = null;
-				cur.textBuf = "";
-			} else if (b.type === "thinking") {
-				cur.thinkBuf = b.thinking || "";
-				ensureThink(false);
-				renderThink(true);
-				cur.thinkDetails = null;
-				cur.thinkLabel = null;
-				cur.thinkCount = null;
-				cur.thinkEl = null;
-				cur.thinkBuf = "";
-			}
+		// suppress empty assistant messages (tool-only / blank) — parity with the
+		// live path's finalizeBubble, which also drops them. No bubble = no label.
+		if (nonEmptyContent(msg.content).length) {
+			newAssistantBubble();
+			renderAssistantContent(msg.content);
 		}
 		cur = null;
 	} else if (msg.role === "toolResult") {
@@ -1822,7 +2837,10 @@ function renderMessage(msg) {
 	} else if (msg.role === "bashExecution") {
 		const el = document.createElement("details");
 		el.className = "tool done";
-		el.innerHTML = `<summary class="head"><span class="trow"><span class="caret">▸</span><span class="name">bash</span></span><code>${esc(msg.command || "")}</code></summary><div class="out">${esc(msg.output || "")}</div>`;
+		setSafeHtml(
+			el,
+			`<summary class="head"><span class="trow"><span class="caret">▸</span><span class="name">bash</span></span><code>${esc(msg.command || "")}</code></summary><div class="out">${esc(msg.output || "")}</div>`,
+		);
 		transcript.appendChild(el);
 	}
 }
@@ -1833,6 +2851,7 @@ function setStreaming(on) {
 	dot.classList.toggle("live", on);
 	stopBtn.disabled = !on;
 	if (!on) cur = null;
+	rescheduleStats(); // ponytail: poll stats fast while producing, slow while idle
 }
 // ponytail: compaction state -- disables the Compact button and drives the
 // activity bar while the context is being summarized, whether the trigger
@@ -1854,23 +2873,40 @@ function handle(payload) {
 			curToolArgs = null;
 			break;
 		case "agent_end":
+			// safety net: render if message_end never fired (broken stream).
+			// finalizeBubble drops an empty bubble, so this can't leave a stray label.
+			// setStreaming(false) below then nulls cur.
+			if (cur) finalizeBubble();
 			setStreaming(false);
 			setActivity("ready", false);
 			break;
 
 		case "message_start":
-			if (payload.message && payload.message.role === "assistant")
-				cur = newAssistantBubble();
-			else if (payload.message && payload.message.role === "user") {
-				/* server echoes? skip */
-			}
+			// ponytail: do NOT create the bubble eagerly. A turn that goes straight to
+			// tool calls (or ends empty) would leave a bare "assistant" label.
+			// Creation is lazy: message_update only builds one when real text/thinking
+			// arrives (the !cur guard there). User-role echoes are ignored too.
 			break;
 		case "message_end":
-			// finalize current text/think buffers
+			// authoritative render: payload.message is pi's final, server-assembled
+			// AssistantMessage — identical to what get_messages returns (reload).
+			// Render from IT, not the browser-re-accumulated deltas (lossy in the SSE
+			// transport): live and reload now read the same bytes and can't diverge.
+			// The live thinking <details> is swapped for a finalized one here too
+			// (collapsed by default → invisible).
 			if (cur) {
-				commitText(); // safety paint in case text_end didn't fire
-				renderThink(true);
-				finalizeThink();
+				finalizeBubble(
+					payload.message && Array.isArray(payload.message.content)
+						? payload.message.content
+						: null,
+				);
+				// ponytail: count toward the "↓ N new" pill if the user scrolled away.
+				// cur only exists when text/thinking streamed, so tool-only turns whose
+				// bubble was dropped aren't mis-counted.
+				if (!pinned) {
+					unread++;
+					refreshJump();
+				}
 			}
 			cur = null;
 			break;
@@ -1887,38 +2923,55 @@ function handle(payload) {
 			)
 				cur = newAssistantBubble();
 			if (e.type === "text_start") {
-				// ponytail: a message can carry SEVERAL text blocks (text → thinking
-				// → text). Drop the previous block's paragraph so this one gets its
-				// own — without this, a later block overwrites the earlier one's
-				// committed node in place and its words vanish until a reload
-				// (reload's renderMessage already resets per block).
-				if (cur.textPar) cur.textPar = null;
-				cur.textBuf = "";
+				// ponytail: text streams live again (markdown-it tolerates partial
+				// input; message_end does the AUTHORITATIVE render from
+				// payload.message.content via finalizeBubble, so a transiently-wrong
+				// live token self-corrects — see gotcha #13). cur._blk survives a
+				// missing text_end.
+				cur._blk = { type: "text", text: "" };
+				cur.content.push(cur._blk);
 				setActivity("writing…", true);
 			} else if (e.type === "text_delta") {
-				cur.textBuf += e.delta || "";
-				// deferred render: assistant text paints only once fully received
-				// (text_end / message_end). The thinking block still streams live.
+				if (!cur._blk || cur._blk.type !== "text") {
+					cur._blk = { type: "text", text: "" };
+					cur.content.push(cur._blk);
+				}
+				cur._blk.text += e.delta || "";
+				// mirror to cur.textBuf + paint per rAF (scheduleRender→renderText).
+				cur.textBuf = cur._blk.text;
+				ensureTextPar();
+				scheduleRender();
 			} else if (e.type === "text_end") {
-				if (e.content != null) cur.textBuf = e.content;
-				commitText();
+				if (cur._blk && cur._blk.type === "text" && e.content != null)
+					cur._blk.text = e.content;
+				cur._blk = null;
 			} else if (e.type === "thinking_start") {
-				// multiple thinking blocks: each gets its own <details> (same
-				// multi-block fix as text_start — don't overwrite a finalized one).
+				// multiple thinking blocks: each gets its own live <details>.
 				if (cur.thinkEl) {
 					cur.thinkEl = null;
 					cur.thinkDetails = null;
 					cur.thinkLabel = null;
 					cur.thinkCount = null;
 				}
+				cur._blk = { type: "thinking", thinking: "" };
+				cur.content.push(cur._blk);
 				ensureThink(true);
 				cur.thinkBuf = "";
 				setActivity("thinking…", true);
 			} else if (e.type === "thinking_delta") {
 				ensureThink(true);
 				cur.thinkBuf += e.delta || "";
+				if (cur._blk && cur._blk.type === "thinking")
+					cur._blk.thinking += e.delta || "";
 				scheduleRender();
 			} else if (e.type === "thinking_end") {
+				if (
+					cur._blk &&
+					cur._blk.type === "thinking" &&
+					e.content != null
+				)
+					cur._blk.thinking = e.content;
+				cur._blk = null;
 				if (e.content != null) {
 					ensureThink(true);
 					cur.thinkBuf = e.content;
@@ -1934,6 +2987,17 @@ function handle(payload) {
 
 		case "tool_execution_start": {
 			toolBlock(payload.toolCallId, payload.toolName, payload.args, true);
+			// subagent: show the agent/mode + an empty live view immediately, so the
+			// box reads as "running scout (lookup)" before the first update lands.
+			if (payload.toolName === "subagent") {
+				var w = toolBlocks.get(payload.toolCallId);
+				if (w)
+					renderSubagentView(
+						w.out,
+						{ mode: "single", results: [] },
+						subagentDensity,
+					);
+			}
 			// record the current tool for the permission-modal diff — fires right
 			// before THIS tool's safeguard select, so it's always the right one.
 			curToolName = payload.toolName || null;
@@ -1954,13 +3018,24 @@ function handle(payload) {
 		}
 		case "tool_execution_update": {
 			const w = toolBlocks.get(payload.toolCallId);
-			if (w && payload.partialResult) {
-				const t = (payload.partialResult.content || [])
-					.filter((b) => b.type === "text")
-					.map((b) => b.text)
-					.join("\n");
-				w.out.textContent = t;
-			}
+			if (!w || !payload.partialResult) break;
+			// subagent: render the live details (child tool calls, parallel/chain
+			// progress, per-result status). The generic text path below still fills
+			// in the final "(running…)" / partial text as a fallback.
+			if (
+				payload.toolName === "subagent" &&
+				payload.partialResult.details
+			)
+				renderSubagentView(
+					w.out,
+					payload.partialResult.details,
+					subagentDensity,
+				);
+			const t = (payload.partialResult.content || [])
+				.filter((b) => b.type === "text")
+				.map((b) => b.text)
+				.join("\n");
+			if (payload.toolName !== "subagent") w.out.textContent = t;
 			break;
 		}
 		case "tool_execution_end": {
@@ -1975,53 +3050,124 @@ function handle(payload) {
 					.map((b) => b.text)
 					.join("\n");
 				if (
-					(payload.toolName === "edit" || payload.toolName === "write") &&
+					(payload.toolName === "edit" ||
+						payload.toolName === "write") &&
 					w.args &&
 					!payload.isError
 				) {
 					// rich side-by-side diff; the new pane is editable + applyable
 					w.el.classList.add("hasdiff");
 					w.el.open = true;
-					w.out.innerHTML = "";
-					const ea = w.args;
+					setSafeHtml(w.out, "");
+					var ea = w.args;
 					if (
 						payload.toolName === "edit" &&
 						Array.isArray(ea.edits) &&
 						ea.edits.length
 					) {
+						// ponytail: one /api/file fetch for the whole edit call, reused
+						// to badge each hunk with its real file line (far-apart edits
+						// become obvious) and seed the diff gutters without a per-hunk
+						// refetch. Misses fall back to the 1-based default.
+						const ePath = ea.path || "";
+						const fileP = ePath
+							? fetch(
+									"/api/file?path=" +
+										encodeURIComponent(ePath),
+								)
+									.then((r) => r.json())
+									.then((j) =>
+										j && j.ok && j.content != null
+											? j.content
+											: null,
+									)
+									.catch(() => null)
+							: Promise.resolve(null);
 						ea.edits.forEach((e, idx) => {
-							if (ea.edits.length > 1) {
-								const dh = document.createElement("div");
+							const multi = ea.edits.length > 1;
+							var dh = null;
+							if (multi) {
+								dh = document.createElement("div");
 								dh.className = "dhunk";
 								dh.textContent = `edit ${idx + 1}/${ea.edits.length}`;
 								w.out.appendChild(dh);
 							}
-							const host = document.createElement("div");
+							var host = document.createElement("div");
 							host.className = "sx-host";
 							w.out.appendChild(host);
-							mountSideBySide(
-								host,
-								ea.path || "",
-								e.oldText || "",
-								e.newText || "",
-								false,
-							);
+							fileP.then((content) => {
+								let start = null;
+								if (content) {
+									for (const needle of [
+										e.oldText,
+										e.newText,
+									]) {
+										if (!needle) continue;
+										const at = content.indexOf(needle);
+										if (at >= 0) {
+											start = content
+												.slice(0, at)
+												.split("\n").length;
+											break;
+										}
+									}
+								}
+								if (dh && start)
+									dh.textContent = `edit ${idx + 1}/${ea.edits.length} \u00b7 L${start}`;
+								mountSideBySide(
+									host,
+									ePath,
+									e.oldText || "",
+									e.newText || "",
+									false,
+									{
+										startLine: start,
+									},
+								);
+							});
 						});
 					} else if (payload.toolName === "write") {
-						const host = document.createElement("div");
+						var host = document.createElement("div");
 						host.className = "sx-host";
 						w.out.appendChild(host);
-						mountSideBySide(host, ea.path || "", null, ea.content || "", true);
+						mountSideBySide(
+							host,
+							ea.path || "",
+							null,
+							ea.content || "",
+							true,
+						);
 					}
 					if (t) {
-						const rt = document.createElement("div");
+						var rt = document.createElement("div");
 						rt.className = "sx-restext";
 						rt.textContent = t;
 						w.out.appendChild(rt);
 					}
 				} else {
-					w.out.textContent = t;
-					if (t.length > 500) w.el.open = false;
+					// subagent: render the final details (per-task status + usage). The
+					// text `t` is the parent-facing summary (already in details for
+					// single/parallel); show it as a footnote below the live view.
+					if (
+						payload.toolName === "subagent" &&
+						payload.result &&
+						payload.result.details
+					) {
+						renderSubagentView(
+							w.out,
+							payload.result.details,
+							subagentDensity,
+						);
+						if (t) {
+							var rt = document.createElement("div");
+							rt.className = "sa-foot";
+							rt.textContent = t;
+							w.out.appendChild(rt);
+						}
+					} else {
+						w.out.textContent = t;
+						if (t.length > 500) w.el.open = false;
+					}
 				}
 			}
 			// clear the per-tool snapshot now that this tool is done — prevents a
@@ -2072,8 +3218,10 @@ function handle(payload) {
 				r.result.estimatedTokensAfter != null &&
 				r.result.tokensBefore > 0
 			) {
-				const pct = Math.round(
-					(1 - r.result.estimatedTokensAfter / r.result.tokensBefore) * 100,
+				var pct = Math.round(
+					(1 -
+						r.result.estimatedTokensAfter / r.result.tokensBefore) *
+						100,
 				);
 				note(
 					`compacted: ${fmt(r.result.tokensBefore)} → ${fmt(r.result.estimatedTokensAfter)} tokens (−${pct}%${r.reason === "overflow" ? ", retrying" : ""})`,
@@ -2100,17 +3248,27 @@ function handle(payload) {
 	}
 }
 
-const sb = ["repo", "git", "model", "ctx", "cache", "tok", "cost"].reduce(
-	(o, k) => ((o[k] = $("sb-" + k)), o),
-	{},
-);
+const sb = [
+	"repo",
+	"git",
+	"model",
+	"think",
+	"ctx",
+	"cache",
+	"tok",
+	"cost",
+].reduce((o, k) => ((o[k] = $("sb-" + k)), o), {});
 function refreshSbModel() {
-	sb.model.textContent = (modelSel.selectedOptions[0] || {}).textContent || "…";
+	sb.model.textContent =
+		(modelSel.selectedOptions[0] || {}).textContent || "…";
+}
+function refreshSbThink() {
+	sb.think.textContent = thinkSel.value || "—";
 }
 // ponytail: header dropdowns for thinking level (set_thinking_level RPC) and
 // ponytail mode (/ponytail extension command). Both sync from pi on load;
-// the statusbar "think" readout is gone — the select is the single source.
-["off", "minimal", "low", "medium", "high", "xhigh"].forEach((l) =>
+// the statusbar think readout mirrors the select (refreshSbThink).
+["off", "minimal", "low", "medium", "high", "xhigh", "max"].forEach((l) =>
 	thinkSel.add(new Option("think: " + l, l)),
 );
 ["off", "lite", "full", "ultra"].forEach((m) =>
@@ -2118,16 +3276,21 @@ function refreshSbModel() {
 );
 function setThinkSel(level) {
 	if (level) thinkSel.value = level;
+	refreshSbThink();
 }
-thinkSel.onchange = () =>
+thinkSel.onchange = () => {
 	api({ type: "set_thinking_level", level: thinkSel.value });
+	refreshSbThink();
+};
 ponySel.onchange = () =>
 	api({ type: "prompt", message: "/ponytail " + ponySel.value });
 async function refreshPonytailMode(sessionFile) {
 	try {
 		const m = await fetch(
 			"/api/ponytail-mode" +
-				(sessionFile ? "?session=" + encodeURIComponent(sessionFile) : ""),
+				(sessionFile
+					? "?session=" + encodeURIComponent(sessionFile)
+					: ""),
 		).then((r) => r.json());
 		if (m && m.ok && m.mode) ponySel.value = m.mode;
 	} catch {}
@@ -2146,15 +3309,44 @@ function refreshHealth() {
 		.then((h) => {
 			if (!h) return;
 			if (h.cwd) sb.repo.textContent = h.cwd;
-			sb.git.textContent = h.git
-				? `${h.git.branch}${h.git.changes ? ` (${h.git.changes}Δ)` : ""}`
-				: "—";
+			if (h.git) {
+				const parts = [];
+				if (h.git.staged) parts.push(`+${h.git.staged}`);
+				if (h.git.unstaged) parts.push(`~${h.git.unstaged}`);
+				if (h.git.untracked) parts.push(`?${h.git.untracked}`);
+				sb.git.textContent = parts.length
+					? `${h.git.branch} ${parts.join(" ")}`
+					: h.git.branch;
+				sb.git.title = "+ staged  ~ unstaged  ? untracked";
+			} else {
+				sb.git.textContent = "—";
+			}
 		})
 		.catch(() => {});
 }
 function refreshStats() {
 	api({ type: "get_session_stats", id: "sb-stats" });
 }
+// IDE-connection badge: the JetBrains plugin injects window.piWebuiIdeInfo on
+// load and calls window.piWebuiIdeStatus(info) once we register it. Falls to
+// "none" when the page isn't IDE-hosted (standalone browser tab).
+function updateIdeBadge(info) {
+	const el = document.getElementById("sb-ide");
+	if (!el) return;
+	if (info && info.name) {
+		el.textContent = info.name;
+		el.title = info.version ? info.name + " " + info.version : info.name;
+		el.classList.add("on");
+		el.classList.remove("off");
+	} else {
+		el.textContent = "none";
+		el.title = "no IDE hosting this panel (standalone)";
+		el.classList.add("off");
+		el.classList.remove("on");
+	}
+}
+window.piWebuiIdeStatus = updateIdeBadge;
+updateIdeBadge(window.piWebuiIdeInfo || null);
 // ---- SSE ----
 const es = new EventSource("/api/events");
 es.onopen = () => {
@@ -2179,21 +3371,35 @@ es.onopen = () => {
 };
 // ponytail: pause stat/health/usage polling while the tab is backgrounded — avoids
 // burning requests every 3s/6s/60s on an unseen window. Re-sync on return.
-let statsTimer = setInterval(refreshStats, 3000);
+// stats cadence is streaming-aware: 3s while an agent turn is active (the token/
+// cost bar tracks live), 15s idle (cheap drift correction instead of ~20 idle
+// RPC round-trips/min pinging pi for get_session_stats). rescheduleStats() flips
+// the cadence on each setStreaming.
+const STATS_FAST = 3000,
+	STATS_IDLE = 15000;
+let statsTimer = setInterval(refreshStats, STATS_IDLE);
 let healthTimer = setInterval(refreshHealth, 6000);
 let usageTimer = setInterval(refreshUsageBar, 60000);
+let planTimer = setInterval(refreshPlanState, 30000);
+function rescheduleStats() {
+	clearInterval(statsTimer);
+	statsTimer = setInterval(refreshStats, streaming ? STATS_FAST : STATS_IDLE);
+}
 document.addEventListener("visibilitychange", () => {
 	if (document.hidden) {
 		clearInterval(statsTimer);
 		clearInterval(healthTimer);
 		clearInterval(usageTimer);
+		clearInterval(planTimer);
 	} else {
 		refreshStats();
 		refreshHealth();
 		refreshUsageBar();
-		statsTimer = setInterval(refreshStats, 3000);
+		refreshPlanState();
+		rescheduleStats();
 		healthTimer = setInterval(refreshHealth, 6000);
 		usageTimer = setInterval(refreshUsageBar, 60000);
+		planTimer = setInterval(refreshPlanState, 30000);
 	}
 });
 es.onmessage = (ev) => {
@@ -2208,7 +3414,8 @@ es.onmessage = (ev) => {
 		// intercept init responses to populate UI
 		if (p.type === "response" && p.success) {
 			if (p.id === "init-state" && p.data) {
-				if (p.data.thinkingLevel != null) setThinkSel(p.data.thinkingLevel);
+				if (p.data.thinkingLevel != null)
+					setThinkSel(p.data.thinkingLevel);
 				if (p.data.isStreaming != null && p.data.isStreaming) {
 					setStreaming(true);
 					setActivity("working…", true);
@@ -2217,10 +3424,10 @@ es.onmessage = (ev) => {
 					setCompacting(true);
 					setActivity("compacting context…", true);
 				}
-				const mid = modelIdOf(p.data.model);
-				if (mid) {
-					currentModelId = mid;
+				if (setCurrentModel(p.data.model)) {
 					applyCurrentModel();
+					refreshUsageBar();
+					refreshStats();
 				}
 				curSessionFile = p.data.sessionFile || null;
 				refreshPonytailMode(p.data.sessionFile);
@@ -2229,7 +3436,7 @@ es.onmessage = (ev) => {
 				p.data &&
 				Array.isArray(p.data.messages)
 			) {
-				transcript.innerHTML = "";
+				setSafeHtml(transcript, "");
 				toolBlocks.clear();
 				p.data.messages.forEach(renderMessage);
 				scrollDown();
@@ -2247,8 +3454,22 @@ es.onmessage = (ev) => {
 				populateModels(p.data.models);
 			} else if (p.id === "sb-stats" && p.data) {
 				const t = p.data.tokens || {};
+				if (usageViewKind(currentProvider) === "session") {
+					sessionUsage = t;
+					refreshUsageBar();
+				}
 				sb.tok.textContent = `${fmt(t.input)}↓ ${fmt(t.output)}↑`;
-				sb.cache.textContent = `${fmt(t.cacheRead)}↓ ${fmt(t.cacheWrite)}↑`;
+				// cache hit rate = cacheRead / total input. pi's `input` is the NON-cached
+				// portion only (Anthropic convention), so total = input + cacheRead —
+				// dividing by `input` alone yielded >100% values (saw 542%). Always ≤100%.
+				const inp = t.input || 0;
+				const total = inp + (t.cacheRead || 0);
+				const hit = total
+					? Math.round(((t.cacheRead || 0) / total) * 100)
+					: null;
+				sb.cache.textContent = `${fmt(t.cacheRead)}↓ ${fmt(t.cacheWrite)}↑${hit != null ? ` ${hit}%` : ""}`;
+				sb.cache.title =
+					"cache: read↓ (from cache) / write↑ (newly created); % = reads ÷ (reads + fresh input)";
 				sb.cost.textContent =
 					p.data.cost != null ? p.data.cost.toFixed(3) : "…";
 				const cu = p.data.contextUsage;
@@ -2257,13 +3478,14 @@ es.onmessage = (ev) => {
 						? `${cu.percent.toFixed(0)}% (${fmt(cu.tokens)}/${fmt(cu.contextWindow)})`
 						: "—";
 			} else if (p.command === "set_model" && p.data) {
-				const mid = modelIdOf(p.data);
-				if (mid) {
-					currentModelId = mid;
-					localStorage.setItem("pi:model", mid);
+				if (setCurrentModel(p.data)) {
+					localStorage.setItem("pi:model", currentModelId);
+					refreshUsageBar();
+					refreshStats();
 				}
 			} else if (
-				(p.command === "switch_session" || p.command === "new_session") &&
+				(p.command === "switch_session" ||
+					p.command === "new_session") &&
 				(!p.data || !p.data.cancelled)
 			) {
 				// session replaced (resume / new) — re-render history + state for the now-active session
@@ -2276,7 +3498,10 @@ es.onmessage = (ev) => {
 		} else {
 			if (p.type === "thinking_level_changed" && p.level != null)
 				setThinkSel(p.level);
-			else if (p.type === "agent_end" || p.type === "session_info_changed")
+			else if (
+				p.type === "agent_end" ||
+				p.type === "session_info_changed"
+			)
 				refreshStats();
 			handle(p);
 		}
@@ -2296,10 +3521,19 @@ es.onerror = () => {
 // ponytail: get_available_models returns no current id, so reconcile from
 // get_state.model (truth) + a localStorage hint for the very first load.
 let currentModelId = null;
+let currentProvider = null;
 let curSessionFile = null; // active session file (get_state) — highlights the current row in the sessions list
 const savedModelId = localStorage.getItem("pi:model");
 function modelIdOf(m) {
 	return m && m.provider && m.id ? m.provider + "/" + m.id : null;
+}
+function setCurrentModel(m) {
+	const id = modelIdOf(m);
+	if (!id) return false;
+	if (currentProvider !== m.provider) sessionUsage = null;
+	currentModelId = id;
+	currentProvider = m.provider;
+	return true;
 }
 function applyCurrentModel() {
 	const id = currentModelId || savedModelId;
@@ -2320,33 +3554,146 @@ function applyCurrentModel() {
 	refreshSbModel();
 }
 function populateModels(models) {
-	modelSel.innerHTML = "";
-	if (!models.length) {
+	availableModels = Array.isArray(models) ? models : [];
+	setSafeHtml(modelSel, "");
+	if (!availableModels.length) {
 		const o = document.createElement("option");
 		o.textContent = "no models";
 		modelSel.appendChild(o);
 		return;
 	}
-	models.forEach((m) => {
+	availableModels.forEach((m) => {
 		const o = document.createElement("option");
 		o.value = JSON.stringify({ provider: m.provider, modelId: m.id });
 		o.textContent = (m.name || m.id) + " · " + m.provider;
 		modelSel.appendChild(o);
 	});
 	applyCurrentModel();
+	populateTierSelects();
 }
 modelSel.onchange = () => {
 	refreshSbModel();
 	try {
 		const v = JSON.parse(modelSel.value);
 		currentModelId = v.provider + "/" + v.modelId;
+		if (currentProvider !== v.provider) sessionUsage = null;
+		currentProvider = v.provider;
 		localStorage.setItem("pi:model", currentModelId);
+		refreshUsageBar();
+		refreshStats();
 		api({ type: "set_model", provider: v.provider, modelId: v.modelId });
 	} catch {}
 };
 $("models-btn").onclick = () =>
 	api({ type: "get_available_models", id: "init-models" });
-$("usage-btn").onclick = showUsage;
+
+// ---- settings sidebar ----
+// ponytail: fixed right drawer + backdrop. Open via ⚙; close via ✕, backdrop
+// click, or Esc. The relocated selects keep their IDs, so their onchange
+// handlers (model/think/pony) work unchanged from the old header position.
+const settingsEl = $("settings");
+const settingsBack = $("settings-back");
+function openSettings() {
+	settingsEl.classList.add("open");
+	settingsBack.classList.add("open");
+	settingsEl.setAttribute("aria-hidden", "false");
+}
+function closeSettings() {
+	settingsEl.classList.remove("open");
+	settingsBack.classList.remove("open");
+	settingsEl.setAttribute("aria-hidden", "true");
+}
+$("refresh-btn").onclick = () => location.reload();
+$("settings-btn").onclick = openSettings;
+$("settings-close").onclick = closeSettings;
+settingsBack.onclick = closeSettings;
+// density toggle → drives renderSubagentView; persist as a hint.
+const saDensitySel = $("sa-density");
+if (subagentDensity) saDensitySel.value = subagentDensity;
+saDensitySel.onchange = () => {
+	subagentDensity = saDensitySel.value;
+	localStorage.setItem("pi:sa-density", subagentDensity);
+};
+// theme switch (color + shape + type) → <html data-theme>. The inline head
+// script applies the saved value before first paint; here we keep the select
+// in sync and persist changes. Anything but "paperlike" (incl. a stale "ayu"
+// from the removed default, or null) reads as the obsidian default. localStorage
+// hint mirrors pi:sa-density.
+const themeSel = $("theme-sel");
+themeSel.value =
+	localStorage.getItem("pi:theme") === "paperlike" ? "paperlike" : "obsidian";
+themeSel.onchange = () => {
+	const t = themeSel.value;
+	document.documentElement.setAttribute("data-theme", t);
+	localStorage.setItem("pi:theme", t);
+};
+
+// ---- subagent tier-model selects ----
+// Defaults mirror subagent.ts TIERS exactly. The server holds the truth
+// (~/.pi/agent/subagent-tiers.json, re-read by the extension each call); we load
+// it, preselect, and POST on change. localStorage is only a reload hint.
+const TIER_DEFAULTS = {
+	capable: "zai/glm-5.2",
+	implement: "zai/glm-5-turbo",
+	lookup: "zai/glm-4.5-air",
+};
+const tierSels = {
+	capable: $("tier-capable"),
+	implement: $("tier-implement"),
+	lookup: $("tier-lookup"),
+};
+// build each select from availableModels once that list arrives; preselect the
+// current config value (or the default). Called from populateModels().
+function populateTierSelects() {
+	for (const tier of Object.keys(tierSels)) {
+		const sel = tierSels[tier];
+		const cur = sel.dataset.model || TIER_DEFAULTS[tier];
+		setSafeHtml(sel, "");
+		for (const m of availableModels) {
+			const id = m.provider + "/" + m.id;
+			const o = document.createElement("option");
+			o.value = id;
+			o.textContent = (m.name || m.id) + " · " + m.provider;
+			if (id === cur) o.selected = true;
+			sel.appendChild(o);
+		}
+		if (!availableModels.length) {
+			const o = document.createElement("option");
+			o.textContent = TIER_DEFAULTS[tier];
+			sel.appendChild(o);
+		}
+	}
+}
+async function loadTierConfig() {
+	try {
+		const r = await fetch("/api/subagent-tiers").then((r) => r.json());
+		if (!r || !r.ok || !r.tiers) return;
+		for (const tier of Object.keys(tierSels)) {
+			const m = r.tiers[tier] || TIER_DEFAULTS[tier];
+			tierSels[tier].dataset.model = m;
+			localStorage.setItem("pi:tier-" + tier, m);
+		}
+		populateTierSelects();
+	} catch {
+		/* non-fatal — selects keep defaults */
+	}
+}
+loadTierConfig();
+function saveTierConfig() {
+	const tiers = {};
+	for (const tier of Object.keys(tierSels)) {
+		const m = tierSels[tier].value;
+		tiers[tier] = m;
+		localStorage.setItem("pi:tier-" + tier, m);
+	}
+	fetch("/api/subagent-tiers", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(tiers),
+	}).catch(() => {}); // fire-and-forget; the extension re-reads on next call
+}
+for (const tier of Object.keys(tierSels))
+	tierSels[tier].onchange = saveTierConfig;
 
 // ---- composer ----
 function autosize() {
@@ -2374,7 +3721,11 @@ async function send() {
 		// ponytail: RPC wire key is "follow_up" (snake-case), not "followUp";
 		// auto defaults to steer. See pi dist modes/rpc/rpc-types.d.ts.
 		const how =
-			mode === "auto" ? "steer" : mode === "followUp" ? "follow_up" : mode;
+			mode === "auto"
+				? "steer"
+				: mode === "followUp"
+					? "follow_up"
+					: mode;
 		cmd =
 			how === "prompt"
 				? { type: "prompt", message: text }
@@ -2430,27 +3781,35 @@ async function showSessions() {
 	}
 	const rows = (data.ok && data.sessions) || [];
 	if (!data.ok) {
-		card.innerHTML = `<h3>Sessions</h3><p class="um-hint">${esc(
-			data.error || "failed to load",
-		)}</p>`;
+		setSafeHtml(
+			card,
+			`<h3>Sessions</h3><p class="um-hint">${esc(
+				data.error || "failed to load",
+			)}</p>`,
+		);
 		return;
 	}
 	if (!rows.length) {
-		card.innerHTML = `<h3>Sessions</h3><p class="um-hint">no sessions yet</p>`;
+		setSafeHtml(
+			card,
+			`<h3>Sessions</h3><p class="um-hint">no sessions yet</p>`,
+		);
 		return;
 	}
-	card.innerHTML = `<h3>Sessions</h3><div class="sessions"></div>`;
+	setSafeHtml(card, `<h3>Sessions</h3><div class="sessions"></div>`);
 	const host = card.querySelector(".sessions");
 	rows.forEach((s) => {
 		const current = curSessionFile && pathEq(s.path, curSessionFile);
 		const row = document.createElement("div");
 		row.className = "srow" + (current ? " current" : "");
-		row.innerHTML =
+		setSafeHtml(
+			row,
 			`<div class="smeta"><span class="sdate">${esc(
 				fmtSessionDate(s.when),
 			)}</span><span class="scount">${s.messages || 0} msg${
 				current ? " · current" : ""
-			}</span></div>` + `<div class="sprev">${esc(s.preview)}</div>`;
+			}</span></div>` + `<div class="sprev">${esc(s.preview)}</div>`,
+		);
 		row.onclick = () => resumeSession(s.path, current);
 		host.appendChild(row);
 	});
@@ -2459,7 +3818,7 @@ function resumeSession(sessionPath, current) {
 	hideModal();
 	if (current) return; // already active — nothing to resume
 	setTodos([]); // fresh todo panel for the resumed session
-	transcript.innerHTML = "";
+	setSafeHtml(transcript, "");
 	toolBlocks.clear();
 	api({ type: "switch_session", sessionPath, id: "resume" });
 }
@@ -2467,14 +3826,30 @@ function resumeSession(sessionPath, current) {
 sendBtn.onclick = send;
 stopBtn.onclick = () => api({ type: "abort" });
 compactBtn.onclick = () => api({ type: "compact" });
-$("new").onclick = () => {
-	if (
-		confirm("Start a new session? Current chat stays saved on the pi side.")
-	) {
-		setTodos([]); // clear the todo panel for the fresh session
-		api({ type: "new_session" });
-	}
-};
+// ponytail: in-DOM confirm — JCEF (the IDE panel) no-ops window.confirm(), and
+// the webui uses in-DOM modals everywhere else; this was the lone native dialog.
+function confirmModal(msg, onYes) {
+	showModal(`<h3>${esc(msg)}</h3><div class="opts"></div>`, true);
+	const list = card.querySelector(".opts");
+	const no = document.createElement("button");
+	no.textContent = "Cancel";
+	no.onclick = hideModal;
+	const yes = document.createElement("button");
+	yes.textContent = "Confirm";
+	yes.onclick = () => {
+		hideModal();
+		onYes();
+	};
+	list.append(no, yes);
+}
+$("new").onclick = () =>
+	confirmModal(
+		"Start a new session? Current chat stays saved on the pi side.",
+		() => {
+			setTodos([]); // clear the todo panel for the fresh session
+			api({ type: "new_session" });
+		},
+	);
 $("sessions").onclick = showSessions;
 
 inputEl.addEventListener("keydown", (e) => {
@@ -2508,11 +3883,14 @@ function updatePalette() {
 	hidePalette();
 }
 function renderPalette() {
-	palette.innerHTML = "";
+	setSafeHtml(palette, "");
 	palItems.forEach((c, i) => {
 		const d = document.createElement("div");
 		d.className = "item" + (i === palSel ? " sel" : "");
-		d.innerHTML = `<span class="nm">/${esc(c.name)}</span> <span class="ds">${esc(c.description || c.source || "")}</span>`;
+		setSafeHtml(
+			d,
+			`<span class="nm">/${esc(c.name)}</span> <span class="ds">${esc(c.description || c.source || "")}</span>`,
+		);
 		d.onclick = () => {
 			inputEl.value = "/" + c.name + " ";
 			autosize();

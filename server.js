@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Minimal zero-dependency bridge between a browser and `pi --mode rpc`.
+// Minimal-dependency bridge between a browser and `pi --mode rpc`.
 // Browser <--SSE-- POST--> Node <--stdin/stdout JSONL--> pi subprocess.
 // Run: node server.js   (optionally set PORT, PI_BIN, PI_ARGS, PI_CWD)
 const http = require("http");
@@ -22,6 +22,28 @@ const HTML_PATH = path.join(__dirname, "index.html");
 const STATIC = {
 	"/style.css": { file: "style.css", type: "text/css; charset=utf-8" },
 	"/md.js": { file: "md.js", type: "text/javascript; charset=utf-8" },
+	// vendored highlight.js (github-dark theme) — first third-party runtime we
+	// ship; static asset like md.js, no npm/build. Gated client-side so a
+	// missing file degrades to uncolored code (see app.js highlightCode).
+	"/vendor/highlight.min.js": {
+		file: "vendor/highlight.min.js",
+		type: "text/javascript; charset=utf-8",
+	},
+	"/vendor/highlight.css": {
+		file: "vendor/highlight.css",
+		type: "text/css; charset=utf-8",
+	},
+	// vendored markdown-it 14.x (UMD, sets window.markdownit). Loaded BEFORE
+	// md.js, which is now a thin shim delegating to it (the hand-rolled parser
+	// is gone). Static asset like the highlight.js vendor entry — no npm/build.
+	"/vendor/markdown-it.min.js": {
+		file: "vendor/markdown-it.min.js",
+		type: "text/javascript; charset=utf-8",
+	},
+	"/usage-provider.js": {
+		file: "usage-provider.js",
+		type: "text/javascript; charset=utf-8",
+	},
 	"/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
 };
 
@@ -231,6 +253,44 @@ function zaiUsage(key) {
 	});
 }
 
+// ponytail: Codex's OAuth access token stays server-side in pi's auth store.
+// The undocumented usage endpoint may change; hide the bar on any failure.
+function codexTokenFromAuth() {
+	try {
+		const credential = JSON.parse(fs.readFileSync(AUTH_FILE, "utf8"))[
+			"openai-codex"
+		];
+		return credential?.type === "oauth" && typeof credential.access === "string"
+			? credential.access
+			: "";
+	} catch {
+		return "";
+	}
+}
+function codexUsage(token) {
+	return new Promise((resolve, reject) => {
+		const req = https.request(
+			{
+				hostname: "chatgpt.com",
+				path: "/backend-api/wham/usage",
+				method: "GET",
+				headers: {
+					Authorization: "Bearer " + token,
+					Accept: "application/json",
+				},
+			},
+			(resp) => {
+				let body = "";
+				resp.on("data", (c) => (body += c));
+				resp.on("end", () => resolve({ status: resp.statusCode, body }));
+			},
+		);
+		req.on("error", reject);
+		req.setTimeout(8000, () => req.destroy(new Error("ChatGPT usage timeout")));
+		req.end();
+	});
+}
+
 // ponytail: resolve the active ponytail mode for the header dropdown. Mirrors
 // the ponytail extension's resolver so the UI and the agent agree: default =
 // PONYTAIL_DEFAULT_MODE env > config file defaultMode > "full"; a session
@@ -289,10 +349,14 @@ function ponySessionMode(sessionFile) {
 	return null;
 }
 
-// ponytail: sync git probe with a 2s cache; status endpoint, blocking ~50ms is fine.
+// ponytail: sync git probe cached above the health-poll cadence. /api/health is
+// polled every 6s (app.js refreshHealth); a cache TTL BELOW that (the old 2s)
+// missed on every poll → ~20 git process spawns/min while idle. A 7s window
+// (>6s poll) makes consecutive polls hit the cache, halving spawns; the badge
+// still refreshes within ~12s. Blocking ~50ms, only on a cache miss.
 let gitCache = { t: 0, data: null };
 function gitInfo() {
-	if (Date.now() - gitCache.t < 2000) return gitCache.data;
+	if (Date.now() - gitCache.t < 7000) return gitCache.data;
 	let data = null;
 	try {
 		const branch = execSync("git rev-parse --abbrev-ref HEAD", {
@@ -301,15 +365,31 @@ function gitInfo() {
 			encoding: "utf8",
 			windowsHide: true, // health endpoint is polled every 2s — must never pop a window
 		}).trim();
-		const changes = execSync("git status --porcelain", {
+		// porcelain XY: staged = index col (X), unstaged = worktree col (Y),
+		// untracked = "??". A file in both columns (e.g. MM/DD) counts in both —
+		// accurate: it has staged AND unstaged changes.
+		const counts = execSync("git status --porcelain", {
 			cwd: PI_CWD,
 			stdio: ["ignore", "pipe", "ignore"],
 			encoding: "utf8",
 			windowsHide: true,
 		})
 			.split("\n")
-			.filter(Boolean).length;
-		data = { branch, changes };
+			.filter(Boolean)
+			.reduce(
+				(a, line) => {
+					const x = line[0],
+						y = line[1];
+					if (x === "?" && y === "?") a.untracked++;
+					else {
+						if (x !== " ") a.staged++;
+						if (y !== " " && y !== "?") a.unstaged++;
+					}
+					return a;
+				},
+				{ staged: 0, unstaged: 0, untracked: 0 },
+			);
+		data = { branch, ...counts };
 	} catch {
 		data = null; // not a git repo
 	}
@@ -499,14 +579,18 @@ const server = http.createServer(async (req, res) => {
 	if (req.method === "GET" && STATIC[url.pathname]) {
 		const a = STATIC[url.pathname];
 		try {
+			// Read FIRST: if the asset is missing, committing a 200 status line
+			// here would make the catch's writeHead(404) throw ERR_HTTP_HEADERS_SENT
+			// and crash the whole server (taking every SSE client with it).
 			// ponytail: no-cache so editing app.js/style.css + browser refresh always
 			// picks up the change (the documented dev loop). Without it the browser
 			// heuristically caches and serves stale JS after an edit.
+			const data = fs.readFileSync(path.join(__dirname, a.file));
 			res.writeHead(200, {
 				"Content-Type": a.type,
 				"Cache-Control": "no-cache, no-transform",
 			});
-			return res.end(fs.readFileSync(path.join(__dirname, a.file)));
+			return res.end(data);
 		} catch {
 			res.writeHead(404);
 			return res.end("not found");
@@ -591,6 +675,38 @@ const server = http.createServer(async (req, res) => {
 		}
 	}
 
+	if (req.method === "GET" && url.pathname === "/api/codex-usage") {
+		const token = codexTokenFromAuth();
+		if (!token) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end('{"ok":false,"error":"no ChatGPT/Codex login"}');
+		}
+		try {
+			const { status, body } = await codexUsage(token);
+			let data = null;
+			try {
+				data = JSON.parse(body);
+			} catch {}
+			const error =
+				data?.error?.message ||
+				data?.detail ||
+				(status >= 300 ? "usage request failed" : null);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({
+					ok: status >= 200 && status < 300 && data !== null && !error,
+					status,
+					data,
+					error,
+					raw: data ? null : body.slice(0, 2000),
+				}),
+			);
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+
 	if (req.method === "GET" && url.pathname === "/api/zai-usage") {
 		// z.ai usage/quota proxy. GET so it's read-only; localhost-bound like the
 		// rest. Key: env ZAI_API_KEY -> pi auth.json -> X-ZAI-Key header (paste).
@@ -659,11 +775,93 @@ const server = http.createServer(async (req, res) => {
 		return res.end(JSON.stringify({ ok: true, mode }));
 	}
 
+	if (req.method === "GET" && url.pathname === "/api/subagent-tiers") {
+		// subagent tier-model config, shared with the extension: reads/writes
+		// ~/.pi/agent/subagent-tiers.json ({capable,implement,lookup}→"provider/model").
+		// ponytail: GET returns {} when absent so the sidebar shows defaults. No
+		// client-controlled path (fixed to AGENT_DIR), so no traversal surface.
+		const file = path.join(AGENT_DIR, "subagent-tiers.json");
+		try {
+			const raw = fs.readFileSync(file, "utf8");
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true, tiers: JSON.parse(raw) }));
+		} catch {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end('{"ok":true,"tiers":{}}');
+		}
+	}
+	if (req.method === "POST" && url.pathname === "/api/subagent-tiers") {
+		// validate then persist the three tier models. Only the known keys are kept;
+		// values must be non-empty strings (provider/model). isAllowed already
+		// gated the POST (CSRF + DNS-rebinding); readBody caps at 1MB.
+		let body;
+		try {
+			body = await readBody(req);
+			const obj = JSON.parse(body || "{}");
+			const clean = {};
+			for (const k of ["capable", "implement", "lookup"]) {
+				const v = obj && obj[k];
+				if (typeof v === "string" && v.trim()) clean[k] = v.trim();
+			}
+			fs.mkdirSync(AGENT_DIR, { recursive: true });
+			fs.writeFileSync(
+				path.join(AGENT_DIR, "subagent-tiers.json"),
+				JSON.stringify(clean),
+				"utf8",
+			);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true, tiers: clean }));
+		} catch (e) {
+			res.writeHead(500, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
 	if (req.method === "GET" && url.pathname === "/api/sessions") {
 		// resumable sessions for this project's cwd (newest first). The dir is
 		// derived from PI_CWD — no client path is accepted, so nothing escapes it.
 		res.writeHead(200, { "Content-Type": "application/json" });
 		return res.end(JSON.stringify({ ok: true, sessions: listSessions() }));
+	}
+
+	if (req.method === "GET" && url.pathname === "/api/plan-state") {
+		// ponytail: detect SDD plan/spec/tasks/verify artifacts under .sdd. Naming
+		// convention is {type}_{slug}_{DDMMYYYY}.md (skills/sdd/SKILL.md), which lets
+		// multiple efforts coexist as history; legacy fixed names (plan.md,
+		// verify-report.md, ...) still match for back-compat. Fixed dir + parsed
+		// filenames under PI_CWD — no client path, so no traversal surface;
+		// contents read via sandboxed /api/file. Sorted newest-first so the client
+		// can pick the "latest active" set for the badge and list the rest as history.
+		const parseArtifact = (name) => {
+			const base = name.replace(/\.md$/i, "");
+			if (!base) return null;
+			if (base === "verify-report")
+				return { phase: "verify", slug: "", date: "" }; // legacy
+			let m = base.match(/^(plan|spec|tasks|verify)_(.*)_(\d{8})$/);
+			if (m) return { phase: m[1], slug: m[2], date: m[3] };
+			m = base.match(/^(plan|spec|tasks|verify)(?:_(.+))?$/);
+			if (m) return { phase: m[1], slug: m[2] || "", date: "" }; // legacy
+			return null;
+		};
+		const out = [];
+		try {
+			const dir = path.join(PI_CWD, ".sdd");
+			for (const name of fs.readdirSync(dir)) {
+				if (!/\.md$/i.test(name)) continue;
+				const p = parseArtifact(name);
+				if (!p) continue;
+				const rel = ".sdd/" + name;
+				let mtime = 0;
+				try {
+					mtime = fs.statSync(path.join(dir, name)).mtimeMs;
+				} catch {}
+				out.push({ ...p, rel, mtime });
+			}
+		} catch {
+			/* no .sdd dir yet — no SDD run started */
+		}
+		out.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+		res.writeHead(200, { "Content-Type": "application/json" });
+		return res.end(JSON.stringify({ ok: true, artifacts: out }));
 	}
 
 	res.writeHead(404);

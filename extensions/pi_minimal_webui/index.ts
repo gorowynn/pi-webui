@@ -86,8 +86,9 @@ import webui from "./webui.js";
 import safeguard from "./safeguard.js";
 import todo from "./todo.js";
 import discipline from "./discipline.js";
+import subagent from "./subagent.js";
 
-// @ts-expect-error no @types/node in this zero-dep extension; jiti strips types at load, and the typeof guard keeps this safe at runtime.
+// @ts-expect-error no @types/node in this minimal-dep extension; jiti strips types at load, and the typeof guard keeps this safe at runtime.
 const envMarker =
 	(typeof process !== "undefined" &&
 		process.env &&
@@ -288,6 +289,7 @@ export default function (pi: ExtensionAPI) {
 	safeguard(pi);
 	todo(pi);
 	discipline(pi);
+	subagent(pi);
 	pi.registerTool({
 		name: "ask_user_question",
 		label: "Ask User Question",

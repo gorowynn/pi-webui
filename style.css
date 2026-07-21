@@ -1,20 +1,27 @@
 :root {
-	/* Ayu-Dark system per design.md: warm orange action, cyan technical, lime success, slate muted. */
-	--bg: #0b0e14;
-	--panel: #0e1118;
-	--panel2: #141923;
-	--border: #1e222c;
-	--text: #b3b1ad;
-	--muted: #5c6773;
-	--user: #141923;
-	--accent: #ff9f43; /* headers / actions / user stripe */
-	--cyan: #5ccfe6; /* code / paths / links */
-	--ok: #a6cc70;
-	--warn: #ffcc66;
-	--err: #f28779;
-	--think: #16131f;
-	/* ponytail: single flat radius token. 2px reads square without aliasing harsh; bump to 0 for brutalist, 4 for softer. */
-	--r: 2px;
+	/* Default theme = obsidian: near-black canvas, glassy overlays, soft violet
+	   accent glows (decorative rules under [data-theme="obsidian"] below). Alt:
+	   paperlike ([data-theme="paperlike"]). Palette intent lives in docs/design.md. */
+	--bg: #0a0a0b;
+	--panel: #131316;
+	--panel2: #1a1a20;
+	--border: #26262d;
+	--text: #ededed;
+	--muted: #71717a;
+	--user: #16161c;
+	--accent: #8b5cf6; /* violet-500: headers / actions / user stripe */
+	--cyan: #60a5fa; /* blue-400: code / paths / links */
+	--ok: #34d399; /* emerald-400 */
+	--warn: #fbbf24; /* amber-400 */
+	--err: #fb7185; /* rose-400 */
+	--think: #15131c; /* faint violet-tinted "musing" panel */
+	/* ponytail: single radius token. 8px = modern/rounded (obsidian default);
+	   paperlike sets 6; drop to 0-2 for brutalist. */
+	--r: 8px;
+	/* ponytail: elevation carries a quiet violet glow halo (obsidian default);
+	   paperlike overrides to a warm soft shadow. */
+	--shadow:
+		0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px -8px rgba(139, 92, 246, 0.22);
 }
 * {
 	box-sizing: border-box;
@@ -68,9 +75,9 @@ body {
 }
 header {
 	display: flex;
-	gap: 10px;
+	gap: 8px;
 	align-items: center;
-	padding: 8px 12px;
+	padding: 5px 12px;
 	background: var(--panel);
 	border-bottom: 1px solid var(--border);
 	flex: 0 0 auto;
@@ -85,8 +92,8 @@ header button {
 	color: var(--text);
 	border: 1px solid var(--border);
 	border-radius: var(--r);
-	padding: 4px 8px;
-	font-size: 13px;
+	padding: 2px 7px;
+	font-size: 12px;
 	cursor: pointer;
 }
 header select {
@@ -116,10 +123,59 @@ header select {
 	}
 }
 
+/* ponytail: scroll-wrap is the positioned frame for the floating jump-to-
+   bottom pill; it must NOT scroll (only #transcript does). Nested-flex scroll:
+   wrap is the body flex item (flex+min-height:0 so it can shrink and let main
+   scroll), main becomes its flex child with its own min-height:0. */
+#scroll-wrap {
+	position: relative;
+	flex: 1 1 auto;
+	min-height: 0;
+	display: flex;
+}
 main {
 	flex: 1 1 auto;
+	min-height: 0;
 	overflow-y: auto;
 	padding: 16px clamp(12px, 3vw, 40px) 8px;
+}
+/* ponytail: chat-app "↓ N new" pill. Floats over the transcript's visible area
+   (absolute vs the non-scrolling #scroll-wrap), shown only when the user has
+   scrolled up. visibility+opacity (not [hidden]) so the in/out fades. */
+#jump-bottom {
+	position: absolute;
+	right: 22px;
+	bottom: 16px;
+	z-index: 20;
+	background: var(--accent);
+	color: #1b1306;
+	border: none;
+	border-radius: 999px;
+	padding: 6px 14px;
+	font:
+		600 12px / 1 "JetBrains Mono",
+		ui-monospace,
+		monospace;
+	cursor: pointer;
+	box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+	opacity: 0;
+	transform: translateY(6px);
+	visibility: hidden;
+	pointer-events: none;
+	transition:
+		opacity 0.15s ease,
+		transform 0.15s ease,
+		visibility 0s linear 0.15s;
+}
+#jump-bottom.show {
+	opacity: 1;
+	transform: none;
+	visibility: visible;
+	pointer-events: auto;
+	transition:
+		opacity 0.15s ease,
+		transform 0.15s ease,
+		visibility 0s;
 }
 .msg {
 	margin: 0 0 16px;
@@ -156,6 +212,7 @@ pre {
 	background: #0009;
 	border: 1px solid var(--border);
 	border-radius: var(--r);
+	box-shadow: var(--shadow);
 	padding: 8px 10px;
 	overflow: auto;
 	margin: 6px 0;
@@ -170,11 +227,30 @@ code {
 	padding: 1px 5px;
 	border-radius: var(--r);
 }
+/* syntax highlighting: vendored highlight.js adds .hljs to <pre><code> and ships
+   its own background/padding in vendor/highlight.css. Our <pre> already owns the
+   background/border/padding (above), so neutralize hljs's box and let it
+   supply only token colors. Kept here (not in the vendored file) so the
+   upstream theme stays unmodified for clean updates. */
+pre code.hljs {
+	background: transparent;
+	padding: 0;
+}
+/* IDE-connection badge in the statusbar: green when a JetBrains IDE hosts the
+   panel, dimmed "none" when standalone. Set by app.js updateIdeBadge(). */
+#sb-ide.on {
+	background: #a6cc701f;
+	color: var(--ok);
+}
+#sb-ide.off {
+	opacity: 0.5;
+}
 .think {
 	background: var(--think);
 	margin: 10px 0;
 	border: 1px solid #6b5b8a55;
 	border-left: 2px solid #c4a7e7;
+	box-shadow: var(--shadow);
 	overflow: hidden;
 }
 .think > summary {
@@ -237,7 +313,9 @@ code {
 	color: #d4cbe2;
 	font-size: 13px;
 	line-height: 1.6;
-	white-space: pre-wrap;
+	/* normal, not pre-wrap: thinking is markdown now (block HTML via md()), and
+	   pre-wrap would misrender prose. <pre> blocks keep their own formatting. */
+	white-space: normal;
 	border-top: 1px solid #ffffff14;
 }
 .tool {
@@ -247,6 +325,7 @@ code {
 	border: 1px solid var(--border);
 	border-left: 2px solid var(--ok);
 	border-radius: var(--r);
+	box-shadow: var(--shadow);
 	background: #00000040;
 }
 .tool > summary {
@@ -442,39 +521,6 @@ code {
 	background: var(--panel2);
 }
 
-/* edit diff */
-pre.diff {
-	margin: 4px 0;
-	padding: 6px 0;
-	font-size: 12px;
-	line-height: 1.45;
-}
-pre.diff .add,
-pre.diff .del,
-pre.diff .ctx {
-	display: block;
-	padding: 0 10px;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
-}
-pre.diff .add {
-	background: #a6cc7022;
-	color: #b5e89a;
-}
-pre.diff .add::before {
-	content: "+ ";
-}
-pre.diff .del {
-	background: #f2877922;
-	color: #f0a0b0;
-}
-pre.diff .del::before {
-	content: "- ";
-}
-pre.diff .ctx {
-	color: var(--muted);
-}
-
 /* side-by-side edit diff (old | new, new pane editable) */
 .tool.hasdiff > .out {
 	max-height: none;
@@ -492,6 +538,7 @@ pre.diff .ctx {
 }
 .sx-col {
 	min-width: 0;
+	min-height: 0;
 	display: flex;
 	flex-direction: column;
 }
@@ -560,20 +607,14 @@ pre.diff .ctx {
 }
 .sx-old .sx-line.ln-del,
 .sx-new .sx-line.ln-add {
-	background: #f287791a;
+	background: #f2877933;
 }
 .sx-new .sx-line.ln-add {
-	background: #a6cc701a;
-}
-.sx-old .sx-line.ln-del .sx-ltxt {
-	color: #f0a0b0;
+	background: #a6cc7033;
 }
 .sx-old .sx-line.ln-del .sx-gnum {
 	color: #f0a0b0;
 	opacity: 0.8;
-}
-.sx-new .sx-line.ln-add .sx-ltxt {
-	color: #b5e89a;
 }
 .sx-new .sx-line.ln-add .sx-gnum {
 	color: #b5e89a;
@@ -582,8 +623,14 @@ pre.diff .ctx {
 /* editable new pane: transparent textarea layered over a colored body.
          Its left padding mirrors the gutter width so typed text lines up with
          the highlight rows behind it (gutter shows through the transparency). */
+/* ponytail: .sx-edit is a flex column so .sx-ta can flex to fill it. Sizing
+   the textarea with flex (not height:%) is what makes it fill the modal column
+   — percentage heights don't resolve up an indefinite-height (max-height only)
+   flex chain, so height:100% collapsed the textarea to its ~2-row default. */
 .sx-edit {
 	position: relative;
+	display: flex;
+	flex-direction: column;
 }
 .sx-hlbody {
 	position: absolute;
@@ -610,6 +657,7 @@ pre.diff .ctx {
 	white-space: pre;
 	background: transparent;
 	color: transparent;
+	-webkit-text-fill-color: transparent;
 	caret-color: var(--text);
 	border: 0;
 	outline: none;
@@ -633,6 +681,39 @@ pre.diff .ctx {
 	opacity: 0.5;
 	cursor: default;
 }
+/* context-lines stepper in the editable diff header (−/N/+). Reuses the
+   small-button look of .sx-apply. */
+.sx-ctx {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	margin-left: auto;
+}
+.sx-ctx-btn {
+	font: inherit;
+	font-size: 13px;
+	line-height: 1;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	border: 1px solid var(--border);
+	border-radius: var(--r);
+	background: var(--panel2);
+	color: var(--muted);
+	cursor: pointer;
+}
+.sx-ctx-btn:hover {
+	color: var(--accent);
+	border-color: var(--accent);
+}
+.sx-ctx-n {
+	min-width: 16px;
+	text-align: center;
+	font-size: 11px;
+	color: var(--muted);
+	text-transform: none;
+	letter-spacing: 0;
+}
 .sx-tag {
 	font-size: 10px;
 	color: var(--warn);
@@ -647,18 +728,58 @@ pre.diff .ctx {
 	white-space: pre-wrap;
 }
 /* read-only diff preview inside the permission modal */
+/* ponytail: .card.wide is a flex column so the diff fills the modal height
+   (was fixed 72vh bodies with dead space below). The diff host flexes between
+   the h3 and the .opts buttons; each column body/textarea fills its column. */
 #modal .card.wide {
 	max-height: 92vh;
+	display: flex;
+	flex-direction: column;
 }
-#modal .sxs .sx-body {
-	height: min(54vh, 460px);
+#modal .card.wide > .sx-tabs-wrap {
+	flex: 1 1 auto;
+	min-height: 0;
 }
 #modal .sx-host {
 	margin-top: 4px;
+	flex: 1 1 auto;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+#modal .sxs {
+	flex: 1 1 auto;
+	min-height: 0;
+	/* ponytail: bound the single grid row so the flex-resolved modal height
+	   reaches the column bodies - without this (plus .sx-col min-height:0)
+	   the auto row sizes to content, the body never overflows, and tall
+	   diffs clip instead of scrolling. */
+	grid-template-rows: minmax(0, 1fr);
+}
+#modal .sxs .sx-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	height: auto;
+}
+/* editable approval modal: .sx-edit flexes to fill its column; the .sx-ta
+   transparent overlay flexes to fill .sx-edit so it tracks the highlight rows
+   behind it and its scroll stays in sync (was fixed 72vh → dead space; then
+   height:100% → didn't resolve up the max-height-only chain, collapsing the
+   textarea to ~2 rows so its scroll desynced from the highlight). */
+#modal .sx-edit {
+	flex: 1 1 auto;
+	min-height: 0;
+}
+#modal .sx-ta {
+	flex: 1 1 auto;
+	min-height: 0;
+	height: auto;
 }
 /* tab strip when multiple edit hunks need reviewing */
 .sx-tabs-wrap {
 	margin: 8px 0 4px;
+	display: flex;
+	flex-direction: column;
 }
 .sx-tabs {
 	display: flex;
@@ -692,18 +813,30 @@ pre.diff .ctx {
 	display: none;
 }
 .sx-panel.active {
-	display: block;
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
 }
 .tool .dpath {
 	color: var(--muted);
 	padding: 2px 10px;
 	font-size: 11px;
 }
+/* ponytail: sticky so a far-apart hunk label stays visible while you
+   scroll through its diff inside the transcript box. Bounded by .out, so
+   it releases once the box scrolls past. */
 .tool .dhunk {
+	position: sticky;
+	top: 0;
+	z-index: 2;
 	color: var(--muted);
 	font-size: 10px;
 	text-transform: uppercase;
-	padding: 4px 10px 0;
+	letter-spacing: 0.04em;
+	padding: 5px 10px;
+	background: var(--panel2);
+	border-bottom: 1px solid var(--border);
 }
 
 footer {
@@ -1095,7 +1228,10 @@ textarea:focus {
 	font-size: 10px;
 	margin-bottom: 4px;
 }
-#modal textarea,
+/* ponytail: exclude .sx-ta — it's a transparent overlay on the diff highlight,
+   not a real input. Without :not(.sx-ta) this rule (1,1,1) beats .sx-ta (0,1,0)
+   and renders the proposal overlay as a second visible plaintext box. */
+#modal textarea:not(.sx-ta),
 #modal input[type="text"] {
 	width: 100%;
 	background: var(--panel2);
@@ -1202,12 +1338,6 @@ textarea:focus {
 	color: var(--accent);
 	flex: 0 0 auto;
 }
-#todopanel .empty {
-	color: var(--muted);
-	padding: 10px 0;
-	text-align: center;
-}
-
 #modal .qform {
 	margin: 0;
 }
@@ -1397,47 +1527,65 @@ textarea:focus-visible,
 	}
 }
 
-/* ---- z.ai usage bar (inline in header, next to Usage button) ---- */
+/* ---- provider quota bar (inline in header, click for details) ---- */
 #usagebar {
 	display: none;
 	flex: 1 1 auto;
-	min-width: 240px;
+	min-width: 300px;
 	flex-direction: row;
-	gap: 24px;
-	margin: 0 12px;
+	gap: 8px;
+	margin: 0 8px;
+	padding: 2px 8px;
+	border: 1px solid transparent;
+	border-radius: var(--r);
 	cursor: pointer;
 }
 #usagebar:hover {
 	opacity: 0.8;
 }
-.ub-row {
+/* peak-hours signal: subtle warn-colored border (tokencost higher 14–18
+   UTC+8); toggled on refreshUsageBar's 60s poll, so minute-accurate. */
+#usagebar.peak {
+	border-color: var(--warn);
+}
+.ub-window {
 	flex: 1 1 0;
+	min-width: 0;
 	display: flex;
-	align-items: center;
-	gap: 8px;
-	font-size: 12px;
+	flex-direction: column;
+	gap: 2px;
+}
+.ub-head {
+	display: flex;
+	justify-content: space-between;
+	gap: 4px;
+	font-size: 11px;
 	min-width: 0;
 }
 .ub-lbl {
-	flex: 0 0 auto;
-	width: 46px;
 	color: var(--muted);
 	white-space: nowrap;
 }
 .ub-track {
-	flex: 1 1 auto;
-	min-width: 40px;
+	display: block;
+	min-width: 0;
 	height: 7px;
 	background: #00000060;
 	border: 1px solid var(--border);
 	border-radius: var(--r);
 	overflow: hidden;
 }
-.ub-val {
-	flex: 0 0 auto;
+.ub-val,
+.ub-reset {
 	color: var(--muted);
 	font-family: ui-monospace, Menlo, Consolas, monospace;
 	white-space: nowrap;
+}
+.ub-val {
+	font-size: 11px;
+}
+.ub-reset {
+	font-size: 10px;
 }
 .ub-fill {
 	display: block;
@@ -1594,4 +1742,449 @@ textarea:focus-visible,
 	max-height: 40vh;
 	overflow: auto;
 	color: var(--text);
+}
+
+/* ---- subagent live view (in-tool) ---- */
+.sa {
+	border-top: 1px solid var(--border);
+	margin-top: 6px;
+	padding-top: 6px;
+	font-size: 12px;
+}
+.sa-sum {
+	color: var(--cyan);
+	margin-bottom: 6px;
+	font-weight: 600;
+}
+.sa-row {
+	display: flex;
+	gap: 6px;
+	align-items: baseline;
+	margin-bottom: 2px;
+}
+.sa-ic {
+	width: 1.2em;
+	color: var(--muted);
+}
+.sa-row > .sa-agent {
+	font-weight: 600;
+	color: var(--text);
+}
+.sa-tier {
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.4px;
+}
+.sa-model,
+.sa-turns {
+	color: var(--muted);
+	font-size: 11px;
+}
+.sa-items {
+	margin: 0 0 6px 1.2em;
+	padding-left: 6px;
+	border-left: 1px solid var(--border);
+}
+.sa-call {
+	color: var(--muted);
+	font-family: var(--mono, monospace);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+.sa-text {
+	color: var(--text);
+	opacity: 0.85;
+	margin: 1px 0;
+}
+.sa-foot {
+	margin-top: 6px;
+	padding-top: 6px;
+	border-top: 1px dashed var(--border);
+	color: var(--text);
+}
+
+/* ---- collapsible settings sidebar ---- */
+#settings-btn {
+	margin-left: 8px;
+	font-size: 15px;
+	line-height: 1;
+}
+#settings {
+	position: fixed;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	width: min(340px, 86vw);
+	background: var(--panel);
+	border-left: 1px solid var(--border);
+	box-shadow: -8px 0 24px rgba(0, 0, 0, 0.4);
+	transform: translateX(100%);
+	transition: transform 0.18s ease;
+	overflow-y: auto;
+	z-index: 40;
+	padding: 14px 16px 28px;
+}
+#settings.open {
+	transform: translateX(0);
+}
+.set-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 12px;
+}
+.set-head h3 {
+	margin: 0;
+	font-size: 13px;
+	text-transform: uppercase;
+	letter-spacing: 0.6px;
+	color: var(--accent);
+}
+.set-x {
+	background: none;
+	border: none;
+	color: var(--muted);
+	font-size: 20px;
+	cursor: pointer;
+	line-height: 1;
+}
+.set-x:hover {
+	color: var(--text);
+}
+.set-sec {
+	border-top: 1px solid var(--border);
+	padding-top: 10px;
+	margin-top: 10px;
+}
+.set-sec:first-of-type {
+	border-top: none;
+	margin-top: 0;
+}
+.set-sec h4 {
+	margin: 0 0 8px;
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	color: var(--muted);
+}
+.set-hint {
+	margin: 0 0 8px;
+	font-size: 11px;
+	color: var(--muted);
+}
+.set-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	font-size: 13px;
+	color: var(--text);
+	margin-bottom: 8px;
+}
+.set-inline {
+	display: flex;
+	gap: 4px;
+	align-items: center;
+}
+#settings select,
+#settings button {
+	background: var(--panel2);
+	color: var(--text);
+	border: 1px solid var(--border);
+	border-radius: var(--r);
+	padding: 4px 6px;
+	font-size: 12px;
+	cursor: pointer;
+	max-width: 180px;
+}
+#settings input[type="checkbox"] {
+	width: 16px;
+	height: 16px;
+	accent-color: var(--accent);
+}
+#settings-back {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.45);
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.18s ease;
+	z-index: 39;
+}
+#settings-back.open {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+/* plan/spec header pill + tabbed viewer modal */
+.plan-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 8px;
+	font-size: 12px;
+	color: var(--accent);
+	background: var(--panel2);
+	border: 1px solid var(--border);
+	border-radius: var(--r);
+	cursor: pointer;
+}
+.plan-pill[hidden] {
+	display: none;
+}
+.plan-pill:hover {
+	background: var(--accent);
+	color: #0b0e14;
+}
+/* SDD phase stepper (plan→spec→tasks→verify) at the top of the plan viewer.
+   ● reached / ○ pending; current phase in accent. Nudges the next missing phase. */
+.sdd-stepper {
+	display: flex;
+	gap: 10px;
+	flex-wrap: wrap;
+	margin: 0 0 8px;
+	padding: 6px 8px;
+	background: var(--panel2);
+	border: 1px solid var(--border);
+	border-radius: var(--r);
+	font-size: 12px;
+	color: var(--muted);
+}
+.sdd-stepper:empty {
+	display: none;
+}
+.ss-step.done {
+	color: var(--ok);
+}
+.ss-step.cur {
+	color: var(--accent);
+	font-weight: 700;
+}
+.doc-tabs {
+	display: flex;
+	gap: 2px;
+	border-bottom: 1px solid var(--border);
+	margin: 4px 0 8px;
+	overflow-x: auto;
+	scrollbar-width: thin;
+}
+.doc-body {
+	max-height: 68vh;
+	overflow: auto;
+	padding: 2px 4px 8px;
+	font-size: 13px;
+	line-height: 1.55;
+}
+.doc-body h1,
+.doc-body h2,
+.doc-body h3 {
+	margin: 0.6em 0 0.3em;
+}
+.doc-body pre code {
+	display: block;
+	padding: 8px 10px;
+	overflow-x: auto;
+	font-size: 12px;
+}
+.doc-body table {
+	border-collapse: collapse;
+}
+.doc-body td,
+.doc-body th {
+	border: 1px solid var(--border);
+	padding: 2px 8px;
+}
+
+/*
+   ── paperlike theme ──────────────────────────────────────────────────────────
+   Switchable design: warm cream paper + dark ink, serif prose, softer corners
+   and subtle shadows (a raised-card feel) instead of hard borders. Applied by
+   <html data-theme="paperlike">; toggled from the settings sidebar and chosen by
+   the inline head script before first paint (no FOUC). Default is :root
+   (obsidian); this block is same-specificity but later in source, so it wins
+   only when the attribute is present.
+
+   ponytail: layout structure is untouched — shape/type/colour carry the paper
+   feel. A centered max-width "sheet" transcript is a nicer paper metaphor but
+   risks the flex layout; add later if wanted.
+*/
+[data-theme="paperlike"] {
+	--bg: #f5f0e6; /* warm cream paper */
+	--panel: #efe9dc; /* header / sidebars */
+	--panel2: #e9e2d2; /* block containers */
+	--border: #ddd2bd; /* warm hairline */
+	--text: #3a342a; /* dark warm ink */
+	--muted: #8a7f70; /* sepia metadata */
+	--user: #ece4d4;
+	--accent: #b45309; /* amber-700: strong on cream */
+	--cyan: #0e7490; /* cyan-700: paths / links */
+	--ok: #4d7c0f; /* lime-700 */
+	--warn: #a16207; /* yellow-700 */
+	--err: #be123c; /* rose-700 */
+	--think: #ece3d0; /* soft warm "musing" panel */
+	--r: 6px; /* softer paper corners (vs 2px dark) */
+	--shadow:
+		0 1px 2px rgba(60, 50, 30, 0.07), 0 1px 3px rgba(60, 50, 30, 0.05);
+	scrollbar-color: var(--muted) transparent;
+}
+/* prose reads as a serif document; chrome (header/footer/sidebar/modal) keeps
+   the mono identity, so the conversation sits in a tool frame. Code stays mono
+   via its own rule. System serifs only — zero-build invariant preserved. */
+[data-theme="paperlike"] #transcript {
+	font-family:
+		"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, Cambria,
+		"Times New Roman", serif;
+	font-size: 14px;
+	line-height: 1.7;
+}
+/* code listings: near-white paper with a warm hairline (not a black slab). */
+[data-theme="paperlike"] pre {
+	background: #fbfaf4;
+	border-color: #e2d8c4;
+}
+/* tool cards: replace the dark overlay with a clean panel + soft shadow. */
+[data-theme="paperlike"] .tool {
+	background: var(--panel);
+}
+/* thinking block: keep a quiet violet identity but readable on cream. */
+[data-theme="paperlike"] .think {
+	border-color: #e0d6c4;
+	border-left-color: #8e6fb0;
+}
+[data-theme="paperlike"] .think > summary {
+	color: #7a6b8a;
+}
+[data-theme="paperlike"] .think .tspin {
+	border-color: #7a6b8a;
+	border-top-color: transparent;
+}
+[data-theme="paperlike"] .think .tlabel {
+	color: #7a6b8a;
+}
+[data-theme="paperlike"] .think .tbody {
+	color: #4a4338;
+	border-top-color: #00000012;
+}
+/* diff panes: paper-white body, darker red/green labels (light tints were
+   invisible on cream). */
+[data-theme="paperlike"] .sx-body {
+	background: #fbfaf4;
+}
+[data-theme="paperlike"] .sx-old .sx-hdr {
+	color: #be123c;
+}
+[data-theme="paperlike"] .sx-new .sx-hdr {
+	color: #4d7c0f;
+}
+[data-theme="paperlike"] .sx-old .sx-line.ln-del .sx-gnum {
+	color: #be123c;
+}
+[data-theme="paperlike"] .sx-new .sx-line.ln-add .sx-gnum {
+	color: #4d7c0f;
+}
+[data-theme="paperlike"] .sx-line.ln-empty {
+	background: #00000006;
+}
+/* selected ask-option: re-tint to the amber accent (base used the bright
+   orange alpha, which mismatches the deeper paper accent). */
+[data-theme="paperlike"] #modal .qopt.sel {
+	background: #b4530922;
+}
+/* syntax highlighting: vendor/highlight.css ships GitHub-Dark, whose bright
+   tokens wash out on cream. Override the common token classes with a
+   GitHub-Light-ish palette (higher specificity than the vendored rules, so
+   load order doesn't matter). */
+[data-theme="paperlike"] .hljs-comment,
+[data-theme="paperlike"] .hljs-quote {
+	color: #6e7781;
+}
+[data-theme="paperlike"] .hljs-keyword,
+[data-theme="paperlike"] .hljs-selector-tag,
+[data-theme="paperlike"] .hljs-literal,
+[data-theme="paperlike"] .hljs-doctag,
+[data-theme="paperlike"] .hljs-template-tag {
+	color: #cf222e;
+}
+[data-theme="paperlike"] .hljs-string,
+[data-theme="paperlike"] .hljs-regexp,
+[data-theme="paperlike"] .hljs-meta .hljs-string {
+	color: #0a3069;
+}
+[data-theme="paperlike"] .hljs-number,
+[data-theme="paperlike"] .hljs-symbol,
+[data-theme="paperlike"] .hljs-bullet {
+	color: #0550ae;
+}
+[data-theme="paperlike"] .hljs-title,
+[data-theme="paperlike"] .hljs-section,
+[data-theme="paperlike"] .hljs-name {
+	color: #0550ae;
+}
+[data-theme="paperlike"] .hljs-title.function_,
+[data-theme="paperlike"] .hljs-title.class_ {
+	color: #8250df;
+}
+[data-theme="paperlike"] .hljs-attr,
+[data-theme="paperlike"] .hljs-attribute,
+[data-theme="paperlike"] .hljs-variable,
+[data-theme="paperlike"] .hljs-template-variable,
+[data-theme="paperlike"] .hljs-type,
+[data-theme="paperlike"] .hljs-built_in {
+	color: #953800;
+}
+[data-theme="paperlike"] .hljs-meta {
+	color: #6e7781;
+}
+[data-theme="paperlike"] .hljs-addition {
+	background: #aff5b4;
+}
+[data-theme="paperlike"] .hljs-deletion {
+	background: #ffd8d3;
+}
+
+/*
+   ── obsidian decorative layer (default dark theme) ─────────────────────────
+   :root holds the obsidian palette; these rules add the "modern dark" feel on
+   top: a faint violet hero light-source, glassy overlays (translucent panel +
+   backdrop blur), and violet accent glows. Gated on [data-theme="obsidian"] so
+   they never leak into paperlike. The inline head script always sets the attr,
+   so the default load is fully decorated; a missing attr still gets the :root
+   palette (flat obsidian) as a graceful fallback.
+*/
+/* hero light-source: a soft violet glow radiating from the top of the canvas. */
+[data-theme="obsidian"] body {
+	background:
+		radial-gradient(
+			125% 55% at 50% -12%,
+			rgba(139, 92, 246, 0.12),
+			transparent 60%
+		),
+		var(--bg);
+}
+/* glass overlays: frosted panels over the content beneath them. */
+[data-theme="obsidian"] #settings,
+[data-theme="obsidian"] #modal .card,
+[data-theme="obsidian"] #activity {
+	background: rgba(19, 19, 22, 0.72);
+	backdrop-filter: blur(14px) saturate(140%);
+	-webkit-backdrop-filter: blur(14px) saturate(140%);
+}
+/* accent glows: the live status dot, primary Send, and jump-to-bottom pill
+   carry a violet halo. */
+[data-theme="obsidian"] #dot.live {
+	box-shadow:
+		0 0 0 3px rgba(139, 92, 246, 0.2),
+		0 0 12px rgba(139, 92, 246, 0.6);
+}
+[data-theme="obsidian"] .bar button.primary {
+	box-shadow:
+		0 0 0 1px rgba(139, 92, 246, 0.35),
+		0 6px 18px -6px rgba(139, 92, 246, 0.6);
+}
+[data-theme="obsidian"] #jump-bottom {
+	box-shadow: 0 6px 18px -6px rgba(139, 92, 246, 0.6);
+}
+/* selected ask-option: re-tint to violet (base used the old orange accent alpha). */
+[data-theme="obsidian"] #modal .qopt.sel {
+	background: rgba(139, 92, 246, 0.16);
 }

@@ -1,97 +1,228 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>pi</title>
-    <link rel="stylesheet" href="style.css" />
-  </head>
-  <body>
-    <header>
-      <span class="logo">◆ pi</span>
-      <select id="model" title="model"></select>
-      <button id="models-btn" title="reload models">↻</button>
-      <select id="think-sel" title="thinking level"></select>
-      <select id="pony-sel" title="ponytail mode"></select>
-      <button id="usage-btn" title="z.ai usage / quota">Usage</button>
-      <div id="usagebar" aria-hidden="true"></div>
-      <span id="status"
-        ><span id="dot"></span><span id="status-text">connecting…</span></span
-      >
-    </header>
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>pi</title>
+		<link rel="stylesheet" href="style.css" />
+		<link rel="stylesheet" href="vendor/highlight.css" />
+		<script>
+			// ponytail: anti-FOUC — apply saved theme before first paint (style.css is parsed above).
+			// Always set the attr (obsidian's decorative layer needs it); default
+			// obsidian; a stale "ayu" value (removed theme) collapses to obsidian.
+			(function () {
+				var t = localStorage.getItem("pi:theme");
+				if (t !== "paperlike" && t !== "obsidian") t = "obsidian";
+				document.documentElement.setAttribute("data-theme", t);
+			})();
+		</script>
+	</head>
+	<body>
+		<header>
+			<span class="logo">◆ pi</span>
+			<div id="usagebar" aria-hidden="true"></div>
+			<button
+				id="plan-badge"
+				class="plan-pill"
+				type="button"
+				title="plan &amp; spec"
+				hidden
+			>
+				📋 <span id="plan-count">0</span>
+			</button>
+			<span id="status"
+				><span id="dot"></span
+				><span id="status-text">connecting…</span></span
+			>
+			<button
+				id="refresh-btn"
+				title="reload page"
+				aria-label="reload page"
+			>
+				↻
+			</button>
+			<button id="settings-btn" title="settings" aria-label="settings">
+				⚙
+			</button>
+		</header>
 
-    <main id="transcript"></main>
-    <details id="todopanel" open>
-      <summary>
-        <span>todos</span><span class="count" id="tp-count">0/0</span>
-      </summary>
-      <div class="tbody" id="tp-body"></div>
-    </details>
-    <div class="activity idle" id="activity">
-      <span class="spin"></span><span class="idle-dot"></span
-      ><span class="alabel" id="act-label">connecting…</span>
-    </div>
+		<aside id="settings" aria-hidden="true">
+			<div class="set-head">
+				<h3>settings</h3>
+				<button
+					id="settings-close"
+					class="set-x"
+					type="button"
+					aria-label="close settings"
+				>
+					&times;
+				</button>
+			</div>
+			<section class="set-sec">
+				<h4>model &amp; behavior</h4>
+				<label class="set-row"
+					>model
+					<span class="set-inline"
+						><select id="model" title="model"></select
+						><button id="models-btn" title="reload models">
+							↻
+						</button></span
+					>
+				</label>
+				<label class="set-row"
+					>thinking
+					<select id="think-sel" title="thinking level"></select
+				></label>
+				<label class="set-row"
+					>ponytail
+					<select id="pony-sel" title="ponytail mode"></select
+				></label>
+			</section>
+			<section class="set-sec">
+				<h4>appearance</h4>
+				<label class="set-row"
+					>theme
+					<select id="theme-sel" title="color &amp; shape theme">
+						<option value="obsidian">obsidian</option>
+						<option value="paperlike">paperlike</option>
+					</select></label
+				>
+			</section>
+			<section class="set-sec">
+				<h4>subagent tiers</h4>
+				<p class="set-hint">model used per delegation tier.</p>
+				<label class="set-row"
+					>capable
+					<select
+						id="tier-capable"
+						title="model for planner/reviewer/debugger"
+					></select
+				></label>
+				<label class="set-row"
+					>implement
+					<select
+						id="tier-implement"
+						title="model for implementer"
+					></select
+				></label>
+				<label class="set-row"
+					>lookup
+					<select
+						id="tier-lookup"
+						title="model for scout/summarizer"
+					></select
+				></label>
+			</section>
+			<section class="set-sec">
+				<h4>developer</h4>
+				<label class="set-row"
+					>subagent view
+					<select id="sa-density" title="subagent live-view density">
+						<option value="full">full</option>
+						<option value="compact">compact</option>
+					</select>
+				</label>
+			</section>
+		</aside>
+		<div id="settings-back" aria-hidden="true"></div>
 
-    <footer>
-      <div class="composer">
-        <div id="palette"></div>
-        <div id="widget"></div>
-        <textarea
-          id="input"
-          placeholder="Send a message…  ( / for commands/skills, Shift+Enter for newline )"
-          rows="1"
-        ></textarea>
-        <div class="bar">
-          <button id="send" class="primary">Send</button>
-          <button id="stop" disabled>Stop</button>
-          <select id="mode" title="how to deliver while streaming">
-            <option value="auto">auto</option>
-            <option value="steer">steer</option>
-            <option value="followUp">follow-up</option>
-          </select>
-          <button
-            id="compact"
-            title="compact context (summarize to free space)"
-          >
-            ⇲ Compact
-          </button>
-          <button id="sessions" title="resume an older session">
-            ⏱ Sessions
-          </button>
-          <button id="new" title="new session">＋ New</button>
-          <span class="hint">Enter = send</span>
-        </div>
-      </div>
-      <div class="statusbar" id="statusbar">
-        <span>repo <code id="sb-repo">…</code></span
-        ><span class="sep">·</span> <span>git <code id="sb-git">…</code></span
-        ><span class="sep">·</span>
-        <span>model <code id="sb-model">…</code></span
-        ><span class="sep">·</span> <span>ctx <code id="sb-ctx">…</code></span
-        ><span class="sep">·</span>
-        <span>cache <code id="sb-cache">…</code></span
-        ><span class="sep">·</span> <span>tok <code id="sb-tok">…</code></span
-        ><span class="sep">·</span>
-        <span>$<code id="sb-cost">…</code></span>
-      </div>
-    </footer>
+		<div id="scroll-wrap">
+			<main id="transcript"></main>
+			<button
+				id="jump-bottom"
+				type="button"
+				title="Jump to latest"
+				aria-label="Jump to latest"
+			>
+				↓
+			</button>
+		</div>
+		<details id="todopanel" open>
+			<summary>
+				<span>todos</span><span class="count" id="tp-count">0/0</span>
+			</summary>
+			<div class="tbody" id="tp-body"></div>
+		</details>
+		<div class="activity idle" id="activity">
+			<span class="spin"></span><span class="idle-dot"></span
+			><span class="alabel" id="act-label">connecting…</span>
+		</div>
 
-    <div id="modal" role="dialog" aria-modal="false" aria-label="pi dialog">
-      <div id="modal-wrap">
-        <div class="card" id="modal-card"></div>
-        <button
-          id="modal-x"
-          class="modal-x"
-          type="button"
-          aria-label="Close dialog"
-          hidden
-        >
-          &times;
-        </button>
-      </div>
-    </div>
+		<footer>
+			<div class="composer">
+				<div id="palette"></div>
+				<div id="widget"></div>
+				<textarea
+					id="input"
+					placeholder="Send a message…  ( / for commands/skills, Shift+Enter for newline )"
+					rows="1"
+				></textarea>
+				<div class="bar">
+					<button id="send" class="primary">Send</button>
+					<button id="stop" disabled>Stop</button>
+					<select id="mode" title="how to deliver while streaming">
+						<option value="auto">auto</option>
+						<option value="steer">steer</option>
+						<option value="followUp">follow-up</option>
+					</select>
+					<button
+						id="compact"
+						title="compact context (summarize to free space)"
+					>
+						⇲ Compact
+					</button>
+					<button id="sessions" title="resume an older session">
+						⏱ Sessions
+					</button>
+					<button id="new" title="new session">＋ New</button>
+					<span class="hint">Enter = send</span>
+				</div>
+			</div>
+			<div class="statusbar" id="statusbar">
+				<span>repo <code id="sb-repo">…</code></span
+				><span class="sep">·</span>
+				<span>git <code id="sb-git">…</code></span
+				><span class="sep">·</span>
+				<span>model <code id="sb-model">…</code></span
+				><span class="sep">·</span>
+				<span>think <code id="sb-think">…</code></span
+				><span class="sep">·</span>
+				<span>ctx <code id="sb-ctx">…</code></span
+				><span class="sep">·</span>
+				<span>cache <code id="sb-cache">…</code></span
+				><span class="sep">·</span>
+				<span>tok <code id="sb-tok">…</code></span
+				><span class="sep">·</span>
+				<span>$<code id="sb-cost">…</code></span
+				><span class="sep">·</span>
+				<span
+					>ide
+					<code id="sb-ide" title="IDE hosting this panel"
+						>…</code
+					></span
+				>
+			</div>
+		</footer>
 
-    <script src="md.js"></script>
-    <script src="app.js"></script>
-  </body>
+		<div id="modal" role="dialog" aria-modal="false" aria-label="pi dialog">
+			<div id="modal-wrap">
+				<div class="card" id="modal-card"></div>
+				<button
+					id="modal-x"
+					class="modal-x"
+					type="button"
+					aria-label="Close dialog"
+					hidden
+				>
+					&times;
+				</button>
+			</div>
+		</div>
+
+		<script src="vendor/markdown-it.min.js"></script>
+		<script src="md.js"></script>
+		<script src="vendor/highlight.min.js"></script>
+		<script src="usage-provider.js"></script>
+		<script src="app.js"></script>
+	</body>
 </html>

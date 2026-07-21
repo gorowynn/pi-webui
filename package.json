@@ -1,20 +1,23 @@
 {
   "name": "pi-webui",
   "version": "0.2.0",
-  "description": "Minimal, zero-dependency web UI for pi. `pi install npm:pi-webui`, then type /webui.",
+  "description": "Minimal-dependency web UI for pi. `pi install npm:pi-webui`, then type /webui.",
   "keywords": ["pi-package"],
   "license": "MIT",
   "files": [
     "server.js",
     "index.html",
     "md.js",
-    "extensions"
+    "usage-provider.js",
+    "extensions",
+    "skills"
   ],
   "scripts": {
     "start": "node server.js"
   },
   "pi": {
-    "extensions": ["./extensions"]
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
