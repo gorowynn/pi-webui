@@ -44,7 +44,7 @@ runtime. Edit `app.js`/`style.css`/`index.html` + refresh = the dev loop.
 |------|------|
 | `server.js` | Bridge. CommonJS, ~no deps. Serves assets, frames JSONL (split on `\n` only), spawns/respawns `pi --mode rpc`, CSRF + DNS-rebinding gate, `safePath`, 1MB body cap. |
 | `index.html` | Markup only. Load order: `vendor/markdown-it.min.js` → `md.js` → `vendor/highlight.min.js` → `app.js`. |
-| `style.css` | All styling. Ayu-Dark — see [`docs/design.md`](docs/design.md). |
+| `style.css` | All styling. Obsidian (modern dark) by default + switchable `paperlike` (`[data-theme]`) — see [`docs/design.md`](docs/design.md). |
 | `md.js` | Thin shim over vendored markdown-it 14.x: `md(markdown)` (`html:false`/`breaks:true`/`linkify:true`, links `target=_blank`) + `esc()` (project-wide HTML-escaper source of truth, null-safe→`""`). Loads AFTER `markdown-it.min.js`; `require`-able in Node (self-test: `node -e "console.log(require('./md.js').md('**x**'))"`). |
 | `app.js` | Entire frontend (vanilla JS): SSE, rendering, modals, diffs, commands palette. Uses `md()`/`esc()` globals from md.js. |
 | `vendor/` | Vendored runtimes, served via `server.js` `STATIC` whitelist (no npm/build): **markdown-it** v14.1.0 UMD (`window.markdownit`), **highlight.js** v11.11.1 common + `highlight.css` github-dark. `app.js` `highlightCode()` post-processes `pre code`. Both degrade silently if missing (md.js→escaped text; hljs→uncolored). |

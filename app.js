@@ -59,7 +59,9 @@ const stripAnsi = (s) => String(s).replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
 
 function nearBottom() {
 	return (
-		transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <
+		transcript.scrollHeight -
+			transcript.scrollTop -
+			transcript.clientHeight <
 		120
 	);
 }
@@ -134,7 +136,10 @@ if (jumpBottom)
 		pinned = true;
 		unread = 0;
 		refreshJump();
-		transcript.scrollTo({ top: transcript.scrollHeight, behavior: "smooth" });
+		transcript.scrollTo({
+			top: transcript.scrollHeight,
+			behavior: "smooth",
+		});
 	});
 
 function addUser(text) {
@@ -163,7 +168,10 @@ function addUser(text) {
 function addAssistantText(text) {
 	const m = document.createElement("div");
 	m.className = "msg";
-	setSafeHtml(m, `<div class="bubble"><div class="role">assistant</div></div>`);
+	setSafeHtml(
+		m,
+		`<div class="bubble"><div class="role">assistant</div></div>`,
+	);
 	const p = document.createElement("div");
 	setSafeHtml(p, md(text));
 	m.querySelector(".bubble").appendChild(p);
@@ -174,7 +182,10 @@ function addAssistantText(text) {
 function newAssistantBubble() {
 	const m = document.createElement("div");
 	m.className = "msg";
-	setSafeHtml(m, `<div class="bubble"><div class="role">assistant</div></div>`);
+	setSafeHtml(
+		m,
+		`<div class="bubble"><div class="role">assistant</div></div>`,
+	);
 	transcript.appendChild(m);
 	cur = {
 		bubble: m.querySelector(".bubble"),
@@ -219,7 +230,8 @@ function renderText(force) {
 function nonEmptyContent(content) {
 	return (content || []).filter(
 		(b) =>
-			(b.type === "text" && b.text) || (b.type === "thinking" && b.thinking),
+			(b.type === "text" && b.text) ||
+			(b.type === "thinking" && b.thinking),
 	);
 }
 // ponytail: syntax-highlight code blocks via the vendored highlight.js
@@ -440,7 +452,9 @@ function describeChildCall(name, args) {
 	if (name === "edit" || name === "write")
 		return name + " " + ((args && args.path) || "");
 	if (name === "grep" || name === "find")
-		return name + " " + ((args && args.pattern) || (args && args.path) || "");
+		return (
+			name + " " + ((args && args.pattern) || (args && args.path) || "")
+		);
 	if (name === "ls") return "ls " + ((args && args.path) || ".");
 	return name || "?";
 }
@@ -503,7 +517,9 @@ function renderSubagentView(host, details, density) {
 		const model = r.model
 			? ` <span class="sa-model">${esc(r.model.split("/").pop())}</span>`
 			: "";
-		const turns = r.turns ? ` <span class="sa-turns">${r.turns}t</span>` : "";
+		const turns = r.turns
+			? ` <span class="sa-turns">${r.turns}t</span>`
+			: "";
 		html += `<div class="sa-row"><span class="sa-ic">${statusIcon(r)}</span><span class="sa-agent">${esc(r.agent)}</span>${tier}${model}${turns}</div>`;
 		html += `<div class="sa-items">${childItems(r.messages, itemLimit)}</div>`;
 	}
@@ -536,7 +552,8 @@ function splitHtmlLines(html) {
 			const parts = tok.split("\n");
 			for (let i = 0; i < parts.length; i++) {
 				if (i > 0) {
-					for (let k = stack.length - 1; k >= 0; k--) cur += "</span>";
+					for (let k = stack.length - 1; k >= 0; k--)
+						cur += "</span>";
 					lines.push(cur);
 					cur = stack.map((c) => `<span class="${c}">`).join("");
 				}
@@ -679,7 +696,12 @@ function diffRows(a, b) {
 				const d = dels[k],
 					a2 = adds[k];
 				rows.push({
-					kind: d != null && a2 != null ? "mod" : d != null ? "del" : "add",
+					kind:
+						d != null && a2 != null
+							? "mod"
+							: d != null
+								? "del"
+								: "add",
 					left: d != null ? d : null,
 					right: a2 != null ? a2 : null,
 				});
@@ -861,9 +883,10 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 				}
 			});
 		}
-		host
-			.querySelector(".sxs")
-			.style.setProperty("--sx-gutter", gutterCh(maxNum));
+		host.querySelector(".sxs").style.setProperty(
+			"--sx-gutter",
+			gutterCh(maxNum),
+		);
 	};
 	if (!isWrite && baseOld) {
 		// ponytail: caller may pass a precomputed start line (a multi-hunk
@@ -988,7 +1011,8 @@ async function applyEdit(path, baselineNew, edited, isWrite, btn, onOk) {
 // ---- working indicator: spinner + current activity ----
 function describeTool(name, args) {
 	if (!args) return name || "tool";
-	if (name === "edit" || name === "write") return `${name} ${args.path || ""}`;
+	if (name === "edit" || name === "write")
+		return `${name} ${args.path || ""}`;
 	if (name === "read") return `reading ${args.path || ""}`;
 	if (name === "bash")
 		return `bash: ${String(args.command || "").slice(0, 60)}`;
@@ -1186,7 +1210,8 @@ function zaiLimits(data) {
 	for (const l of limits) {
 		if (!l || typeof l !== "object") continue;
 		const base = {
-			label: LIMIT_TYPES[l.type] || (l.type || "quota").replace(/_/g, " "),
+			label:
+				LIMIT_TYPES[l.type] || (l.type || "quota").replace(/_/g, " "),
 			window: windowLabel(l),
 			windowMs: windowMs(l),
 			reset: l.nextResetTime ? new Date(l.nextResetTime) : null,
@@ -1341,7 +1366,9 @@ function usageKeyForm() {
 	);
 }
 function usageProviderLabel(provider) {
-	return /codex/i.test(provider || "") ? "ChatGPT/Codex" : provider || "model";
+	return /codex/i.test(provider || "")
+		? "ChatGPT/Codex"
+		: provider || "model";
 }
 let sessionUsage = null;
 function renderSessionUsage(provider) {
@@ -1407,7 +1434,10 @@ async function renderUsage(provider) {
 async function showUsage() {
 	const provider = currentProvider;
 	const title = `${usageProviderLabel(provider)} usage`;
-	showModal(`<h3>${esc(title)}</h3><p class="um-hint">loading\u2026</p>`, true);
+	showModal(
+		`<h3>${esc(title)}</h3><p class="um-hint">loading\u2026</p>`,
+		true,
+	);
 	let inner;
 	try {
 		inner = await renderUsage(provider);
@@ -1532,7 +1562,9 @@ function applyTodoOp(args) {
 			if (t) t.status = normStatus(u.status);
 		});
 	} else if (a === "remove") {
-		const drop = new Set((Array.isArray(args.ids) ? args.ids : []).map(String));
+		const drop = new Set(
+			(Array.isArray(args.ids) ? args.ids : []).map(String),
+		);
 		todos = todos.filter((t) => !drop.has(String(t.id)));
 	} else if (a === "clear") {
 		todos = [];
@@ -1893,7 +1925,9 @@ function askQuestion(args) {
 		};
 
 		if (multi) {
-			const chosen = new Set(Array.isArray(answers[qi]) ? answers[qi] : []);
+			const chosen = new Set(
+				Array.isArray(answers[qi]) ? answers[qi] : [],
+			);
 			opts.forEach((o) => {
 				const lbl = o.label;
 				const b = optBtn(o, lbl);
@@ -1934,7 +1968,10 @@ function askQuestion(args) {
 				inp.type = "text";
 				inp.placeholder = "Type something…";
 				const prev = answers[qi];
-				if (typeof prev === "string" && !opts.some((o) => o.label === prev))
+				if (
+					typeof prev === "string" &&
+					!opts.some((o) => o.label === prev)
+				)
 					inp.value = prev;
 				const ok = document.createElement("button");
 				ok.textContent = "Send";
@@ -2026,7 +2063,8 @@ function askQuestion(args) {
 				question: q.question,
 				kind: isOption ? "option" : "custom",
 				answer: a,
-				preview: isOption && opt && opt.preview ? opt.preview : undefined,
+				preview:
+					isOption && opt && opt.preview ? opt.preview : undefined,
 			};
 		});
 		api({
@@ -2082,7 +2120,12 @@ const RISK_RULES = [
 		"sql",
 		"destroys database data (DROP/TRUNCATE)",
 	],
-	[/\bmkfs(?:\.\w+)?\b/i, 3, "mkfs", "formats a filesystem -- erases the disk"],
+	[
+		/\bmkfs(?:\.\w+)?\b/i,
+		3,
+		"mkfs",
+		"formats a filesystem -- erases the disk",
+	],
 	[/\bdd\b[^|&;\n]*\bof=\/dev\//i, 3, "dd", "raw-writes to a block device"],
 	[
 		/\b(?:shutdown|reboot|halt|poweroff|init\s+0)\b/i,
@@ -2240,7 +2283,11 @@ function renderEditDiffPreviews(container) {
 			items.push({
 				label:
 					inp.edits.length > 1
-						? base + " \u00b7 edit " + (ei + 1) + "/" + inp.edits.length
+						? base +
+							" \u00b7 edit " +
+							(ei + 1) +
+							"/" +
+							inp.edits.length
 						: base,
 				build: (host) =>
 					mountSideBySide(
@@ -2257,9 +2304,16 @@ function renderEditDiffPreviews(container) {
 		items.push({
 			label: base + " \u00b7 write",
 			build: (host) =>
-				mountSideBySide(host, inp.path || "", null, inp.content || "", true, {
-					readOnly: true,
-				}),
+				mountSideBySide(
+					host,
+					inp.path || "",
+					null,
+					inp.content || "",
+					true,
+					{
+						readOnly: true,
+					},
+				),
 		});
 	}
 	if (!items.length) return null;
@@ -2324,10 +2378,12 @@ function renderEditDiffPreviews(container) {
 						if (!needle) continue;
 						const at = content.indexOf(needle);
 						if (at >= 0) {
-							const start = content.slice(0, at).split("\n").length;
+							const start = content
+								.slice(0, at)
+								.split("\n").length;
 							tab.textContent += " \u00b7 L" + start;
 							tab.title = tab.textContent;
-						break;
+							break;
 						}
 					}
 				});
@@ -2445,7 +2501,9 @@ function mountEditableDiff(container, oldText, newText, path) {
 	host.className = "sx-host";
 	container.classList.add("wide");
 	container.querySelector(".opts").before(host);
-	mountSideBySide(host, path || "", oldText, newText, false, { capture: true });
+	mountSideBySide(host, path || "", oldText, newText, false, {
+		capture: true,
+	});
 	const ta = host.querySelector(".sx-ta");
 	return (label) => {
 		const edited = ta.value;
@@ -2478,7 +2536,10 @@ function installCtxStepper(card, enabled, rebuild) {
 	inc.className = "sx-ctx-btn";
 	inc.textContent = "+";
 	const apply = (v) => {
-		localStorage.setItem("pi:diffCtx", String(Math.max(0, Math.min(80, v))));
+		localStorage.setItem(
+			"pi:diffCtx",
+			String(Math.max(0, Math.min(80, v))),
+		);
 		rebuild();
 	};
 	dec.onclick = () => apply(getDiffCtx() - 1);
@@ -2904,7 +2965,11 @@ function handle(payload) {
 					cur._blk.thinking += e.delta || "";
 				scheduleRender();
 			} else if (e.type === "thinking_end") {
-				if (cur._blk && cur._blk.type === "thinking" && e.content != null)
+				if (
+					cur._blk &&
+					cur._blk.type === "thinking" &&
+					e.content != null
+				)
 					cur._blk.thinking = e.content;
 				cur._blk = null;
 				if (e.content != null) {
@@ -2957,7 +3022,10 @@ function handle(payload) {
 			// subagent: render the live details (child tool calls, parallel/chain
 			// progress, per-result status). The generic text path below still fills
 			// in the final "(running…)" / partial text as a fallback.
-			if (payload.toolName === "subagent" && payload.partialResult.details)
+			if (
+				payload.toolName === "subagent" &&
+				payload.partialResult.details
+			)
 				renderSubagentView(
 					w.out,
 					payload.partialResult.details,
@@ -2982,7 +3050,8 @@ function handle(payload) {
 					.map((b) => b.text)
 					.join("\n");
 				if (
-					(payload.toolName === "edit" || payload.toolName === "write") &&
+					(payload.toolName === "edit" ||
+						payload.toolName === "write") &&
 					w.args &&
 					!payload.isError
 				) {
@@ -3002,10 +3071,17 @@ function handle(payload) {
 						// refetch. Misses fall back to the 1-based default.
 						const ePath = ea.path || "";
 						const fileP = ePath
-							? fetch("/api/file?path=" + encodeURIComponent(ePath))
-								.then((r) => r.json())
-								.then((j) => (j && j.ok && j.content != null ? j.content : null))
-								.catch(() => null)
+							? fetch(
+									"/api/file?path=" +
+										encodeURIComponent(ePath),
+								)
+									.then((r) => r.json())
+									.then((j) =>
+										j && j.ok && j.content != null
+											? j.content
+											: null,
+									)
+									.catch(() => null)
 							: Promise.resolve(null);
 						ea.edits.forEach((e, idx) => {
 							const multi = ea.edits.length > 1;
@@ -3022,27 +3098,45 @@ function handle(payload) {
 							fileP.then((content) => {
 								let start = null;
 								if (content) {
-									for (const needle of [e.oldText, e.newText]) {
+									for (const needle of [
+										e.oldText,
+										e.newText,
+									]) {
 										if (!needle) continue;
 										const at = content.indexOf(needle);
 										if (at >= 0) {
-											start = content.slice(0, at).split("\n").length;
+											start = content
+												.slice(0, at)
+												.split("\n").length;
 											break;
 										}
 									}
 								}
 								if (dh && start)
 									dh.textContent = `edit ${idx + 1}/${ea.edits.length} \u00b7 L${start}`;
-								mountSideBySide(host, ePath, e.oldText || "", e.newText || "", false, {
-									startLine: start,
-								});
+								mountSideBySide(
+									host,
+									ePath,
+									e.oldText || "",
+									e.newText || "",
+									false,
+									{
+										startLine: start,
+									},
+								);
 							});
 						});
 					} else if (payload.toolName === "write") {
 						var host = document.createElement("div");
 						host.className = "sx-host";
 						w.out.appendChild(host);
-						mountSideBySide(host, ea.path || "", null, ea.content || "", true);
+						mountSideBySide(
+							host,
+							ea.path || "",
+							null,
+							ea.content || "",
+							true,
+						);
 					}
 					if (t) {
 						var rt = document.createElement("div");
@@ -3059,7 +3153,11 @@ function handle(payload) {
 						payload.result &&
 						payload.result.details
 					) {
-						renderSubagentView(w.out, payload.result.details, subagentDensity);
+						renderSubagentView(
+							w.out,
+							payload.result.details,
+							subagentDensity,
+						);
 						if (t) {
 							var rt = document.createElement("div");
 							rt.className = "sa-foot";
@@ -3121,7 +3219,9 @@ function handle(payload) {
 				r.result.tokensBefore > 0
 			) {
 				var pct = Math.round(
-					(1 - r.result.estimatedTokensAfter / r.result.tokensBefore) * 100,
+					(1 -
+						r.result.estimatedTokensAfter / r.result.tokensBefore) *
+						100,
 				);
 				note(
 					`compacted: ${fmt(r.result.tokensBefore)} → ${fmt(r.result.estimatedTokensAfter)} tokens (−${pct}%${r.reason === "overflow" ? ", retrying" : ""})`,
@@ -3148,17 +3248,27 @@ function handle(payload) {
 	}
 }
 
-const sb = ["repo", "git", "model", "ctx", "cache", "tok", "cost"].reduce(
-	(o, k) => ((o[k] = $("sb-" + k)), o),
-	{},
-);
+const sb = [
+	"repo",
+	"git",
+	"model",
+	"think",
+	"ctx",
+	"cache",
+	"tok",
+	"cost",
+].reduce((o, k) => ((o[k] = $("sb-" + k)), o), {});
 function refreshSbModel() {
-	sb.model.textContent = (modelSel.selectedOptions[0] || {}).textContent || "…";
+	sb.model.textContent =
+		(modelSel.selectedOptions[0] || {}).textContent || "…";
+}
+function refreshSbThink() {
+	sb.think.textContent = thinkSel.value || "—";
 }
 // ponytail: header dropdowns for thinking level (set_thinking_level RPC) and
 // ponytail mode (/ponytail extension command). Both sync from pi on load;
-// the statusbar "think" readout is gone — the select is the single source.
-["off", "minimal", "low", "medium", "high", "xhigh"].forEach((l) =>
+// the statusbar think readout mirrors the select (refreshSbThink).
+["off", "minimal", "low", "medium", "high", "xhigh", "max"].forEach((l) =>
 	thinkSel.add(new Option("think: " + l, l)),
 );
 ["off", "lite", "full", "ultra"].forEach((m) =>
@@ -3166,16 +3276,21 @@ function refreshSbModel() {
 );
 function setThinkSel(level) {
 	if (level) thinkSel.value = level;
+	refreshSbThink();
 }
-thinkSel.onchange = () =>
+thinkSel.onchange = () => {
 	api({ type: "set_thinking_level", level: thinkSel.value });
+	refreshSbThink();
+};
 ponySel.onchange = () =>
 	api({ type: "prompt", message: "/ponytail " + ponySel.value });
 async function refreshPonytailMode(sessionFile) {
 	try {
 		const m = await fetch(
 			"/api/ponytail-mode" +
-				(sessionFile ? "?session=" + encodeURIComponent(sessionFile) : ""),
+				(sessionFile
+					? "?session=" + encodeURIComponent(sessionFile)
+					: ""),
 		).then((r) => r.json());
 		if (m && m.ok && m.mode) ponySel.value = m.mode;
 	} catch {}
@@ -3299,7 +3414,8 @@ es.onmessage = (ev) => {
 		// intercept init responses to populate UI
 		if (p.type === "response" && p.success) {
 			if (p.id === "init-state" && p.data) {
-				if (p.data.thinkingLevel != null) setThinkSel(p.data.thinkingLevel);
+				if (p.data.thinkingLevel != null)
+					setThinkSel(p.data.thinkingLevel);
 				if (p.data.isStreaming != null && p.data.isStreaming) {
 					setStreaming(true);
 					setActivity("working…", true);
@@ -3368,7 +3484,8 @@ es.onmessage = (ev) => {
 					refreshStats();
 				}
 			} else if (
-				(p.command === "switch_session" || p.command === "new_session") &&
+				(p.command === "switch_session" ||
+					p.command === "new_session") &&
 				(!p.data || !p.data.cancelled)
 			) {
 				// session replaced (resume / new) — re-render history + state for the now-active session
@@ -3381,7 +3498,10 @@ es.onmessage = (ev) => {
 		} else {
 			if (p.type === "thinking_level_changed" && p.level != null)
 				setThinkSel(p.level);
-			else if (p.type === "agent_end" || p.type === "session_info_changed")
+			else if (
+				p.type === "agent_end" ||
+				p.type === "session_info_changed"
+			)
 				refreshStats();
 			handle(p);
 		}
@@ -3494,6 +3614,19 @@ saDensitySel.onchange = () => {
 	subagentDensity = saDensitySel.value;
 	localStorage.setItem("pi:sa-density", subagentDensity);
 };
+// theme switch (color + shape + type) → <html data-theme>. The inline head
+// script applies the saved value before first paint; here we keep the select
+// in sync and persist changes. Anything but "paperlike" (incl. a stale "ayu"
+// from the removed default, or null) reads as the obsidian default. localStorage
+// hint mirrors pi:sa-density.
+const themeSel = $("theme-sel");
+themeSel.value =
+	localStorage.getItem("pi:theme") === "paperlike" ? "paperlike" : "obsidian";
+themeSel.onchange = () => {
+	const t = themeSel.value;
+	document.documentElement.setAttribute("data-theme", t);
+	localStorage.setItem("pi:theme", t);
+};
 
 // ---- subagent tier-model selects ----
 // Defaults mirror subagent.ts TIERS exactly. The server holds the truth
@@ -3588,7 +3721,11 @@ async function send() {
 		// ponytail: RPC wire key is "follow_up" (snake-case), not "followUp";
 		// auto defaults to steer. See pi dist modes/rpc/rpc-types.d.ts.
 		const how =
-			mode === "auto" ? "steer" : mode === "followUp" ? "follow_up" : mode;
+			mode === "auto"
+				? "steer"
+				: mode === "followUp"
+					? "follow_up"
+					: mode;
 		cmd =
 			how === "prompt"
 				? { type: "prompt", message: text }

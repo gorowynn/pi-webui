@@ -1,20 +1,27 @@
 :root {
-	/* Ayu-Dark system per design.md: warm orange action, cyan technical, lime success, slate muted. */
-	--bg: #0b0e14;
-	--panel: #0e1118;
-	--panel2: #141923;
-	--border: #1e222c;
-	--text: #b3b1ad;
-	--muted: #5c6773;
-	--user: #141923;
-	--accent: #ff9f43; /* headers / actions / user stripe */
-	--cyan: #5ccfe6; /* code / paths / links */
-	--ok: #a6cc70;
-	--warn: #ffcc66;
-	--err: #f28779;
-	--think: #16131f;
-	/* ponytail: single flat radius token. 2px reads square without aliasing harsh; bump to 0 for brutalist, 4 for softer. */
-	--r: 2px;
+	/* Default theme = obsidian: near-black canvas, glassy overlays, soft violet
+	   accent glows (decorative rules under [data-theme="obsidian"] below). Alt:
+	   paperlike ([data-theme="paperlike"]). Palette intent lives in docs/design.md. */
+	--bg: #0a0a0b;
+	--panel: #131316;
+	--panel2: #1a1a20;
+	--border: #26262d;
+	--text: #ededed;
+	--muted: #71717a;
+	--user: #16161c;
+	--accent: #8b5cf6; /* violet-500: headers / actions / user stripe */
+	--cyan: #60a5fa; /* blue-400: code / paths / links */
+	--ok: #34d399; /* emerald-400 */
+	--warn: #fbbf24; /* amber-400 */
+	--err: #fb7185; /* rose-400 */
+	--think: #15131c; /* faint violet-tinted "musing" panel */
+	/* ponytail: single radius token. 8px = modern/rounded (obsidian default);
+	   paperlike sets 6; drop to 0-2 for brutalist. */
+	--r: 8px;
+	/* ponytail: elevation carries a quiet violet glow halo (obsidian default);
+	   paperlike overrides to a warm soft shadow. */
+	--shadow:
+		0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px -8px rgba(139, 92, 246, 0.22);
 }
 * {
 	box-sizing: border-box;
@@ -205,6 +212,7 @@ pre {
 	background: #0009;
 	border: 1px solid var(--border);
 	border-radius: var(--r);
+	box-shadow: var(--shadow);
 	padding: 8px 10px;
 	overflow: auto;
 	margin: 6px 0;
@@ -242,6 +250,7 @@ pre code.hljs {
 	margin: 10px 0;
 	border: 1px solid #6b5b8a55;
 	border-left: 2px solid #c4a7e7;
+	box-shadow: var(--shadow);
 	overflow: hidden;
 }
 .think > summary {
@@ -316,6 +325,7 @@ pre code.hljs {
 	border: 1px solid var(--border);
 	border-left: 2px solid var(--ok);
 	border-radius: var(--r);
+	box-shadow: var(--shadow);
 	background: #00000040;
 }
 .tool > summary {
@@ -1974,4 +1984,198 @@ textarea:focus-visible,
 .doc-body th {
 	border: 1px solid var(--border);
 	padding: 2px 8px;
+}
+
+/*
+   ── paperlike theme ──────────────────────────────────────────────────────────
+   Switchable design: warm cream paper + dark ink, serif prose, softer corners
+   and subtle shadows (a raised-card feel) instead of hard borders. Applied by
+   <html data-theme="paperlike">; toggled from the settings sidebar and chosen by
+   the inline head script before first paint (no FOUC). Default is :root
+   (obsidian); this block is same-specificity but later in source, so it wins
+   only when the attribute is present.
+
+   ponytail: layout structure is untouched — shape/type/colour carry the paper
+   feel. A centered max-width "sheet" transcript is a nicer paper metaphor but
+   risks the flex layout; add later if wanted.
+*/
+[data-theme="paperlike"] {
+	--bg: #f5f0e6; /* warm cream paper */
+	--panel: #efe9dc; /* header / sidebars */
+	--panel2: #e9e2d2; /* block containers */
+	--border: #ddd2bd; /* warm hairline */
+	--text: #3a342a; /* dark warm ink */
+	--muted: #8a7f70; /* sepia metadata */
+	--user: #ece4d4;
+	--accent: #b45309; /* amber-700: strong on cream */
+	--cyan: #0e7490; /* cyan-700: paths / links */
+	--ok: #4d7c0f; /* lime-700 */
+	--warn: #a16207; /* yellow-700 */
+	--err: #be123c; /* rose-700 */
+	--think: #ece3d0; /* soft warm "musing" panel */
+	--r: 6px; /* softer paper corners (vs 2px dark) */
+	--shadow:
+		0 1px 2px rgba(60, 50, 30, 0.07), 0 1px 3px rgba(60, 50, 30, 0.05);
+	scrollbar-color: var(--muted) transparent;
+}
+/* prose reads as a serif document; chrome (header/footer/sidebar/modal) keeps
+   the mono identity, so the conversation sits in a tool frame. Code stays mono
+   via its own rule. System serifs only — zero-build invariant preserved. */
+[data-theme="paperlike"] #transcript {
+	font-family:
+		"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, Cambria,
+		"Times New Roman", serif;
+	font-size: 14px;
+	line-height: 1.7;
+}
+/* code listings: near-white paper with a warm hairline (not a black slab). */
+[data-theme="paperlike"] pre {
+	background: #fbfaf4;
+	border-color: #e2d8c4;
+}
+/* tool cards: replace the dark overlay with a clean panel + soft shadow. */
+[data-theme="paperlike"] .tool {
+	background: var(--panel);
+}
+/* thinking block: keep a quiet violet identity but readable on cream. */
+[data-theme="paperlike"] .think {
+	border-color: #e0d6c4;
+	border-left-color: #8e6fb0;
+}
+[data-theme="paperlike"] .think > summary {
+	color: #7a6b8a;
+}
+[data-theme="paperlike"] .think .tspin {
+	border-color: #7a6b8a;
+	border-top-color: transparent;
+}
+[data-theme="paperlike"] .think .tlabel {
+	color: #7a6b8a;
+}
+[data-theme="paperlike"] .think .tbody {
+	color: #4a4338;
+	border-top-color: #00000012;
+}
+/* diff panes: paper-white body, darker red/green labels (light tints were
+   invisible on cream). */
+[data-theme="paperlike"] .sx-body {
+	background: #fbfaf4;
+}
+[data-theme="paperlike"] .sx-old .sx-hdr {
+	color: #be123c;
+}
+[data-theme="paperlike"] .sx-new .sx-hdr {
+	color: #4d7c0f;
+}
+[data-theme="paperlike"] .sx-old .sx-line.ln-del .sx-gnum {
+	color: #be123c;
+}
+[data-theme="paperlike"] .sx-new .sx-line.ln-add .sx-gnum {
+	color: #4d7c0f;
+}
+[data-theme="paperlike"] .sx-line.ln-empty {
+	background: #00000006;
+}
+/* selected ask-option: re-tint to the amber accent (base used the bright
+   orange alpha, which mismatches the deeper paper accent). */
+[data-theme="paperlike"] #modal .qopt.sel {
+	background: #b4530922;
+}
+/* syntax highlighting: vendor/highlight.css ships GitHub-Dark, whose bright
+   tokens wash out on cream. Override the common token classes with a
+   GitHub-Light-ish palette (higher specificity than the vendored rules, so
+   load order doesn't matter). */
+[data-theme="paperlike"] .hljs-comment,
+[data-theme="paperlike"] .hljs-quote {
+	color: #6e7781;
+}
+[data-theme="paperlike"] .hljs-keyword,
+[data-theme="paperlike"] .hljs-selector-tag,
+[data-theme="paperlike"] .hljs-literal,
+[data-theme="paperlike"] .hljs-doctag,
+[data-theme="paperlike"] .hljs-template-tag {
+	color: #cf222e;
+}
+[data-theme="paperlike"] .hljs-string,
+[data-theme="paperlike"] .hljs-regexp,
+[data-theme="paperlike"] .hljs-meta .hljs-string {
+	color: #0a3069;
+}
+[data-theme="paperlike"] .hljs-number,
+[data-theme="paperlike"] .hljs-symbol,
+[data-theme="paperlike"] .hljs-bullet {
+	color: #0550ae;
+}
+[data-theme="paperlike"] .hljs-title,
+[data-theme="paperlike"] .hljs-section,
+[data-theme="paperlike"] .hljs-name {
+	color: #0550ae;
+}
+[data-theme="paperlike"] .hljs-title.function_,
+[data-theme="paperlike"] .hljs-title.class_ {
+	color: #8250df;
+}
+[data-theme="paperlike"] .hljs-attr,
+[data-theme="paperlike"] .hljs-attribute,
+[data-theme="paperlike"] .hljs-variable,
+[data-theme="paperlike"] .hljs-template-variable,
+[data-theme="paperlike"] .hljs-type,
+[data-theme="paperlike"] .hljs-built_in {
+	color: #953800;
+}
+[data-theme="paperlike"] .hljs-meta {
+	color: #6e7781;
+}
+[data-theme="paperlike"] .hljs-addition {
+	background: #aff5b4;
+}
+[data-theme="paperlike"] .hljs-deletion {
+	background: #ffd8d3;
+}
+
+/*
+   ── obsidian decorative layer (default dark theme) ─────────────────────────
+   :root holds the obsidian palette; these rules add the "modern dark" feel on
+   top: a faint violet hero light-source, glassy overlays (translucent panel +
+   backdrop blur), and violet accent glows. Gated on [data-theme="obsidian"] so
+   they never leak into paperlike. The inline head script always sets the attr,
+   so the default load is fully decorated; a missing attr still gets the :root
+   palette (flat obsidian) as a graceful fallback.
+*/
+/* hero light-source: a soft violet glow radiating from the top of the canvas. */
+[data-theme="obsidian"] body {
+	background:
+		radial-gradient(
+			125% 55% at 50% -12%,
+			rgba(139, 92, 246, 0.12),
+			transparent 60%
+		),
+		var(--bg);
+}
+/* glass overlays: frosted panels over the content beneath them. */
+[data-theme="obsidian"] #settings,
+[data-theme="obsidian"] #modal .card,
+[data-theme="obsidian"] #activity {
+	background: rgba(19, 19, 22, 0.72);
+	backdrop-filter: blur(14px) saturate(140%);
+	-webkit-backdrop-filter: blur(14px) saturate(140%);
+}
+/* accent glows: the live status dot, primary Send, and jump-to-bottom pill
+   carry a violet halo. */
+[data-theme="obsidian"] #dot.live {
+	box-shadow:
+		0 0 0 3px rgba(139, 92, 246, 0.2),
+		0 0 12px rgba(139, 92, 246, 0.6);
+}
+[data-theme="obsidian"] .bar button.primary {
+	box-shadow:
+		0 0 0 1px rgba(139, 92, 246, 0.35),
+		0 6px 18px -6px rgba(139, 92, 246, 0.6);
+}
+[data-theme="obsidian"] #jump-bottom {
+	box-shadow: 0 6px 18px -6px rgba(139, 92, 246, 0.6);
+}
+/* selected ask-option: re-tint to violet (base used the old orange accent alpha). */
+[data-theme="obsidian"] #modal .qopt.sel {
+	background: rgba(139, 92, 246, 0.16);
 }
