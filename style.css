@@ -623,8 +623,14 @@ pre code.hljs {
 /* editable new pane: transparent textarea layered over a colored body.
          Its left padding mirrors the gutter width so typed text lines up with
          the highlight rows behind it (gutter shows through the transparency). */
+/* ponytail: .sx-edit is a flex column so .sx-ta can flex to fill it. Sizing
+   the textarea with flex (not height:%) is what makes it fill the modal column
+   — percentage heights don't resolve up an indefinite-height (max-height only)
+   flex chain, so height:100% collapsed the textarea to its ~2-row default. */
 .sx-edit {
 	position: relative;
+	display: flex;
+	flex-direction: column;
 }
 .sx-hlbody {
 	position: absolute;
@@ -756,15 +762,18 @@ pre code.hljs {
 	height: auto;
 }
 /* editable approval modal: .sx-edit flexes to fill its column; the .sx-ta
-   transparent overlay fills .sx-edit so it tracks the highlight rows behind it
-   (was fixed 72vh, which left dead space below the scrollbar). */
+   transparent overlay flexes to fill .sx-edit so it tracks the highlight rows
+   behind it and its scroll stays in sync (was fixed 72vh → dead space; then
+   height:100% → didn't resolve up the max-height-only chain, collapsing the
+   textarea to ~2 rows so its scroll desynced from the highlight). */
 #modal .sx-edit {
 	flex: 1 1 auto;
 	min-height: 0;
 }
 #modal .sx-ta {
-	height: 100%;
+	flex: 1 1 auto;
 	min-height: 0;
+	height: auto;
 }
 /* tab strip when multiple edit hunks need reviewing */
 .sx-tabs-wrap {

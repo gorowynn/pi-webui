@@ -6,6 +6,22 @@
 
 ## Changelog
 
+### 2026-07-21 — fix(webui): modal diff scroll broken; editable textarea collapsed to ~2 rows
+
+- **What:** in the edit/write approval modal the editable proposal pane (right
+  column) didn't scroll and its scrollbar sat wrong over the text.
+- **Why:** the modal textarea used `height: 100%`, but the height chain upward
+  is all `max-height` (indefinite), so the percentage never resolved and the
+  textarea fell back to its ~2-row default. That shrunken textarea scrolled
+  independently of the full-height highlight layer behind it (scroll desynced)
+  and its scrollbar rendered in the wrong place. The left (read-only) pane was
+  fine because it is flex-sized, not percentage.
+- **Fix:** `.sx-edit` is now a flex column and the modal `.sx-ta` sizes with
+  `flex: 1 1 auto` instead of `height: 100%`, so it fills its column like the
+  left pane and the two scroll in sync. Transcript (non-modal) diff unchanged
+  (textarea keeps its fixed 300px).
+- **Files:** `style.css` (`.sx-edit` flex column; `#modal .sx-ta` flex sizing).
+
 ### 2026-07-21 — docs: mark roadmap theme item shipped; drop stale latest_review.md
 
 - **What:** `docs/roadmap.md` #11 (theme settings) → **SHIPPED** (obsidian +
