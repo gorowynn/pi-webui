@@ -1916,57 +1916,130 @@ textarea:focus-visible,
 	pointer-events: auto;
 }
 
-/* plan/spec header pill + tabbed viewer modal */
-.plan-pill {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	padding: 2px 8px;
-	font-size: 12px;
-	color: var(--accent);
-	background: var(--panel2);
-	border: 1px solid var(--border);
-	border-radius: var(--r);
-	cursor: pointer;
-}
-.plan-pill[hidden] {
+/* plan/spec left rail: narrow vertical stepper that expands into a rendered
+   doc pane. Shown only while an active (non-verify) SDD set exists. Fixed to
+   the left edge; body margin-left pushes the whole in-flow app right (header,
+   transcript, composer, statusbar) so nothing hides behind it. Nothing floats
+   on the left, so there are no collisions. */
+#sddbar {
+	position: fixed;
+	right: 0;
+	top: 0;
+	bottom: 0;
+	z-index: 30;
 	display: none;
+	flex-direction: row-reverse;
+	overflow: hidden;
+	background: var(--panel);
+	border-left: 1px solid var(--border);
+	transition: width 0.16s ease;
 }
-.plan-pill:hover {
-	background: var(--accent);
-	color: #0b0e14;
+body.sdd-on {
+	margin-right: 88px;
 }
-/* SDD phase stepper (plan→spec→tasks→verify) at the top of the plan viewer.
-   ● reached / ○ pending; current phase in accent. Nudges the next missing phase. */
-.sdd-stepper {
+body.sdd-on #sddbar {
 	display: flex;
-	gap: 10px;
-	flex-wrap: wrap;
-	margin: 0 0 8px;
-	padding: 6px 8px;
-	background: var(--panel2);
-	border: 1px solid var(--border);
-	border-radius: var(--r);
-	font-size: 12px;
-	color: var(--muted);
+	width: 88px;
 }
-.sdd-stepper:empty {
-	display: none;
+body.sdd-on.sdd-open {
+	margin-right: min(400px, 58vw);
+}
+body.sdd-on.sdd-open #sddbar {
+	width: min(400px, 58vw);
+}
+.sdd-rail {
+	flex: 0 0 88px;
+	display: flex;
+	flex-direction: column;
+	padding: 8px 0;
+	gap: 2px;
+	border-left: 1px solid var(--border);
+}
+/* SDD phase step (plan→spec→tasks→verify) as a vertical rail button.
+   ● reached / ○ pending; current phase in accent with an accent rail mark.
+   Steps without an artifact yet are disabled (nudges the next phase). */
+.ss-step {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	width: 100%;
+	padding: 7px 10px;
+	background: none;
+	border: none;
+	border-left: 2px solid transparent;
+	color: var(--muted);
+	font:
+		600 12px / 1 "JetBrains Mono",
+		ui-monospace,
+		monospace;
+	text-transform: lowercase;
+	cursor: pointer;
+	text-align: left;
+}
+.ss-step:hover:not(:disabled) {
+	background: var(--panel2);
+}
+.ss-step:disabled {
+	opacity: 0.4;
+	cursor: default;
 }
 .ss-step.done {
 	color: var(--ok);
 }
 .ss-step.cur {
 	color: var(--accent);
-	font-weight: 700;
+	border-left-color: var(--accent);
 }
-.doc-tabs {
+.ss-step .ss-dot {
+	flex: 0 0 10px;
+}
+.sdd-pane {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: none;
+	flex-direction: column;
+}
+#sddbar.open .sdd-pane {
 	display: flex;
-	gap: 2px;
+}
+.sdd-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 10px;
 	border-bottom: 1px solid var(--border);
-	margin: 4px 0 8px;
-	overflow-x: auto;
-	scrollbar-width: thin;
+	background: var(--panel2);
+	font-size: 12px;
+	font-weight: 700;
+	text-transform: lowercase;
+}
+.sdd-title {
+	flex: 1 1 auto;
+	color: var(--accent);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.sdd-close {
+	background: none;
+	border: none;
+	color: var(--muted);
+	font-size: 18px;
+	line-height: 1;
+	cursor: pointer;
+	padding: 0 4px;
+}
+.sdd-close:hover {
+	color: var(--text);
+}
+#sddbar .doc-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	max-height: none;
+	overflow: auto;
+	padding: 10px 14px;
+	font-size: 13px;
+	line-height: 1.55;
 }
 .doc-body {
 	max-height: 68vh;

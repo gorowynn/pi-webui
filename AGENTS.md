@@ -29,6 +29,7 @@ Repo: <https://github.com/gorowynn/pi-webui.git> · branch `dev` · version
 
 ```bash
 node server.js                 # standalone — http://127.0.0.1:4317
+pi-webui                       # global bin (npm i -g) — server.js + auto-open browser
 # inside pi: /webui [port],  /webui-stop
 ```
 
@@ -50,7 +51,7 @@ runtime. Edit `app.js`/`style.css`/`index.html` + refresh = the dev loop.
 | `vendor/` | Vendored runtimes, served via `server.js` `STATIC` whitelist (no npm/build): **markdown-it** v14.1.0 UMD (`window.markdownit`), **highlight.js** v11.11.1 common + `highlight.css` github-dark. `app.js` `highlightCode()` post-processes `pre code`. Both degrade silently if missing (md.js→escaped text; hljs→uncolored). |
 | `docs/` | Specs: [`design.md`](docs/design.md) (UI/UX, visual source of truth), [`README.md`](docs/README.md) (index + SSOT). |
 | `package.json` | `keywords:["pi-package"]` → `pi install`-able. `pi` manifest declares `extensions`+`skills` (package-relative); `files:` whitelist ships both. |
-| `skills/sdd/` | 4-phase Spec-Driven Dev + TiCoder (Plan→Spec→Impl-Plan→Code+Test, approval between phases). Artifacts use **`.sdd/{type}_{slug}_{DDMMYYYY}.md`** (plan/spec/tasks/verify) so multiple runs coexist as history; `server.js /api/plan-state` globs `.sdd` and returns `{phase,slug,date,rel,mtime}` newest-first (legacy fixed names like `plan.md`/`verify-report.md` still match for back-compat). Discovered via `pi.skills` manifest (ships + auto-discovered); `/skill:sdd`. The header pill badges the **latest active** set's current phase (a set is finished once it reaches `verify`) + the plan viewer shows a **phase stepper** (`● reached / ○ pending`) that nudges the next missing phase — advisory only (size gate lives in the `description`). |
+| `skills/sdd/` | 4-phase Spec-Driven Dev + TiCoder (Plan→Spec→Impl-Plan→Code+Test, approval between phases). Artifacts use **`.sdd/{type}_{slug}_{DDMMYYYY}.md`** (plan/spec/tasks/verify) so multiple runs coexist as history; `server.js /api/plan-state` globs `.sdd` and returns `{phase,slug,date,rel,mtime}` newest-first (legacy fixed names like `plan.md`/`verify-report.md` still match for back-compat). Discovered via `pi.skills` manifest (ships + auto-discovered); `/skill:sdd`. A **left rail** (`#sddbar`) shows the **latest active** set's **phase stepper** (`● reached / ○ pending`, current in accent; the rail hides once a set reaches `verify`) — narrow by default, click a reached phase to expand its doc as rendered markdown (state persists in `localStorage`); todos live only in their own panel, never the rail. Advisory only (size gate lives in the `description`). |
 | `extensions/pi_minimal_webui/` | pi extension — see below. |
 | `jetbrains/` | Standalone Gradle plugin (separate project; zero-build invariant preserved). See [`jetbrains/README.md`](jetbrains/README.md). |
 

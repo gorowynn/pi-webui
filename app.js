@@ -1573,7 +1573,6 @@ function applyTodoOp(args) {
 	renderTodos();
 }
 function renderTodos() {
-	updatePlanBadge();
 	// ponytail: hide once every task is finished — a fully-done list has done
 	// its job; lingering checkmarks are clutter. State is kept (a later plan/add
 	// re-opens the panel), and persistTodos already saved it for reload safety.
@@ -1606,15 +1605,14 @@ function renderTodos() {
 	});
 }
 
-// ---- plan/spec viewer: header pill opens SDD artifacts + the live todo plan ----
+// ---- plan/spec sidebar: left rail shows the active SDD set's phase stepper;
+// click a reached phase to expand the pane and read its doc as markdown. ----
 // ponytail: skills/sdd writes .sdd/{type}_{slug}_{DDMMYYYY}.md (plan/spec/tasks/
 // verify); the server (/api/plan-state) globs .sdd and returns them newest-first
-// as {phase,slug,date,rel,mtime}. The badge signals the *latest active* set's
-// current phase (a set is "finished" once it reaches verify); the viewer lists
-// every doc as history + a phase stepper that nudges the next missing phase.
+// as {phase,slug,date,rel,mtime}. The rail shows only while an active
+// (non-verify) set exists; todos live in their own panel, never here.
 let planArtifacts = [];
 const PHASE_RANK = { plan: 0, spec: 1, tasks: 2, verify: 3 };
-const PHASE_NEXT = { plan: "spec", spec: "tasks", tasks: "verify" };
 // group artifacts into SDD runs by slug+date (legacy fixed-name files share one set)
 function planSets() {
 	const map = new Map();
@@ -1659,149 +1657,119 @@ function activeSet() {
 	}
 	return best;
 }
-function todoActive() {
-	return todos.length > 0 && !todos.every((t) => t.status === "finished");
-}
-function updatePlanBadge() {
-	const b = document.getElementById("plan-badge");
-	if (!b) return;
+// ponytail: left SDD rail. Narrow by default (vertical stepper for the active
+// set); clicking a reached phase widens the pane and renders that doc. Hidden
+// entirely while no active set exists. Replaces the old header badge + modal.
+let sddCurArt = null; // artifact shown in the expanded pane (null = collapsed)
+let sddInit = false; // restore-once guard so the 30s poll can't reopen a user-closed pane
+function updateSddBar() {
+	const bar = $("sddbar");
+	if (!bar) return;
 	const set = activeSet();
-	const hasTodo = todoActive();
-	const labels = [];
-	if (set) labels.push(set.slug ? set.phase + " · " + set.slug : set.phase);
-	if (hasTodo) labels.push("todo");
-	if (!labels.length) {
-		b.hidden = true;
+	if (!set) {
+		bar.setAttribute("aria-hidden", "true");
+		bar.classList.remove("open");
+		document.body.classList.remove("sdd-on", "sdd-open");
 		return;
 	}
-	b.hidden = false;
-	const cnt = document.getElementById("plan-count");
-	if (cnt) cnt.textContent = labels.join("  ·  ");
-	// title: current phase + the next expected phase (a nudge), then a hint
-	const parts = [];
-	if (set) {
-		const where = set.slug ? ' "' + set.slug + '"' : "";
-		parts.push("current: " + set.phase + where);
-		if (PHASE_NEXT[set.phase]) parts.push("next: " + PHASE_NEXT[set.phase]);
+	bar.setAttribute("aria-hidden", "false");
+	document.body.classList.add("sdd-on");
+	const sset = planSets().find(
+		(x) => (x.slug || "") + "|" + (x.date || "") === set.slug + "|" + set.date,
+	);
+	const arts = (sset && sset.arts) || [];
+	const sum = setSummary(sset || { arts: [] });
+	const curRank = PHASE_RANK[sum.phase];
+	const rail = $("sdd-rail");
+	if (!rail) return;
+	setSafeHtml(rail, "");
+	for (const ph of ["plan", "spec", "tasks", "verify"]) {
+		const art = arts.find((a) => a.phase === ph);
+		const reached = PHASE_RANK[ph] <= curRank;
+		const isCur = ph === sum.phase && !sum.finished;
+		const b = document.createElement("button");
+		b.type = "button";
+		b.className = "ss-step" + (reached ? " done" : "") + (isCur ? " cur" : "");
+		b.disabled = !art;
+		b.title = ph + (art ? " — view" : " — not created yet");
+		const dot = document.createElement("span");
+		dot.className = "ss-dot";
+		dot.textContent = reached ? "●" : "○";
+		const lbl = document.createElement("span");
+		lbl.className = "ss-lbl";
+		lbl.textContent = ph;
+		b.appendChild(dot);
+		b.appendChild(lbl);
+		const a = art;
+		if (a) b.onclick = () => openSddPhase(a);
+		rail.appendChild(b);
 	}
-	if (hasTodo) parts.push("todo in progress");
-	b.title = parts.join("  ·  ") + " — click to open";
+	// keep an open pane in sync across polls; drop it if its artifact vanished
+	if (sddCurArt && bar.classList.contains("open")) {
+		const still = arts.find((a) => a.rel === sddCurArt.rel);
+		if (still) renderPlanDoc($("sdd-body"), still.rel);
+		else closeSddPane();
+	}
+	// restore the last expanded doc once, after the first poll resolves
+	if (!sddInit) {
+		sddInit = true;
+		try {
+			const saved = JSON.parse(localStorage["pi:sddbar"] || "{}");
+			if (saved.open && saved.rel) {
+				const a = arts.find((x) => x.rel === saved.rel);
+				if (a) openSddPhase(a);
+			}
+		} catch {}
+	}
+}
+function openSddPhase(art) {
+	const bar = $("sddbar");
+	if (!bar) return;
+	// toggle: clicking the phase already shown collapses back to the rail
+	if (sddCurArt && sddCurArt.rel === art.rel) {
+		closeSddPane();
+		return;
+	}
+	sddCurArt = art;
+	bar.classList.add("open");
+	document.body.classList.add("sdd-open");
+	$("sdd-title").textContent = art.phase + (art.slug ? " · " + art.slug : "");
+	renderPlanDoc($("sdd-body"), art.rel);
+	localStorage["pi:sddbar"] = JSON.stringify({ open: true, rel: art.rel });
+}
+function closeSddPane() {
+	sddCurArt = null;
+	const bar = $("sddbar");
+	if (bar) bar.classList.remove("open");
+	document.body.classList.remove("sdd-open");
+	localStorage["pi:sddbar"] = JSON.stringify({ open: false });
 }
 function refreshPlanState() {
 	fetch("/api/plan-state")
 		.then((r) => r.json())
 		.then((j) => {
 			planArtifacts = j && Array.isArray(j.artifacts) ? j.artifacts : [];
-			updatePlanBadge();
+			updateSddBar();
 		})
 		.catch(() => {});
 }
-function planDocTabs() {
-	const tabs = planArtifacts.map((a) => ({
-		key: "file:" + a.rel,
-		label: a.slug ? a.phase + " · " + a.slug : a.phase,
-		rel: a.rel,
-		art: a,
-	}));
-	if (todos.length) tabs.push({ key: "todo", label: "todo" });
-	return tabs;
-}
-function todosAsMarkdown() {
-	if (!todos.length) return "_(no tasks)_";
-	const done = todos.filter((t) => t.status === "finished").length;
-	const lines = ["**" + done + "/" + todos.length + "**\n"];
-	for (const t of todos) {
-		const mark =
-			t.status === "finished" ? "x" : t.status === "started" ? "~" : " ";
-		lines.push("- [" + mark + "] #" + t.id + " " + t.subject);
-	}
-	return lines.join("\n");
-}
-async function renderPlanDoc(container, tab) {
+async function renderPlanDoc(container, rel) {
 	setSafeHtml(container, '<p class="um-hint">loading\u2026</p>');
-	let mdText;
-	if (tab.key === "todo") {
-		mdText = todosAsMarkdown();
-	} else {
-		const r = await fetch("/api/file?path=" + encodeURIComponent(tab.rel));
-		const j = await r.json();
-		if (!j || !j.ok) {
-			setSafeHtml(
-				container,
-				'<p class="um-err">\u26a0 ' +
-					esc((j && j.error) || "read failed") +
-					"</p>",
-			);
-			return;
-		}
-		mdText = j.content || "_(empty)_";
+	const r = await fetch("/api/file?path=" + encodeURIComponent(rel));
+	const j = await r.json();
+	if (!j || !j.ok) {
+		setSafeHtml(
+			container,
+			'<p class="um-err">\u26a0 ' + esc((j && j.error) || "read failed") + "</p>",
+		);
+		return;
 	}
-	setSafeHtml(container, md(mdText));
+	setSafeHtml(container, md(j.content || "_(empty)_"));
 	highlightCode(container);
 }
-// phase stepper for the active tab's set: ● reached / ○ pending, current in accent.
-// Reinforces the workflow by making the next missing phase visible at a glance.
-function stepperHtml(art) {
-	if (!art) return "";
-	const key = (art.slug || "") + "|" + (art.date || "");
-	const s = planSets().find(
-		(x) => (x.slug || "") + "|" + (x.date || "") === key,
-	);
-	if (!s) return "";
-	const sum = setSummary(s);
-	const curRank = PHASE_RANK[sum.phase];
-	let html = '<div class="sdd-stepper">';
-	for (const ph of ["plan", "spec", "tasks", "verify"]) {
-		const reached = PHASE_RANK[ph] <= curRank;
-		const isCur = ph === sum.phase && !sum.finished;
-		html +=
-			'<span class="ss-step ' +
-			(reached ? "done " : "") +
-			(isCur ? "cur" : "") +
-			'">' +
-			(reached ? "●" : "○") +
-			" " +
-			ph +
-			"</span>";
-	}
-	return html + "</div>";
-}
-function openPlanViewer() {
-	const tabs = planDocTabs();
-	if (!tabs.length) return;
-	showModal(
-		'<h3>plan &amp; spec</h3><div class="doc-stepper"></div><div class="doc-tabs"></div><div class="doc-body"></div>',
-		true,
-	);
-	card.classList.add("wide");
-	const stepper = card.querySelector(".doc-stepper");
-	const strip = card.querySelector(".doc-tabs");
-	const body = card.querySelector(".doc-body");
-	let active = 0;
-	const paint = () => {
-		[...strip.children].forEach((b, i) =>
-			b.classList.toggle("active", i === active),
-		);
-		const t = tabs[active];
-		setSafeHtml(stepper, t && t.art ? stepperHtml(t.art) : "");
-		renderPlanDoc(body, t);
-	};
-	tabs.forEach((t, i) => {
-		const b = document.createElement("button");
-		b.className = "sx-tab";
-		b.type = "button";
-		b.textContent = t.label;
-		b.onclick = () => {
-			active = i;
-			paint();
-		};
-		strip.appendChild(b);
-	});
-	paint();
-}
-(function initPlanBadge() {
-	const b = document.getElementById("plan-badge");
-	if (b) b.addEventListener("click", openPlanViewer);
+(function initSddBar() {
+	const close = $("sdd-close");
+	if (close) close.addEventListener("click", closeSddPane);
 	refreshPlanState();
 	// ponytail: the 30s poll is declared with the other timers below so it joins
 	// the visibilitychange pause/resume (idle-waste fix, c34fb6f family).

@@ -6,6 +6,63 @@
 
 ## Changelog
 
+### 2026-07-21 — feat(bin): `pi-webui` standalone launcher (no pi TUI needed)
+
+- **What:** added a `bin.js` launcher + `package.json` `bin` entry, so
+  `npm i -g pi-webui` exposes a `pi-webui` command that starts the server (which
+  spawns its own `pi --mode rpc`) and auto-opens the browser — no need to start
+  pi or type `/webui`. Equivalent to `node server.js` + browser open.
+- **Why:** the webui already spawns its own pi (`server.js` owns the subprocess),
+  so it never required pi *running* — only the ergonomics were missing (no global
+  command; `PI_CWD` defaulted to the shell cwd). The launcher closes that gap.
+- **How:** `bin.js` `require()`s `server.js` in-process (it reads `PORT`/`PI_BIN`/
+  `PI_ARGS`/`PI_CWD` from env and listens), then opens the browser after a 400ms
+  delay (reusing the `openBrowser` logic from `webui.ts`). `Ctrl-C` kills the
+  whole tree because pi is an in-process child (same process group), unlike the
+  detached `/webui` spawn which needs `killTree`.
+- **Limit (pre-existing, separate P0):** `package.json` `files` still omits
+  `app.js`/`style.css`/`vendor`, so a global install ships a broken UI until that
+  is fixed (tracked in `docs/improvements.md`). The bin entry itself is correct.
+- **Verified:** `node --check bin.js`; runtime smoke on PORT 4399 printed the
+  `pi-webui on http://127.0.0.1:4399` ready line, then clean tree-kill.
+- **Files:** `bin.js` (new); `package.json` (`bin`, `files`, description);
+  `AGENTS.md` (run/dev).
+
+### 2026-07-21 — feat(webui): SDD phase rail replaces the header plan badge
+
+- **What:** the header `plan-badge` + its modal plan/spec viewer are replaced by
+  a persistent **left rail** (`#sddbar`). While an active (non-`verify`) SDD set
+  exists, the rail shows the 4-phase stepper vertically (`plan`→`spec`→`tasks`→`verify`,
+  `●` reached / `○` pending, current in accent); phases without an artifact yet are
+  dimmed/disabled (nudges the next phase). Clicking a reached phase expands the
+  rail into a pane that renders that doc as markdown (via `md()` + `highlightCode()`);
+  clicking it again or the `×` collapses back to the rail. Expanded state + the
+  open doc persist across reloads (`localStorage["pi:sddbar"]`). No SDD set → the
+  rail is fully hidden (`display:none`, out of the a11y tree).
+- **Why:** requested — surface the active SDD step as a small always-on sidebar
+  instead of a header pill, expand on demand to read the doc, and keep todos out
+  of it (they stay in `#todopanel`).
+- **How:** `position:fixed` left rail; `body.sdd-on`/`.sdd-open` set `margin-left`
+  so the whole in-flow app (header, transcript, composer, statusbar) shifts right
+  in unison — nothing floats on the left, so there are no collisions, and the
+  width/margin use `min(400px,58vw)` to self-limit on narrow screens. Reuses the
+  existing `activeSet`/`planSets`/`setSummary`/`renderPlanDoc`; drops the now-dead
+  `updatePlanBadge`, `openPlanViewer`, `planDocTabs`, `todosAsMarkdown`,
+  `stepperHtml`, `todoActive`, and `PHASE_NEXT`. `/api/plan-state` is unchanged.
+- **Files:** `index.html` (drop `#plan-badge`; add `#sddbar` aside); `style.css`
+  (`.plan-pill`/`.sdd-stepper`/`.doc-tabs` → `#sddbar`/`.sdd-rail`/`.ss-step`/
+  `.sdd-pane`/`.sdd-head`/`body.sdd-on*`); `app.js` (`updateSddBar`/`openSddPhase`/
+  `closeSddPane`/`initSddBar`); `AGENTS.md` (skills/sdd row).
+
+### 2026-07-21 — docs: add cross-cutting improvements audit
+
+- **What:** added a prioritized audit grouped by visuals, performance, and
+  features/reliability, including the smallest practical fixes and a recommended
+  implementation order.
+- **Why:** preserve the review as durable project knowledge while keeping
+  `docs/roadmap.md` authoritative for detailed feature proposals.
+- **Files:** `docs/improvements.md`; `docs/README.md`.
+
 ### 2026-07-21 — fix(webui): modal diff scroll broken; editable textarea collapsed to ~2 rows
 
 - **What:** in the edit/write approval modal the editable proposal pane (right

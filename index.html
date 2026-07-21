@@ -21,15 +21,6 @@
 		<header>
 			<span class="logo">◆ pi</span>
 			<div id="usagebar" aria-hidden="true"></div>
-			<button
-				id="plan-badge"
-				class="plan-pill"
-				type="button"
-				title="plan &amp; spec"
-				hidden
-			>
-				📋 <span id="plan-count">0</span>
-			</button>
 			<span id="status"
 				><span id="dot"></span
 				><span id="status-text">connecting…</span></span
@@ -45,6 +36,24 @@
 				⚙
 			</button>
 		</header>
+
+		<aside id="sddbar" aria-hidden="true" aria-label="spec-driven development phases">
+			<nav class="sdd-rail" id="sdd-rail"></nav>
+			<div class="sdd-pane">
+				<div class="sdd-head">
+					<span class="sdd-title" id="sdd-title"></span>
+					<button
+						class="sdd-close"
+						id="sdd-close"
+						type="button"
+						aria-label="collapse sidebar"
+						title="collapse"
+						>×</button
+					>
+				</div>
+				<div class="doc-body" id="sdd-body"></div>
+			</div>
+		</aside>
 
 		<aside id="settings" aria-hidden="true">
 			<div class="set-head">
