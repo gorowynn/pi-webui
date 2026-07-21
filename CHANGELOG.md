@@ -6,6 +6,16 @@
 
 ## Changelog
 
+### 2026-07-21 — docs: mark roadmap theme item shipped; drop stale latest_review.md
+
+- **What:** `docs/roadmap.md` #11 (theme settings) → **SHIPPED** (obsidian +
+  paperlike); fixed dead "Ayu-Dark" refs (default removed 2026-07-17) + the
+  ranking table. Deleted `docs/latest_review.md` (its two P0s — missing
+  `package.json` runtime assets + safeguard allow-before-deny — still hold
+  against live code, but a fresh review will supersede it). `docs/README.md`
+  index updated accordingly.
+- **Files:** `docs/roadmap.md`; `docs/README.md`; `docs/latest_review.md` (deleted).
+
 ### 2026-07-17 — feat(webui): "obsidian" modern dark theme (new default); ayu-dark removed
 
 - **What:** replaced the legacy **ayu-dark** default with **obsidian** — a modern dark design: near-black canvas (`#0a0a0b`), **glassy overlays** (translucent panels + `backdrop-filter: blur` on the settings sidebar, modal card, and activity bar), a faint violet **hero gradient** at the top of the canvas, and **soft violet accent glows** on the live status dot, primary Send, and jump-to-bottom pill. Rounder corners (`--r` 2→8px) and a glow-carrying card shadow. Accent shifted warm-orange→violet `#8b5cf6`, with blue/emerald/amber/rose supporting tones. `paperlike` stays as the alternate. Theme list is now **obsidian · paperlike**.

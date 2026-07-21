@@ -150,15 +150,25 @@ chart or "this session: 14 tool calls, $0.42."
 Speculative unless you actually review these.
 **Effort:** M
 
-### 11. Theme/font settings + light mode
+### 11. Theme/font settings + light mode — SHIPPED (theme switching)
 
-**What:** Settings persisted in localStorage; a second palette alongside
-Ayu-Dark.
+> **Status (2026-07-17): theme switching SHIPPED.** Two switchable designs now
+> live in the settings sidebar (appearance → theme), persisted in `localStorage`
+> and applied pre-paint (no FOUC): **obsidian** (near-black modern dark, the
+> default) and **paperlike** (warm cream paper + serif prose — a deliberate
+> redesign, not a recolor: shape/type/surfaces all adapt). See
+> [`design.md`](design.md) §1 & §5 and CHANGELOG 2026-07-17. The legacy
+> **ayu-dark** default was removed in that same change. **Still open:**
+> user-configurable *font* settings, and a true neutral light mode beyond the
+> sepia paperlike.
+
+**What (historical):** a second switchable palette + settings persisted in
+`localStorage`, for accessibility and daylight use.
 **Benefit:** Accessibility + daylight use.
-**Drawback:** [`design.md`](design.md) is explicitly Ayu-Dark-first; a second
-theme doubles CSS surface to keep in sync. The mutable state in `app.js`
-(AGENTS gotcha #8) grows again.
-**Effort:** M
+**Drawback (historical):** a second theme doubles the CSS surface to keep in
+sync (obsidian's glass/glow/gradient vs paperlike's overrides) and grows the
+mutable state in `app.js` (AGENTS gotcha #8). Accepted when shipped.
+**Effort:** M (done for themes; font settings remain).
 
 ## Context & cost optimization
 
@@ -303,7 +313,7 @@ Value ● = low, ●●●●● = high. Effort S/M/L. Score = value ÷ effort.
 | 7 | Auth gate (LAN) | ●●● | M | ★★★ |
 | 6 | Mobile / PWA | ●●● | M | ★★½ |
 | 10 | Tool-call / cost history | ●● | M | ★★ |
-| 11 | Theme/font settings | ●● | M | ★★ |
+| 11 | Theme settings — **shipped** (obsidian + paperlike) | — | — | ✓ shipped |
 | 12 | Richer md (syntax highlighting) | ●●●● | S | ★★★★½ |
 
 ## Suggested order

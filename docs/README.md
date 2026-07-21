@@ -28,7 +28,6 @@ durable knowledge live only in a code comment or a chat transcript; move it here
 |------|------|
 | [`design.md`](design.md) | UI/UX spec — color palette, typography hierarchy, layout, code-block & status styling. **Source of truth for every visual decision.** |
 | [`roadmap.md`](roadmap.md) | Candidate features (benefits, drawbacks, value/effort ranking). Source of truth for *what we might build next*. |
-| [`plans.md`](plans.md) | Concrete build plans for active items (the *how*). Subordinate to `roadmap.md`; retire a section when its work lands in `../CHANGELOG.md`. |
 
 ## Adding a new doc
 
