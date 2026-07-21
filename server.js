@@ -9,11 +9,18 @@ const path = require("path");
 const { spawn, execSync } = require("child_process");
 const os = require("os");
 const { StringDecoder } = require("string_decoder");
+const {
+	discoverWorkspaces,
+	isKnownWorkspacePath,
+} = require("./workspaces.js");
 
 const PORT = parseInt(process.env.PORT || "4317", 10);
 const PI_BIN = process.env.PI_BIN || "pi";
 const PI_ARGS = (process.env.PI_ARGS || "").split(/\s+/).filter(Boolean); // e.g. "--no-session"
-const PI_CWD = process.env.PI_CWD || process.cwd();
+let PI_CWD = process.env.PI_CWD || process.cwd(); // let: workspace switch re-points it live
+const NO_SWITCH = /^(1|true|yes)$/i.test(
+	process.env.PI_WEBUI_NO_SWITCH || "",
+); // IDE mode: workspace switching is disabled (the host owns the cwd)
 const AUTH_FILE = path.join(os.homedir(), ".pi", "agent", "auth.json");
 const AGENT_DIR = path.dirname(AUTH_FILE); // ~/.pi/agent — pi's agent dir
 const HTML_PATH = path.join(__dirname, "index.html");
@@ -69,6 +76,7 @@ let pi = null;
 // back off exponentially up to 30s; reset once a process lives >5s.
 let restartAttempts = 0;
 let startStamp = 0;
+let deliberateRestart = false; // ponytail: workspace switch — exit handler respawns in the new cwd, skipping crash backoff
 const clients = new Set(); // open SSE responses
 
 function broadcast(obj) {
@@ -184,6 +192,20 @@ function startPi() {
 	});
 	pi.on("exit", (code, sig) => {
 		broadcast({ source: "pi_exit", payload: { code, sig } });
+		if (deliberateRestart) {
+			// workspace switch (not a crash): respawn now in the (already-updated)
+			// PI_CWD, skip crash backoff, then tell every tab to resync. The new
+			// pi's stdin is writable at once, so the client's resync get_state /
+			// get_messages buffer in the pipe until pi boots.
+			deliberateRestart = false;
+			startPi();
+			broadcast({
+				source: "server",
+				type: "workspace_changed",
+				workspace: PI_CWD,
+			});
+			return;
+		}
 		// survived >5s -> healthy run, reset the crash counter.
 		if (Date.now() - startStamp > 5000) restartAttempts = 0;
 		const delay = backoffDelay();
@@ -194,6 +216,31 @@ function startPi() {
 	});
 }
 startPi();
+
+// ponytail: switch the active project root. Only a discovered-workspace realpath
+// reaches here (the route validates via isKnownWorkspacePath first). Updates the
+// live PI_CWD, then tree-kills pi so its exit handler respawns in the new cwd and
+// broadcasts workspace_changed. taskkill /T /F (win) + SIGTERM (posix) to node
+// are reliable; if a kill ever fails to land, deliberateRestart stays set and the
+// next real exit still consumes it.
+function switchWorkspace(newCwd) {
+	PI_CWD = newCwd;
+	deliberateRestart = true;
+	if (!pi) {
+		// no running pi (only briefly at boot) — respawn + broadcast directly.
+		deliberateRestart = false;
+		startPi();
+		broadcast({ source: "server", type: "workspace_changed", workspace: PI_CWD });
+		return;
+	}
+	try {
+		if (process.platform === "win32")
+			execSync(`taskkill /pid ${pi.pid} /T /F`, { stdio: "ignore" });
+		else pi.kill("SIGTERM");
+	} catch (e) {
+		console.error(`[pi] workspace-switch kill failed: ${e.message}`);
+	}
+}
 
 // ponytail: read the z.ai key pi already stores (~/.pi/agent/auth.json) so the
 // usage bar works once pi is logged in — no paste, no duplicate env var. Resolves
@@ -641,6 +688,7 @@ const server = http.createServer(async (req, res) => {
 				pi: PI_BIN + " " + ["--mode", "rpc", ...PI_ARGS].join(" "),
 				cwd: PI_CWD,
 				git: gitInfo(),
+				noSwitch: NO_SWITCH,
 			}),
 		);
 	}
@@ -811,6 +859,56 @@ const server = http.createServer(async (req, res) => {
 			);
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: true, tiers: clean }));
+		} catch (e) {
+			res.writeHead(500, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+	if (req.method === "GET" && url.pathname === "/api/workspaces") {
+		// auto-discovered project roots (FR-1/FR-2): scan pi's session storage,
+		// always including the current cwd. No client path is accepted.
+		res.writeHead(200, { "Content-Type": "application/json" });
+		return res.end(
+			JSON.stringify({
+				ok: true,
+				current: PI_CWD,
+				workspaces: discoverWorkspaces(
+					path.join(AGENT_DIR, "sessions"),
+					PI_CWD,
+				),
+			}),
+		);
+	}
+	if (req.method === "POST" && url.pathname === "/api/workspace") {
+		if (NO_SWITCH) {
+			res.writeHead(403, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({
+					ok: false,
+					error: "workspace switching disabled",
+				}),
+			);
+		}
+		// switch active project (FR-3/FR-5). Only a realpath-match of a discovered
+		// workspace is accepted — never an arbitrary path — so the browser can't
+		// point pi at a dir it hasn't already run in (the sandbox stays intact).
+		let body;
+		try {
+			body = await readBody(req);
+			const obj = JSON.parse(body || "{}");
+			const discovered = discoverWorkspaces(
+				path.join(AGENT_DIR, "sessions"),
+				PI_CWD,
+			);
+			if (!isKnownWorkspacePath(discovered, obj.path)) {
+				res.writeHead(400, { "Content-Type": "application/json" });
+				return res.end(
+					JSON.stringify({ ok: false, error: "not a known workspace" }),
+				);
+			}
+			switchWorkspace(fs.realpathSync(obj.path));
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true, workspace: PI_CWD }));
 		} catch (e) {
 			res.writeHead(500, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: false, error: e.message }));

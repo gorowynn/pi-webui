@@ -29,12 +29,14 @@ Repo: <https://github.com/gorowynn/pi-webui.git> · branch `dev` · version
 
 ```bash
 node server.js                 # standalone — http://127.0.0.1:4317
-pi-webui                       # global bin (npm i -g) — server.js + auto-open browser
+pi-webui                       # global bin (npm i -g) — detached server.js + auto-open browser (survives closing the console)
 # inside pi: /webui [port],  /webui-stop
 ```
 
 Env: `PORT` (4317), `PI_BIN` (pi), `PI_ARGS` (extra pi args), `PI_CWD` (spawned
-pi working dir → session location + tool roots).
+pi working dir → session location + tool roots), `PI_WEBUI_NO_SWITCH` (disable
+workspace switching + hide the list — set by `/webui` for IDE use),
+`PI_WEBUI_NO_OPEN` (skip the launcher's browser auto-open).
 
 **Zero-build is a hard constraint** — no bundler/transpile/`npm install` at
 runtime. Edit `app.js`/`style.css`/`index.html` + refresh = the dev loop.
@@ -43,15 +45,18 @@ runtime. Edit `app.js`/`style.css`/`index.html` + refresh = the dev loop.
 
 | File | Role |
 |------|------|
-| `server.js` | Bridge. CommonJS, ~no deps. Serves assets, frames JSONL (split on `\n` only), spawns/respawns `pi --mode rpc`, CSRF + DNS-rebinding gate, `safePath`, 1MB body cap. |
+| `server.js` | Bridge. CommonJS, ~no deps. Serves assets, frames JSONL (split on `\n` only), spawns/respawns `pi --mode rpc` (live `let PI_CWD`; `POST /api/workspace` tree-kills + respawns in a new project and broadcasts `workspace_changed` to all tabs), CSRF + DNS-rebinding gate, `safePath`, 1MB body cap. `PI_WEBUI_NO_SWITCH` gates switching. |
 | `index.html` | Markup only. Load order: `vendor/markdown-it.min.js` → `md.js` → `vendor/highlight.min.js` → `app.js`. |
 | `style.css` | All styling. Obsidian (modern dark) by default + switchable `paperlike` (`[data-theme]`) — see [`docs/design.md`](docs/design.md). |
 | `md.js` | Thin shim over vendored markdown-it 14.x: `md(markdown)` (`html:false`/`breaks:true`/`linkify:true`, links `target=_blank`) + `esc()` (project-wide HTML-escaper source of truth, null-safe→`""`). Loads AFTER `markdown-it.min.js`; `require`-able in Node (self-test: `node -e "console.log(require('./md.js').md('**x**'))"`). |
-| `app.js` | Entire frontend (vanilla JS): SSE, rendering, modals, diffs, commands palette. Uses `md()`/`esc()` globals from md.js. |
+| `app.js` | Entire frontend (vanilla JS): SSE, rendering, modals, diffs, commands palette, left workspace/session sidebar (`#wsbar`). Uses `md()`/`esc()` globals from md.js. |
+| `workspaces.js` | Pure workspace discovery + switch validation (CommonJS, fs-only). `discoverWorkspaces` scans `~/.pi/agent/sessions/--<cwd>--/` and recovers each root from the newest `.jsonl`'s `{type:"session"}.cwd` (NOT the encoded folder name); `isKnownWorkspacePath` is the `POST /api/workspace` security gate (realpath must match a discovered workspace). Unit-tested (`test/workspaces.test.js`). |
+| `bin.js` | `pi-webui` global launcher. Spawns `server.js` **detached** (own process group → closing the console won't kill it), polls a temp log to report early death, opens the browser (`PI_WEBUI_NO_OPEN` skips), then exits. |
+| `test/` | `node:assert/strict` unit tests, no framework (`node test/<x>.test.js`). |
 | `vendor/` | Vendored runtimes, served via `server.js` `STATIC` whitelist (no npm/build): **markdown-it** v14.1.0 UMD (`window.markdownit`), **highlight.js** v11.11.1 common + `highlight.css` github-dark. `app.js` `highlightCode()` post-processes `pre code`. Both degrade silently if missing (md.js→escaped text; hljs→uncolored). |
 | `docs/` | Specs: [`design.md`](docs/design.md) (UI/UX, visual source of truth), [`README.md`](docs/README.md) (index + SSOT). |
 | `package.json` | `keywords:["pi-package"]` → `pi install`-able. `pi` manifest declares `extensions`+`skills` (package-relative); `files:` whitelist ships both. |
-| `skills/sdd/` | 4-phase Spec-Driven Dev + TiCoder (Plan→Spec→Impl-Plan→Code+Test, approval between phases). Artifacts use **`.sdd/{type}_{slug}_{DDMMYYYY}.md`** (plan/spec/tasks/verify) so multiple runs coexist as history; `server.js /api/plan-state` globs `.sdd` and returns `{phase,slug,date,rel,mtime}` newest-first (legacy fixed names like `plan.md`/`verify-report.md` still match for back-compat). Discovered via `pi.skills` manifest (ships + auto-discovered); `/skill:sdd`. A **left rail** (`#sddbar`) shows the **latest active** set's **phase stepper** (`● reached / ○ pending`, current in accent; the rail hides once a set reaches `verify`) — narrow by default, click a reached phase to expand its doc as rendered markdown (state persists in `localStorage`); todos live only in their own panel, never the rail. Advisory only (size gate lives in the `description`). |
+| `skills/sdd/` | 4-phase Spec-Driven Dev + TiCoder (Plan→Spec→Impl-Plan→Code+Test, approval between phases). Artifacts use **`.sdd/{type}_{slug}_{DDMMYYYY}.md`** (plan/spec/tasks/verify) so multiple runs coexist as history; `server.js /api/plan-state` globs `.sdd` and returns `{phase,slug,date,rel,mtime}` newest-first (legacy fixed names like `plan.md`/`verify-report.md` still match for back-compat). Discovered via `pi.skills` manifest (ships + auto-discovered); `/skill:sdd`. A **right rail** (`#sddbar`) shows the **latest active** set's **phase stepper** (`● reached / ○ pending`, current in accent; the rail hides once a set reaches `verify`) — narrow by default, click a reached phase to expand its doc as rendered markdown (state persists in `localStorage`); todos live only in their own panel, never the rail. Advisory only (size gate lives in the `description`). |
 | `extensions/pi_minimal_webui/` | pi extension — see below. |
 | `jetbrains/` | Standalone Gradle plugin (separate project; zero-build invariant preserved). See [`jetbrains/README.md`](jetbrains/README.md). |
 
@@ -76,8 +81,10 @@ Folder name is a legacy TODO — no second webui here, only the ask-bridge tool
   sidebar `GET/POST /api/subagent-tiers` edits it (no restart). Defaults:
   capable `zai/glm-5.2`, implement `zai/glm-5-turbo`, lookup `zai/glm-4.5-air`.
   Edit the `TIERS` table in-file for agents/tools/prompts.
-- `webui.ts` — `/webui` + `/webui-stop`. Spawns `server.js` detached; kills the
-  whole tree (POSIX process group / Windows `taskkill /T`).
+- `webui.ts` — `/webui` + `/webui-stop`. Spawns `server.js` detached with
+  `PI_WEBUI_NO_SWITCH=1` (the IDE owns the cwd → switching + the workspace list
+  are off in the panel); kills the whole tree (POSIX process group / Windows
+  `taskkill /T`).
 - `todo.ts` — **`todo` tool**, action-based: `plan` once (stable per-task ids)
   → `update` by id (`open`|`started`|`finished`) → `add`/`remove`/`clear`. The
   browser owns the rendered list (same smuggle channel as ask). `execute()`
@@ -117,6 +124,7 @@ entry — these are load-bearing invariants. Numbers match `GOTCHAS.md #N`.
 | diff LCS / large diffs; permission-modal diff preview, `curToolArgs`, `tool_execution_*` | 6, 7 |
 | app.js module-scope state, the ~26 closure `let`s | 8 |
 | sessions, `switch_session`, crash restart, multi-tab | 9 |
+| workspace switch (`/api/workspace`, `workspace_changed`, `#wsbar`), `PI_WEBUI_NO_SWITCH` | 4, 9 |
 | security: CSRF, DNS-rebinding, `validateLink`, body cap | 10 |
 | asset load order, markdown-it / md.js / highlight, vendor whitelist | 11 |
 | `esc()` HTML escaper, shadowing/drift | 12 |

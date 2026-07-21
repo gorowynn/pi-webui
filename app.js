@@ -1675,7 +1675,8 @@ function updateSddBar() {
 	bar.setAttribute("aria-hidden", "false");
 	document.body.classList.add("sdd-on");
 	const sset = planSets().find(
-		(x) => (x.slug || "") + "|" + (x.date || "") === set.slug + "|" + set.date,
+		(x) =>
+			(x.slug || "") + "|" + (x.date || "") === set.slug + "|" + set.date,
 	);
 	const arts = (sset && sset.arts) || [];
 	const sum = setSummary(sset || { arts: [] });
@@ -1689,7 +1690,8 @@ function updateSddBar() {
 		const isCur = ph === sum.phase && !sum.finished;
 		const b = document.createElement("button");
 		b.type = "button";
-		b.className = "ss-step" + (reached ? " done" : "") + (isCur ? " cur" : "");
+		b.className =
+			"ss-step" + (reached ? " done" : "") + (isCur ? " cur" : "");
 		b.disabled = !art;
 		b.title = ph + (art ? " — view" : " — not created yet");
 		const dot = document.createElement("span");
@@ -1760,7 +1762,9 @@ async function renderPlanDoc(container, rel) {
 	if (!j || !j.ok) {
 		setSafeHtml(
 			container,
-			'<p class="um-err">\u26a0 ' + esc((j && j.error) || "read failed") + "</p>",
+			'<p class="um-err">\u26a0 ' +
+				esc((j && j.error) || "read failed") +
+				"</p>",
 		);
 		return;
 	}
@@ -3276,6 +3280,8 @@ function refreshHealth() {
 		.then((r) => r.json())
 		.then((h) => {
 			if (!h) return;
+			noSwitch = !!h.noSwitch;
+			document.body.classList.toggle("no-switch", noSwitch);
 			if (h.cwd) sb.repo.textContent = h.cwd;
 			if (h.git) {
 				const parts = [];
@@ -3336,6 +3342,7 @@ es.onopen = () => {
 	api({ type: "get_messages", id: "init-msgs" });
 	api({ type: "get_commands", id: "init-cmds" });
 	api({ type: "get_available_models", id: "init-models" });
+	refreshWorkspaces(); // populate the left workspace sidebar on (re)connect
 };
 // ponytail: pause stat/health/usage polling while the tab is backgrounded — avoids
 // burning requests every 3s/6s/60s on an unseen window. Re-sync on return.
@@ -3399,6 +3406,7 @@ es.onmessage = (ev) => {
 				}
 				curSessionFile = p.data.sessionFile || null;
 				refreshPonytailMode(p.data.sessionFile);
+				refreshSessionsSidebar(); // active-session highlight for the left sidebar
 			} else if (
 				p.id === "init-msgs" &&
 				p.data &&
@@ -3479,6 +3487,26 @@ es.onmessage = (ev) => {
 			toast(env.payload.split("\n")[0].slice(0, 90), "warn");
 	} else if (env.source === "pi_exit") {
 		toast("pi subprocess exited — reconnecting…", "err");
+	} else if (env.source === "server" && env.type === "workspace_changed") {
+		// another tab (or this one) switched project: pi already respawned in the
+		// new cwd. Clear the old run's view, re-init from the respawned pi, and
+		// refresh the sidebar + SDD rail for the new project. Idempotent — the
+		// initiating tab receives its own broadcast too (EC-6).
+		setTodos([]);
+		setSafeHtml(transcript, "");
+		toolBlocks.clear();
+		curSessionFile = null;
+		setStreaming(false);
+		toast(
+			`switched to ${env.workspace ? env.workspace.split(/[\\/]/).pop() : "workspace"}`,
+			"ok",
+		);
+		api({ type: "get_state", id: "init-state" });
+		api({ type: "get_messages", id: "init-msgs" });
+		api({ type: "get_commands", id: "init-cmds" });
+		refreshWorkspaces();
+		refreshSessionsSidebar();
+		refreshPlanState();
 	}
 };
 es.onerror = () => {
@@ -3819,6 +3847,128 @@ $("new").onclick = () =>
 		},
 	);
 $("sessions").onclick = showSessions;
+
+// ---- left sidebar: workspaces + sessions (FR-6/FR-7/FR-9/FR-10) ----
+// workspaces come from /api/workspaces (auto-discovered project roots); the
+// sessions section reuses /api/sessions + fmtSessionDate + resumeSession. A
+// switch POSTs to /api/workspace; the server's workspace_changed SSE (handled in
+// es.onmessage) drives the cross-tab resync — the click just kicks off the
+// switch and toasts on failure. Collapse persists in localStorage["pi:wsbar"].
+const WS_KEY = "pi:wsbar";
+let noSwitch = false; // PI_WEBUI_NO_SWITCH — hide the workspace list (IDE mode)
+async function refreshWorkspaces() {
+	if (noSwitch) return; // IDE mode: workspace list is hidden — skip fetch/render
+	const host = $("ws-workspaces");
+	if (!host) return;
+	let data;
+	try {
+		data = await (await fetch("/api/workspaces")).json();
+	} catch {
+		return;
+	}
+	const ws = (data.ok && data.workspaces) || [];
+	setSafeHtml(host, "");
+	if (!ws.length) {
+		setSafeHtml(host, '<div class="ws-empty">no workspaces</div>');
+		return;
+	}
+	for (const w of ws) {
+		const row = document.createElement("div");
+		row.className = "ws-row" + (w.active ? " active" : "");
+		row.title = w.path;
+		setSafeHtml(
+			row,
+			`<div class="ws-name">${esc(w.name)}</div>` +
+				`<div class="ws-meta">${w.sessions || 0} session${
+					w.sessions === 1 ? "" : "s"
+				}</div>`,
+		);
+		if (!w.active) row.onclick = () => switchWorkspace(w.path);
+		host.appendChild(row);
+	}
+}
+async function switchWorkspace(path) {
+	// POST; the workspace_changed SSE resyncs every tab (incl. this one).
+	try {
+		const r = await (
+			await fetch("/api/workspace", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ path }),
+			})
+		).json();
+		if (!r.ok) toast("switch failed: " + (r.error || ""), "err");
+	} catch (e) {
+		toast("switch failed: " + e.message, "err");
+	}
+}
+async function refreshSessionsSidebar() {
+	const host = $("ws-sessions");
+	if (!host) return;
+	let data;
+	try {
+		data = await (await fetch("/api/sessions")).json();
+	} catch {
+		return;
+	}
+	const rows = (data.ok && data.sessions) || [];
+	setSafeHtml(host, "");
+	if (!rows.length) {
+		setSafeHtml(host, '<div class="ws-empty">no sessions yet</div>');
+		return;
+	}
+	for (const s of rows) {
+		const current = curSessionFile && pathEq(s.path, curSessionFile);
+		const row = document.createElement("div");
+		row.className = "ws-row" + (current ? " active" : "");
+		setSafeHtml(
+			row,
+			`<div class="ws-name">${esc(s.preview)}</div>` +
+				`<div class="ws-meta">${esc(fmtSessionDate(s.when))} · ${
+					s.messages || 0
+				} msg${current ? " · current" : ""}</div>`,
+		);
+		row.onclick = () => resumeSession(s.path, current);
+		host.appendChild(row);
+	}
+}
+function collapseWsbar() {
+	document.body.classList.remove("ws-on");
+	localStorage.setItem(WS_KEY, "off");
+	const open = $("ws-open");
+	if (open) open.hidden = false;
+}
+function expandWsbar() {
+	document.body.classList.add("ws-on");
+	localStorage.setItem(WS_KEY, "on");
+	const open = $("ws-open");
+	if (open) open.hidden = true;
+	refreshWorkspaces();
+	refreshSessionsSidebar();
+}
+(function initWsbar() {
+	// default on (first run); honor an explicit "off".
+	if (localStorage.getItem(WS_KEY) === "off") {
+		const open = $("ws-open");
+		if (open) open.hidden = false;
+	} else {
+		document.body.classList.add("ws-on");
+	}
+	const collapse = $("ws-collapse");
+	if (collapse) collapse.onclick = collapseWsbar;
+	const open = $("ws-open");
+	if (open) open.onclick = expandWsbar;
+	const neu = $("ws-new");
+	if (neu)
+		neu.onclick = () =>
+			confirmModal(
+				"Start a new session? Current chat stays saved on the pi side.",
+				() => {
+					setTodos([]);
+					api({ type: "new_session" });
+				},
+			);
+})();
 
 inputEl.addEventListener("keydown", (e) => {
 	if (e.key === "Enter" && !e.shiftKey) {

@@ -127,7 +127,12 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(`server.js not found at ${serverScript}`, "error");
 				return;
 			}
-			const env = { ...process.env, PORT: String(port), PI_CWD: ctx.cwd };
+			const env = {
+				...process.env,
+				PORT: String(port),
+				PI_CWD: ctx.cwd,
+				PI_WEBUI_NO_SWITCH: "1", // IDE owns the cwd — no workspace switching in the panel
+			};
 			// ponytail: redirect server.js stdout+stderr to the log file. Inheriting
 			// an fd (not a pipe) keeps detached+unref working — no stream handle in
 			// the TUI keeps it alive — while still capturing the output so an early

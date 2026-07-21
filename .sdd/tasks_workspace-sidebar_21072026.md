@@ -6,6 +6,10 @@
 > Slug: `workspace-sidebar` · Date: `21072026` (21 Jul 2026).
 > Builds on [`plan_`](./plan_workspace-sidebar_21072026.md) +
 > [`spec_`](./spec_workspace-sidebar_21072026.md).
+>
+> **✅ Phase 4 complete (2026-07-21)** — all 6 tasks implemented; T1.1–T1.8 unit
+> tests green; endpoint + page-load smoke green. Browser-only flows are the
+> manual smoke matrix in [`verify_`](./verify_workspace-sidebar_21072026.md).
 
 ## Design for testability (the "How", decided here)
 

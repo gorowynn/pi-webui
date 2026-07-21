@@ -6,6 +6,63 @@
 
 ## Changelog
 
+### 2026-07-21 — feat(ui): detached `pi-webui` launcher + workspace-switch lock + sidebar polish
+
+- **Detached launcher (`bin.js`):** `pi-webui` now spawns `server.js` in its own
+  process group, so **closing the terminal/console no longer kills the webui** —
+  the server (and the `pi --mode rpc` child it owns) keep running after the
+  launcher exits. It polls a temp log to report an early death (port in use, pi
+  spawn failure), opens the browser, then exits. New `PI_WEBUI_NO_OPEN` skips the
+  auto-open (headless/IDE). (`node server.js` standalone is unchanged.)
+- **Workspace-switch lock (`PI_WEBUI_NO_SWITCH`):** a new env flag (1/true/yes)
+  disables project switching — `POST /api/workspace` → 403 and `/api/health`
+  advertises `noSwitch`, which hides the `#wsbar` Workspaces section entirely
+  (Sessions stays). The IDE `/webui` extension now sets it by default (the IDE
+  owns the cwd); standalone `pi-webui` leaves switching on.
+- **Sidebar UX:** the `#wsbar` collapse/expand buttons (≪/≫) moved to the
+  vertical center of the edge (were top-aligned).
+- **Files:** `bin.js`, `server.js`, `app.js`, `style.css`,
+  `extensions/pi_minimal_webui/webui.ts`, `AGENTS.md`.
+- **Verified:** `node --check` on all JS. (Live detachment + 403 smoke returned
+  no output in this harness — worth a 10s manual confirm.)
+
+### 2026-07-21 — feat(ui): workspace sidebar + SDD rail relocated to the right
+
+- **What:** persistent left sidebar (`#wsbar`) listing every project pi has run
+  in (auto-discovered from session storage) with one-click switching, plus the
+  active project's session history (resume without the footer modal). The SDD
+  phase rail moved left→right (Task 5 was already in place; verified + its stale
+  "left edge" CSS comment fixed). Left = navigation, right = run context — the
+  two rails now flank the transcript on opposite edges.
+- **Why:** pi-webui bound to one `PI_CWD` (server-start fixed) and showed history
+  only in a disposable footer modal; switching projects meant restarting the
+  server. The sidebar makes both a single click from the chrome. Spec-driven:
+  `.sdd/{plan,spec,tasks,verify}_workspace-sidebar_21072026.md`.
+- **How:** new `workspaces.js` (pure — `discoverWorkspaces` scans
+  `~/.pi/agent/sessions/--<cwd>--/` subfolders and recovers each project root
+  from the newest `.jsonl`'s `{type:"session"}.cwd`, **not** the encoded folder
+  name; `isKnownWorkspacePath` gates switches to realpath-matches only).
+  `server.js` `PI_CWD` became `let`; `POST /api/workspace` validates →
+  `switchWorkspace` mutates it, tree-kills pi, and the exit handler respawns
+  immediately in the new cwd (skipping crash backoff) + broadcasts
+  `workspace_changed` to all SSE clients. `app.js` resyncs on that event and
+  renders the sidebar; `safePath`/sessions re-derive off the live `PI_CWD`.
+  Collapsible per-rail (`localStorage`), edge launcher re-opens, auto-collapses
+  <720px.
+- **Security:** the switch endpoint accepts **only** a realpath-match of a
+  discovered workspace — never an arbitrary path — so `safePath`'s sandbox can't
+  be pointed outside a known project root. CSRF + DNS-rebinding gate unchanged.
+- **Verified:** `node test/workspaces.test.js` (T1.1–T1.8 green); real-data
+  discovery (6 workspaces, correct active); boot smoke (`GET /api/workspaces` 200,
+  bogus `POST /api/workspace` 400, `Host:evil.com` 403, page serves both rails);
+  `node --check` on all JS. Browser-only flows (multi-tab broadcast,
+  click-switch, collapse persistence, mid-stream abort) are the manual smoke
+  matrix in the verify report.
+- **Zero-build intact:** no new deps; plain edits + one CommonJS module + one
+  `node:assert` test.
+- **Files:** `workspaces.js`, `test/workspaces.test.js` (new); `server.js`,
+  `app.js`, `index.html`, `style.css` (edits).
+
 ### 2026-07-21 — feat(bin): `pi-webui` standalone launcher (no pi TUI needed)
 
 - **What:** added a `bin.js` launcher + `package.json` `bin` entry, so

@@ -37,7 +37,50 @@
 			</button>
 		</header>
 
-		<aside id="sddbar" aria-hidden="true" aria-label="spec-driven development phases">
+		<aside id="wsbar" aria-label="workspaces and sessions">
+			<button
+				class="ws-x"
+				id="ws-collapse"
+				type="button"
+				title="collapse sidebar"
+				aria-label="collapse sidebar"
+			>
+				≪
+			</button>
+			<section class="ws-sec" id="ws-workspaces-sec">
+				<h4 class="ws-h">workspaces</h4>
+				<div class="ws-list" id="ws-workspaces"></div>
+			</section>
+			<section class="ws-sec">
+				<div class="ws-sh">
+					<h4 class="ws-h">sessions</h4>
+					<button
+						class="ws-mini"
+						id="ws-new"
+						type="button"
+						title="new session"
+					>
+						＋
+					</button>
+				</div>
+				<div class="ws-list" id="ws-sessions"></div>
+			</section>
+		</aside>
+		<button
+			id="ws-open"
+			type="button"
+			title="show workspaces"
+			aria-label="show workspaces"
+			hidden
+		>
+			≫
+		</button>
+
+		<aside
+			id="sddbar"
+			aria-hidden="true"
+			aria-label="spec-driven development phases"
+		>
 			<nav class="sdd-rail" id="sdd-rail"></nav>
 			<div class="sdd-pane">
 				<div class="sdd-head">
@@ -48,8 +91,9 @@
 						type="button"
 						aria-label="collapse sidebar"
 						title="collapse"
-						>×</button
 					>
+						×
+					</button>
 				</div>
 				<div class="doc-body" id="sdd-body"></div>
 			</div>
