@@ -6,6 +6,52 @@
 
 ## Changelog
 
+### 2026-07-22 — docs(design): restructure `docs/design.md` into the DESIGN.md format (google-labs-code/design.md)
+
+- **Why:** adopt a standard, machine-readable design-spec format so the visual
+  system is shareable across tools/agents.
+- **What:** YAML **frontmatter** (token groups `colors` / `typography` /
+  `rounded` / `components`, `version: alpha`) mirrors `public/style.css`
+  `:root`; the body reorganized into the format's 8 standard sections (Overview,
+  Colors, Typography, Layout, Elevation & Depth, Shapes, Components, Do's &
+  Don'ts). Component tokens cross-reference with `{group.key}`; prose uses
+  descriptive color names (Ink Black, Anthracite, Carolina Blue, …) mapped to
+  tokens.
+- **Kept accurate:** no spacing-scale token exists in `:root` → `spacing`
+  omitted, noted as ad-hoc in Layout. Filename kept lowercase (`design.md`) to
+  avoid breaking `docs/README.md` + `AGENTS.md` cross-refs; the doc notes it
+  follows the DESIGN.md format. `paperlike` documented as the switchable
+  alternate. `:root` remains normative where it disagrees.
+
+### 2026-07-22 — feat(theme): rework default theme into "dark" — black + anthracite, GitHub-dark neutrals/blue accent, slop-strip
+
+- **Why:** the default dark theme was a near-checklist of AI-slop tells
+  ([impeccable.style/slop](https://impeccable.style/slop/)): violet/cyan-on-dark
+  "AI color palette", dark-mode glowing box-shadow accents, frosted-glass
+  overlays, a violet hero aurora, and — the single most recognizable tell —
+  side-tab accent stripes on the user bubble, every tool/think card, the active
+  workspace row, and the SDD rail step. Reworked into a deliberate **dark**
+  theme instead.
+- **Palette (`public/style.css` `:root`):** black canvas (`#000000`), anthracite
+  panels (`#0d1117`/`#161b22`), GitHub-dark neutrals (`#e6edf3` text, `#7d8590`
+  muted, `#30363d` hairline) and accents — blue `--accent #4493f8`, code-blue
+  `--cyan #79c0ff`, green `--ok #3fb950`, amber `--warn #d29922`, red `--err
+  #f85149`. Neutral black soft shadow, no colored glow halo. Code/diff bodies
+  `#0d1117`.
+- **Slop tells removed:** the side-stripes (user bubble, `.tool`, `.think`,
+  `.ws-row.active`, `.ss-step.cur`); the violet hero `radial-gradient`; the
+  `backdrop-filter` glassmorphism on settings/modal; and the accent box-shadow
+  halos on the live dot, primary Send, and jump pill. Active sidebar/rail rows
+  now signal state via background + accent text instead of a stripe.
+- **Mono prose:** the transcript renders in the app's global monospace
+  (GitHub-dark style). An earlier iteration added a system-serif prose face
+  ("dark paper"); dropped for a cohesive mono identity.
+- **Docs:** `docs/design.md` §1/§2/§4/§5 rewritten for the dark theme + the
+  anti-slop rationale; `AGENTS.md` style.css row updated. **Renamed** the theme
+  `obsidian` → `dark` (label + `[data-theme]` value); the inline head script
+  migrates a stale `obsidian` in `pi:theme` localStorage → `dark` (and still
+  collapses the older removed `ayu`). Alternate theme stays `paperlike`.
+
 ### 2026-07-22 — feat(ui): review visuals — status-bar overflow, semantic rows/palette, persistent connection states
 
 - **Why:** first pass on the `docs/improvements.md` → **Visuals** section (items

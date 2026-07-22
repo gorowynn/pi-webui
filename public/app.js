@@ -3605,12 +3605,12 @@ saDensitySel.onchange = () => {
 };
 // theme switch (color + shape + type) → <html data-theme>. The inline head
 // script applies the saved value before first paint; here we keep the select
-// in sync and persist changes. Anything but "paperlike" (incl. a stale "ayu"
-// from the removed default, or null) reads as the obsidian default. localStorage
+// in sync and persist changes. Anything but "paperlike" (incl. stale "ayu",
+// the renamed "obsidian", or null) reads as the "dark" default. localStorage
 // hint mirrors pi:sa-density.
 const themeSel = $("theme-sel");
 themeSel.value =
-	localStorage.getItem("pi:theme") === "paperlike" ? "paperlike" : "obsidian";
+	localStorage.getItem("pi:theme") === "paperlike" ? "paperlike" : "dark";
 themeSel.onchange = () => {
 	const t = themeSel.value;
 	document.documentElement.setAttribute("data-theme", t);

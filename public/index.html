@@ -12,11 +12,16 @@
 		<link rel="stylesheet" href="vendor/highlight.css" />
 		<script>
 			// ponytail: anti-FOUC — apply saved theme before first paint (style.css is parsed above).
-			// Always set the attr (obsidian's decorative layer needs it); default
-			// obsidian; a stale "ayu" value (removed theme) collapses to obsidian.
+			// Always set the attr before paint; default "dark". Back-compat: a
+			// stale "obsidian" (renamed → "dark") or "ayu" (removed) collapses to
+			// "dark"; the renamed value is migrated so the select stays in sync.
 			(function () {
 				var t = localStorage.getItem("pi:theme");
-				if (t !== "paperlike" && t !== "obsidian") t = "obsidian";
+				if (t === "obsidian") {
+					t = "dark";
+					localStorage.setItem("pi:theme", t);
+				}
+				if (t !== "dark" && t !== "paperlike") t = "dark";
 				document.documentElement.setAttribute("data-theme", t);
 			})();
 		</script>
@@ -151,7 +156,7 @@
 				<label class="set-row"
 					>theme
 					<select id="theme-sel" title="color &amp; shape theme">
-						<option value="obsidian">obsidian</option>
+						<option value="dark">dark</option>
 						<option value="paperlike">paperlike</option>
 					</select></label
 				>

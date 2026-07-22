@@ -1,27 +1,29 @@
 :root {
-	/* Default theme = obsidian: near-black canvas, glassy overlays, soft violet
-	   accent glows (decorative rules under [data-theme="obsidian"] below). Alt:
-	   paperlike ([data-theme="paperlike"]). Palette intent lives in docs/design.md. */
-	--bg: #0a0a0b;
-	--panel: #131316;
-	--panel2: #1a1a20;
-	--border: #26262d;
-	--text: #ededed;
-	--muted: #71717a;
-	--user: #16161c;
-	--accent: #8b5cf6; /* violet-500: headers / actions / user stripe */
-	--cyan: #60a5fa; /* blue-400: code / paths / links */
-	--ok: #34d399; /* emerald-400 */
-	--warn: #fbbf24; /* amber-400 */
-	--err: #fb7185; /* rose-400 */
-	--think: #15131c; /* faint violet-tinted "musing" panel */
-	/* ponytail: single radius token. 8px = modern/rounded (obsidian default);
-	   paperlike sets 6; drop to 0-2 for brutalist. */
+	/* Default theme = "dark": black canvas + anthracite panels, GitHub-dark
+	   neutrals and accents (blue action, green/red/amber status). Deliberately
+	   NOT the violet/cyan-on-dark + glow + glassmorphism default (textbook
+	   AI-slop tells — see impeccable.style/slop); this block is flat and
+	   opaque. Alt theme: paperlike ([data-theme="paperlike"], light cream).
+	   Palette intent in docs/design.md. */
+	--bg: #000000; /* pure black canvas */
+	--panel: #0d1117; /* header / sidebars / footer — GitHub canvas tone */
+	--panel2: #161b22; /* assistant bubbles / inputs / block containers (inset) */
+	--border: #30363d; /* GitHub "border.default" anthracite hairline */
+	--text: #e6edf3; /* GitHub "fg.default" */
+	--muted: #7d8590; /* GitHub "fg.muted" */
+	--user: #1c2128; /* user bubble — a shade lighter than the assistant */
+	--accent: #4493f8; /* GitHub blue: headers / actions / links */
+	--cyan: #79c0ff; /* GitHub "accent" code blue: code / paths */
+	--ok: #3fb950; /* GitHub "success" green */
+	--warn: #d29922; /* GitHub "attention" amber */
+	--err: #f85149; /* GitHub "danger" red */
+	--think: #11161d; /* quiet inset "musing" panel */
+	/* ponytail: single radius token. 8px stays under the 16px over-rounding
+	   slop threshold; paperlike sets 6. */
 	--r: 8px;
-	/* ponytail: elevation carries a quiet violet glow halo (obsidian default);
-	   paperlike overrides to a warm soft shadow. */
-	--shadow:
-		0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px -8px rgba(139, 92, 246, 0.22);
+	/* ponytail: neutral black depth only — no colored glow halo (glowing
+	   accents on dark are a top AI-slop tell). paperlike softens further. */
+	--shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
 }
 * {
 	box-sizing: border-box;
@@ -47,7 +49,7 @@
 	border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
-	background: #7a8898;
+	background: #484f58;
 }
 ::-webkit-scrollbar-corner {
 	background: transparent;
@@ -224,7 +226,6 @@ main {
 }
 .bubble.user {
 	background: var(--user);
-	border-left: 4px solid var(--accent);
 }
 .role {
 	font-size: 11px;
@@ -240,7 +241,7 @@ main {
 	color: var(--muted);
 }
 pre {
-	background: #0009;
+	background: #0d1117;
 	border: 1px solid var(--border);
 	border-radius: var(--r);
 	box-shadow: var(--shadow);
@@ -253,7 +254,7 @@ code {
 	font-size: 13px;
 }
 :not(pre) > code {
-	background: #5ccfe61f;
+	background: #6e768133;
 	color: var(--cyan);
 	padding: 1px 5px;
 	border-radius: var(--r);
@@ -279,8 +280,7 @@ pre code.hljs {
 .think {
 	background: var(--think);
 	margin: 10px 0;
-	border: 1px solid #6b5b8a55;
-	border-left: 2px solid #c4a7e7;
+	border: 1px solid #21262d;
 	box-shadow: var(--shadow);
 	overflow: hidden;
 }
@@ -291,7 +291,7 @@ pre code.hljs {
 	font-size: 11px;
 	text-transform: uppercase;
 	letter-spacing: 0.6px;
-	color: #b9aed0;
+	color: #a371f7;
 	user-select: none;
 	display: flex;
 	align-items: center;
@@ -311,7 +311,7 @@ pre code.hljs {
 .think .tspin {
 	height: 11px;
 	border-radius: 50%;
-	border: 2px solid #b9aed0;
+	border: 2px solid #a371f7;
 	border-top-color: transparent;
 	animation: spin 0.7s linear infinite;
 }
@@ -331,7 +331,7 @@ pre code.hljs {
 	transform: rotate(90deg);
 }
 .think .tlabel {
-	color: #c8bfd8;
+	color: #bc8cff;
 }
 .think .tcount {
 	color: var(--muted);
@@ -341,7 +341,7 @@ pre code.hljs {
 }
 .think .tbody {
 	padding: 8px 14px 12px;
-	color: #d4cbe2;
+	color: #c9d1d9;
 	font-size: 13px;
 	line-height: 1.6;
 	/* normal, not pre-wrap: thinking is markdown now (block HTML via md()), and
@@ -354,7 +354,6 @@ pre code.hljs {
 	font-family: ui-monospace, Menlo, Consolas, monospace;
 	font-size: 12.5px;
 	border: 1px solid var(--border);
-	border-left: 2px solid var(--ok);
 	border-radius: var(--r);
 	box-shadow: var(--shadow);
 	background: #00000040;
@@ -603,7 +602,7 @@ pre code.hljs {
 	font-size: 12px;
 	line-height: 1.45;
 	tab-size: 2;
-	background: #0b0c10;
+	background: #0d1117;
 }
 .sx-line {
 	display: flex;
@@ -2179,8 +2178,10 @@ body.no-switch #ws-workspaces-sec {
 }
 .ws-row.active {
 	background: var(--panel2);
-	box-shadow: inset 2px 0 0 var(--accent);
 	cursor: default;
+}
+.ws-row.active .ws-name {
+	color: var(--accent);
 }
 .ws-row .ws-name {
 	font-size: 12px;
@@ -2299,7 +2300,7 @@ body.sdd-on.sdd-open #sddbar {
 }
 .ss-step.cur {
 	color: var(--accent);
-	border-left-color: var(--accent);
+	background: var(--panel2);
 }
 .ss-step .ss-dot {
 	flex: 0 0 10px;
@@ -2538,48 +2539,12 @@ body.sdd-on.sdd-open #sddbar {
 }
 
 /*
-   ── obsidian decorative layer (default dark theme) ─────────────────────────
-   :root holds the obsidian palette; these rules add the "modern dark" feel on
-   top: a faint violet hero light-source, glassy overlays (translucent panel +
-   backdrop blur), and violet accent glows. Gated on [data-theme="obsidian"] so
-   they never leak into paperlike. The inline head script always sets the attr,
-   so the default load is fully decorated; a missing attr still gets the :root
-   palette (flat obsidian) as a graceful fallback.
+   ── dark theme (default) ───────────────────────────────────────────────────
+   Black canvas + anthracite panels, GitHub-dark neutrals and accents — flat
+   and opaque. Earlier versions (under the old "obsidian" name) layered a violet
+   hero glow + glassmorphism + accent box-shadow halos on top, all textbook
+   AI-slop tells (impeccable.style/slop); removed deliberately. :root carries
+   the whole look, so there are no [data-theme="dark"]-gated rules — prose stays
+   in the app's global mono (GitHub-dark style). paperlike overrides via
+   [data-theme="paperlike"].
 */
-/* hero light-source: a soft violet glow radiating from the top of the canvas. */
-[data-theme="obsidian"] body {
-	background:
-		radial-gradient(
-			125% 55% at 50% -12%,
-			rgba(139, 92, 246, 0.12),
-			transparent 60%
-		),
-		var(--bg);
-}
-/* glass overlays: frosted panels over the content beneath them. */
-[data-theme="obsidian"] #settings,
-[data-theme="obsidian"] #modal .card,
-[data-theme="obsidian"] #activity {
-	background: rgba(19, 19, 22, 0.72);
-	backdrop-filter: blur(14px) saturate(140%);
-	-webkit-backdrop-filter: blur(14px) saturate(140%);
-}
-/* accent glows: the live status dot, primary Send, and jump-to-bottom pill
-   carry a violet halo. */
-[data-theme="obsidian"] #dot.live {
-	box-shadow:
-		0 0 0 3px rgba(139, 92, 246, 0.2),
-		0 0 12px rgba(139, 92, 246, 0.6);
-}
-[data-theme="obsidian"] .bar button.primary {
-	box-shadow:
-		0 0 0 1px rgba(139, 92, 246, 0.35),
-		0 6px 18px -6px rgba(139, 92, 246, 0.6);
-}
-[data-theme="obsidian"] #jump-bottom {
-	box-shadow: 0 6px 18px -6px rgba(139, 92, 246, 0.6);
-}
-/* selected ask-option: re-tint to violet (base used the old orange accent alpha). */
-[data-theme="obsidian"] #modal .qopt.sel {
-	background: rgba(139, 92, 246, 0.16);
-}
