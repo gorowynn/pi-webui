@@ -9,23 +9,19 @@ const path = require("path");
 const { spawn, execSync } = require("child_process");
 const os = require("os");
 const { StringDecoder } = require("string_decoder");
-const {
-	discoverWorkspaces,
-	isKnownWorkspacePath,
-} = require("./workspaces.js");
+const { discoverWorkspaces, isKnownWorkspacePath } = require("./workspaces.js");
 
 const PORT = parseInt(process.env.PORT || "4317", 10);
 const PI_BIN = process.env.PI_BIN || "pi";
 const PI_ARGS = (process.env.PI_ARGS || "").split(/\s+/).filter(Boolean); // e.g. "--no-session"
 let PI_CWD = process.env.PI_CWD || process.cwd(); // let: workspace switch re-points it live
-const NO_SWITCH = /^(1|true|yes)$/i.test(
-	process.env.PI_WEBUI_NO_SWITCH || "",
-); // IDE mode: workspace switching is disabled (the host owns the cwd)
+const NO_SWITCH = /^(1|true|yes)$/i.test(process.env.PI_WEBUI_NO_SWITCH || ""); // IDE mode: workspace switching is disabled (the host owns the cwd)
 const AUTH_FILE = path.join(os.homedir(), ".pi", "agent", "auth.json");
 const AGENT_DIR = path.dirname(AUTH_FILE); // ~/.pi/agent — pi's agent dir
-const HTML_PATH = path.join(__dirname, "index.html");
-// ponytail: static assets split out of index.html. Whitelist (not a full static
-// dir) keeps the surface to known files — no path traversal, no MIME guessing.
+const HTML_PATH = path.join(__dirname, "public", "index.html");
+// ponytail: static assets (all browser-facing, under public/) split out of
+// index.html. Whitelist (not a full static dir) keeps the surface to known
+// files — no path traversal, no MIME guessing.
 const STATIC = {
 	"/style.css": { file: "style.css", type: "text/css; charset=utf-8" },
 	"/md.js": { file: "md.js", type: "text/javascript; charset=utf-8" },
@@ -52,6 +48,15 @@ const STATIC = {
 		type: "text/javascript; charset=utf-8",
 	},
 	"/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
+	// ponytail: PWA install surface — manifest, service worker, icons. Served
+	// like any static asset (no-cache so sw.js edits propagate on reload).
+	"/manifest.webmanifest": {
+		file: "manifest.webmanifest",
+		type: "application/manifest+json; charset=utf-8",
+	},
+	"/sw.js": { file: "sw.js", type: "text/javascript; charset=utf-8" },
+	"/icon-192.png": { file: "icon-192.png", type: "image/png" },
+	"/icon-512.png": { file: "icon-512.png", type: "image/png" },
 };
 
 // ponytail: single source of truth for the ask_user_question rendezvous marker.
@@ -71,6 +76,9 @@ const HTML = fs
 
 // ponytail: one shared agent process for all tabs. Multi-session is a later concern.
 let pi = null;
+// ponytail: set by POST /api/stop so pi's exit handler tears the server down
+// instead of respawning (startPi's crash-backoff would otherwise bring it back).
+let shuttingDown = false;
 // ponytail: crash-loop guard. An unconditional 1s restart loops forever if
 // pi can't start (bad binary, broken install). Count consecutive fast exits and
 // back off exponentially up to 30s; reset once a process lives >5s.
@@ -154,7 +162,11 @@ function startPi() {
 				shell: true,
 				windowsHide: true, // no cmd window when launched headless (e.g. by /webui)
 			})
-		: spawn(PI_BIN, args, { cwd: PI_CWD, env: process.env, windowsHide: true });
+		: spawn(PI_BIN, args, {
+				cwd: PI_CWD,
+				env: process.env,
+				windowsHide: true,
+			});
 
 	// Strict JSONL reader: split on \n only, strip trailing \r. (readline is non-compliant.)
 	// ponytail: StringDecoder buffers incomplete UTF-8 tails across chunks so a
@@ -191,6 +203,7 @@ function startPi() {
 		setTimeout(startPi, delay);
 	});
 	pi.on("exit", (code, sig) => {
+		if (shuttingDown) return shutdownNow();
 		broadcast({ source: "pi_exit", payload: { code, sig } });
 		if (deliberateRestart) {
 			// workspace switch (not a crash): respawn now in the (already-updated)
@@ -230,7 +243,11 @@ function switchWorkspace(newCwd) {
 		// no running pi (only briefly at boot) — respawn + broadcast directly.
 		deliberateRestart = false;
 		startPi();
-		broadcast({ source: "server", type: "workspace_changed", workspace: PI_CWD });
+		broadcast({
+			source: "server",
+			type: "workspace_changed",
+			workspace: PI_CWD,
+		});
 		return;
 	}
 	try {
@@ -240,6 +257,42 @@ function switchWorkspace(newCwd) {
 	} catch (e) {
 		console.error(`[pi] workspace-switch kill failed: ${e.message}`);
 	}
+}
+
+// ponytail: graceful self-shutdown for the in-UI Stop button (POST /api/stop).
+// Kill the pi child so it doesn't orphan; its exit handler sees shuttingDown and
+// calls shutdownNow(). Force-kill (taskkill /T /F / SIGKILL) — we're tearing down,
+// so a SIGTERM a hung pi would ignore just strands the exit. Broadcast "stopping"
+// first so other open tabs show a stopped state instead of reconnect-looping.
+function stopServer() {
+	if (shuttingDown) return;
+	shuttingDown = true;
+	broadcast({ source: "server", type: "stopping" });
+	if (pi && pi.pid) {
+		try {
+			if (process.platform === "win32")
+				execSync(`taskkill /pid ${pi.pid} /T /F`, { stdio: "ignore" });
+			else process.kill(pi.pid, "SIGKILL");
+		} catch (e) {
+			console.error(`[stop] pi kill failed: ${e.message}`);
+			shutdownNow();
+		}
+	} else {
+		shutdownNow();
+	}
+}
+// drop every SSE client + close the HTTP server, then exit. Called from the pi
+// exit handler (after pi is reaped) or directly if no pi is running.
+function shutdownNow() {
+	for (const c of clients) {
+		try {
+			c.end();
+		} catch {}
+	}
+	try {
+		server.close();
+	} catch {}
+	process.exit(0);
 }
 
 // ponytail: read the z.ai key pi already stores (~/.pi/agent/auth.json) so the
@@ -291,7 +344,9 @@ function zaiUsage(key) {
 			(resp) => {
 				let body = "";
 				resp.on("data", (c) => (body += c));
-				resp.on("end", () => resolve({ status: resp.statusCode, body }));
+				resp.on("end", () =>
+					resolve({ status: resp.statusCode, body }),
+				);
 			},
 		);
 		req.on("error", reject);
@@ -307,7 +362,8 @@ function codexTokenFromAuth() {
 		const credential = JSON.parse(fs.readFileSync(AUTH_FILE, "utf8"))[
 			"openai-codex"
 		];
-		return credential?.type === "oauth" && typeof credential.access === "string"
+		return credential?.type === "oauth" &&
+			typeof credential.access === "string"
 			? credential.access
 			: "";
 	} catch {
@@ -329,11 +385,15 @@ function codexUsage(token) {
 			(resp) => {
 				let body = "";
 				resp.on("data", (c) => (body += c));
-				resp.on("end", () => resolve({ status: resp.statusCode, body }));
+				resp.on("end", () =>
+					resolve({ status: resp.statusCode, body }),
+				);
 			},
 		);
 		req.on("error", reject);
-		req.setTimeout(8000, () => req.destroy(new Error("ChatGPT usage timeout")));
+		req.setTimeout(8000, () =>
+			req.destroy(new Error("ChatGPT usage timeout")),
+		);
 		req.end();
 	});
 }
@@ -345,10 +405,15 @@ function codexUsage(token) {
 const PONY_VALID = ["off", "lite", "full", "ultra"];
 function ponyConfigPath() {
 	if (process.env.XDG_CONFIG_HOME)
-		return path.join(process.env.XDG_CONFIG_HOME, "ponytail", "config.json");
+		return path.join(
+			process.env.XDG_CONFIG_HOME,
+			"ponytail",
+			"config.json",
+		);
 	if (process.platform === "win32")
 		return path.join(
-			process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"),
+			process.env.APPDATA ||
+				path.join(os.homedir(), "AppData", "Roaming"),
 			"ponytail",
 			"config.json",
 		);
@@ -555,7 +620,10 @@ function safePath(rel) {
 	try {
 		real = fs.realpathSync(full);
 	} catch {
-		real = path.join(fs.realpathSync(path.dirname(full)), path.basename(full));
+		real = path.join(
+			fs.realpathSync(path.dirname(full)),
+			path.basename(full),
+		);
 	}
 	if (real !== base && !real.startsWith(base + path.sep))
 		throw new Error("path escapes project root");
@@ -632,7 +700,9 @@ const server = http.createServer(async (req, res) => {
 			// ponytail: no-cache so editing app.js/style.css + browser refresh always
 			// picks up the change (the documented dev loop). Without it the browser
 			// heuristically caches and serves stale JS after an edit.
-			const data = fs.readFileSync(path.join(__dirname, a.file));
+			const data = fs.readFileSync(
+				path.join(__dirname, "public", a.file),
+			);
 			res.writeHead(200, {
 				"Content-Type": a.type,
 				"Cache-Control": "no-cache, no-transform",
@@ -680,6 +750,15 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	if (req.method === "POST" && url.pathname === "/api/stop") {
+		// respond BEFORE tearing down so the fetch resolves cleanly; the kill +
+		// exit land on the next tick (150ms gives the 200 time to flush locally).
+		res.writeHead(200, { "Content-Type": "application/json" });
+		res.end('{"ok":true}');
+		setTimeout(stopServer, 150);
+		return;
+	}
+
 	if (req.method === "GET" && url.pathname === "/api/health") {
 		res.writeHead(200, { "Content-Type": "application/json" });
 		return res.end(
@@ -714,7 +793,11 @@ const server = http.createServer(async (req, res) => {
 			const obj = JSON.parse(body || "{}");
 			const full = safePath(obj.path || "");
 			fs.mkdirSync(path.dirname(full), { recursive: true });
-			fs.writeFileSync(full, obj.content == null ? "" : obj.content, "utf8");
+			fs.writeFileSync(
+				full,
+				obj.content == null ? "" : obj.content,
+				"utf8",
+			);
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end('{"ok":true}');
 		} catch (e) {
@@ -742,7 +825,11 @@ const server = http.createServer(async (req, res) => {
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end(
 				JSON.stringify({
-					ok: status >= 200 && status < 300 && data !== null && !error,
+					ok:
+						status >= 200 &&
+						status < 300 &&
+						data !== null &&
+						!error,
 					status,
 					data,
 					error,
@@ -759,7 +846,9 @@ const server = http.createServer(async (req, res) => {
 		// z.ai usage/quota proxy. GET so it's read-only; localhost-bound like the
 		// rest. Key: env ZAI_API_KEY -> pi auth.json -> X-ZAI-Key header (paste).
 		const key =
-			process.env.ZAI_API_KEY || zaiKeyFromAuth() || req.headers["x-zai-key"];
+			process.env.ZAI_API_KEY ||
+			zaiKeyFromAuth() ||
+			req.headers["x-zai-key"];
 		if (!key) {
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end('{"ok":false,"error":"no API key"}');
@@ -818,7 +907,8 @@ const server = http.createServer(async (req, res) => {
 		// session override (most recent ponytail-mode custom entry in the
 		// session jsonl, whose path the client passes in ?session=) wins.
 		const mode =
-			ponySessionMode(url.searchParams.get("session")) || ponyDefaultMode();
+			ponySessionMode(url.searchParams.get("session")) ||
+			ponyDefaultMode();
 		res.writeHead(200, { "Content-Type": "application/json" });
 		return res.end(JSON.stringify({ ok: true, mode }));
 	}
@@ -832,7 +922,9 @@ const server = http.createServer(async (req, res) => {
 		try {
 			const raw = fs.readFileSync(file, "utf8");
 			res.writeHead(200, { "Content-Type": "application/json" });
-			return res.end(JSON.stringify({ ok: true, tiers: JSON.parse(raw) }));
+			return res.end(
+				JSON.stringify({ ok: true, tiers: JSON.parse(raw) }),
+			);
 		} catch {
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end('{"ok":true,"tiers":{}}');
@@ -903,7 +995,10 @@ const server = http.createServer(async (req, res) => {
 			if (!isKnownWorkspacePath(discovered, obj.path)) {
 				res.writeHead(400, { "Content-Type": "application/json" });
 				return res.end(
-					JSON.stringify({ ok: false, error: "not a known workspace" }),
+					JSON.stringify({
+						ok: false,
+						error: "not a known workspace",
+					}),
 				);
 			}
 			switchWorkspace(fs.realpathSync(obj.path));
@@ -952,7 +1047,26 @@ const server = http.createServer(async (req, res) => {
 				try {
 					mtime = fs.statSync(path.join(dir, name)).mtimeMs;
 				} catch {}
-				out.push({ ...p, rel, mtime });
+				const entry = { ...p, rel, mtime };
+				// ponytail: count markdown task checkboxes so the rail can show chunk
+				// progress (skills/sdd Phase 4 marks each chunk [x] + compliance note).
+				// Heuristic counts checkboxes inside fenced code too — rare in real
+				// tasks files; go fence-aware only if it ever misleads.
+				if (p.phase === "tasks") {
+					try {
+						const txt = fs.readFileSync(
+							path.join(dir, name),
+							"utf8",
+						);
+						entry.total = (
+							txt.match(/^\s*[-*]\s*\[[ xX]\]/gm) || []
+						).length;
+						entry.done = (
+							txt.match(/^\s*[-*]\s*\[[xX]\]/gm) || []
+						).length;
+					} catch {}
+				}
+				out.push(entry);
 			}
 		} catch {
 			/* no .sdd dir yet — no SDD run started */

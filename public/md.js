@@ -4,7 +4,7 @@
  * Contract unchanged: `md(markdownString)` → HTML string; `esc(text)` → HTML-
  * escaped string. Both are globals this file sets, loaded BEFORE app.js (which
  * calls md()/esc() at ~45 sites). Also require-able in Node:
- * `const {md, esc} = require('./md.js')` — used by the round-trip self-check.
+ * `const {md, esc} = require('./public/md.js')` — used by the round-trip self-check.
  *
  * Why a shim, not a parser: the hand-rolled CommonMark-ish parser this file
  * used to be (~790 lines of inline/block/table/list/emphasis/link/fence logic)

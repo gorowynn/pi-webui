@@ -59,9 +59,7 @@ const stripAnsi = (s) => String(s).replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
 
 function nearBottom() {
 	return (
-		transcript.scrollHeight -
-			transcript.scrollTop -
-			transcript.clientHeight <
+		transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <
 		120
 	);
 }
@@ -168,10 +166,7 @@ function addUser(text) {
 function addAssistantText(text) {
 	const m = document.createElement("div");
 	m.className = "msg";
-	setSafeHtml(
-		m,
-		`<div class="bubble"><div class="role">assistant</div></div>`,
-	);
+	setSafeHtml(m, `<div class="bubble"><div class="role">assistant</div></div>`);
 	const p = document.createElement("div");
 	setSafeHtml(p, md(text));
 	m.querySelector(".bubble").appendChild(p);
@@ -182,10 +177,7 @@ function addAssistantText(text) {
 function newAssistantBubble() {
 	const m = document.createElement("div");
 	m.className = "msg";
-	setSafeHtml(
-		m,
-		`<div class="bubble"><div class="role">assistant</div></div>`,
-	);
+	setSafeHtml(m, `<div class="bubble"><div class="role">assistant</div></div>`);
 	transcript.appendChild(m);
 	cur = {
 		bubble: m.querySelector(".bubble"),
@@ -230,8 +222,7 @@ function renderText(force) {
 function nonEmptyContent(content) {
 	return (content || []).filter(
 		(b) =>
-			(b.type === "text" && b.text) ||
-			(b.type === "thinking" && b.thinking),
+			(b.type === "text" && b.text) || (b.type === "thinking" && b.thinking),
 	);
 }
 // ponytail: syntax-highlight code blocks via the vendored highlight.js
@@ -452,9 +443,7 @@ function describeChildCall(name, args) {
 	if (name === "edit" || name === "write")
 		return name + " " + ((args && args.path) || "");
 	if (name === "grep" || name === "find")
-		return (
-			name + " " + ((args && args.pattern) || (args && args.path) || "")
-		);
+		return name + " " + ((args && args.pattern) || (args && args.path) || "");
 	if (name === "ls") return "ls " + ((args && args.path) || ".");
 	return name || "?";
 }
@@ -517,9 +506,7 @@ function renderSubagentView(host, details, density) {
 		const model = r.model
 			? ` <span class="sa-model">${esc(r.model.split("/").pop())}</span>`
 			: "";
-		const turns = r.turns
-			? ` <span class="sa-turns">${r.turns}t</span>`
-			: "";
+		const turns = r.turns ? ` <span class="sa-turns">${r.turns}t</span>` : "";
 		html += `<div class="sa-row"><span class="sa-ic">${statusIcon(r)}</span><span class="sa-agent">${esc(r.agent)}</span>${tier}${model}${turns}</div>`;
 		html += `<div class="sa-items">${childItems(r.messages, itemLimit)}</div>`;
 	}
@@ -552,8 +539,7 @@ function splitHtmlLines(html) {
 			const parts = tok.split("\n");
 			for (let i = 0; i < parts.length; i++) {
 				if (i > 0) {
-					for (let k = stack.length - 1; k >= 0; k--)
-						cur += "</span>";
+					for (let k = stack.length - 1; k >= 0; k--) cur += "</span>";
 					lines.push(cur);
 					cur = stack.map((c) => `<span class="${c}">`).join("");
 				}
@@ -696,12 +682,7 @@ function diffRows(a, b) {
 				const d = dels[k],
 					a2 = adds[k];
 				rows.push({
-					kind:
-						d != null && a2 != null
-							? "mod"
-							: d != null
-								? "del"
-								: "add",
+					kind: d != null && a2 != null ? "mod" : d != null ? "del" : "add",
 					left: d != null ? d : null,
 					right: a2 != null ? a2 : null,
 				});
@@ -883,10 +864,9 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 				}
 			});
 		}
-		host.querySelector(".sxs").style.setProperty(
-			"--sx-gutter",
-			gutterCh(maxNum),
-		);
+		host
+			.querySelector(".sxs")
+			.style.setProperty("--sx-gutter", gutterCh(maxNum));
 	};
 	if (!isWrite && baseOld) {
 		// ponytail: caller may pass a precomputed start line (a multi-hunk
@@ -1011,8 +991,7 @@ async function applyEdit(path, baselineNew, edited, isWrite, btn, onOk) {
 // ---- working indicator: spinner + current activity ----
 function describeTool(name, args) {
 	if (!args) return name || "tool";
-	if (name === "edit" || name === "write")
-		return `${name} ${args.path || ""}`;
+	if (name === "edit" || name === "write") return `${name} ${args.path || ""}`;
 	if (name === "read") return `reading ${args.path || ""}`;
 	if (name === "bash")
 		return `bash: ${String(args.command || "").slice(0, 60)}`;
@@ -1210,8 +1189,7 @@ function zaiLimits(data) {
 	for (const l of limits) {
 		if (!l || typeof l !== "object") continue;
 		const base = {
-			label:
-				LIMIT_TYPES[l.type] || (l.type || "quota").replace(/_/g, " "),
+			label: LIMIT_TYPES[l.type] || (l.type || "quota").replace(/_/g, " "),
 			window: windowLabel(l),
 			windowMs: windowMs(l),
 			reset: l.nextResetTime ? new Date(l.nextResetTime) : null,
@@ -1366,9 +1344,7 @@ function usageKeyForm() {
 	);
 }
 function usageProviderLabel(provider) {
-	return /codex/i.test(provider || "")
-		? "ChatGPT/Codex"
-		: provider || "model";
+	return /codex/i.test(provider || "") ? "ChatGPT/Codex" : provider || "model";
 }
 let sessionUsage = null;
 function renderSessionUsage(provider) {
@@ -1434,10 +1410,7 @@ async function renderUsage(provider) {
 async function showUsage() {
 	const provider = currentProvider;
 	const title = `${usageProviderLabel(provider)} usage`;
-	showModal(
-		`<h3>${esc(title)}</h3><p class="um-hint">loading\u2026</p>`,
-		true,
-	);
+	showModal(`<h3>${esc(title)}</h3><p class="um-hint">loading\u2026</p>`, true);
 	let inner;
 	try {
 		inner = await renderUsage(provider);
@@ -1562,9 +1535,7 @@ function applyTodoOp(args) {
 			if (t) t.status = normStatus(u.status);
 		});
 	} else if (a === "remove") {
-		const drop = new Set(
-			(Array.isArray(args.ids) ? args.ids : []).map(String),
-		);
+		const drop = new Set((Array.isArray(args.ids) ? args.ids : []).map(String));
 		todos = todos.filter((t) => !drop.has(String(t.id)));
 	} else if (a === "clear") {
 		todos = [];
@@ -1675,8 +1646,7 @@ function updateSddBar() {
 	bar.setAttribute("aria-hidden", "false");
 	document.body.classList.add("sdd-on");
 	const sset = planSets().find(
-		(x) =>
-			(x.slug || "") + "|" + (x.date || "") === set.slug + "|" + set.date,
+		(x) => (x.slug || "") + "|" + (x.date || "") === set.slug + "|" + set.date,
 	);
 	const arts = (sset && sset.arts) || [];
 	const sum = setSummary(sset || { arts: [] });
@@ -1690,18 +1660,27 @@ function updateSddBar() {
 		const isCur = ph === sum.phase && !sum.finished;
 		const b = document.createElement("button");
 		b.type = "button";
-		b.className =
-			"ss-step" + (reached ? " done" : "") + (isCur ? " cur" : "");
+		b.className = "ss-step" + (reached ? " done" : "") + (isCur ? " cur" : "");
 		b.disabled = !art;
 		b.title = ph + (art ? " — view" : " — not created yet");
 		const dot = document.createElement("span");
 		dot.className = "ss-dot";
 		dot.textContent = reached ? "●" : "○";
+		const txt = document.createElement("span");
+		txt.className = "ss-txt";
 		const lbl = document.createElement("span");
 		lbl.className = "ss-lbl";
 		lbl.textContent = ph;
+		txt.appendChild(lbl);
+		// chunk progress: skills/sdd Phase 4 marks each chunk [x] + compliance note
+		if (ph === "tasks" && art && art.total) {
+			const meta = document.createElement("span");
+			meta.className = "ss-meta";
+			meta.textContent = art.done + "/" + art.total;
+			txt.appendChild(meta);
+		}
 		b.appendChild(dot);
-		b.appendChild(lbl);
+		b.appendChild(txt);
 		const a = art;
 		if (a) b.onclick = () => openSddPhase(a);
 		rail.appendChild(b);
@@ -1735,7 +1714,12 @@ function openSddPhase(art) {
 	sddCurArt = art;
 	bar.classList.add("open");
 	document.body.classList.add("sdd-open");
-	$("sdd-title").textContent = art.phase + (art.slug ? " · " + art.slug : "");
+	const prog =
+		art.phase === "tasks" && art.total
+			? " (" + art.done + "/" + art.total + ")"
+			: "";
+	$("sdd-title").textContent =
+		art.phase + (art.slug ? " · " + art.slug : "") + prog;
 	renderPlanDoc($("sdd-body"), art.rel);
 	localStorage["pi:sddbar"] = JSON.stringify({ open: true, rel: art.rel });
 }
@@ -1897,9 +1881,7 @@ function askQuestion(args) {
 		};
 
 		if (multi) {
-			const chosen = new Set(
-				Array.isArray(answers[qi]) ? answers[qi] : [],
-			);
+			const chosen = new Set(Array.isArray(answers[qi]) ? answers[qi] : []);
 			opts.forEach((o) => {
 				const lbl = o.label;
 				const b = optBtn(o, lbl);
@@ -1940,10 +1922,7 @@ function askQuestion(args) {
 				inp.type = "text";
 				inp.placeholder = "Type something…";
 				const prev = answers[qi];
-				if (
-					typeof prev === "string" &&
-					!opts.some((o) => o.label === prev)
-				)
+				if (typeof prev === "string" && !opts.some((o) => o.label === prev))
 					inp.value = prev;
 				const ok = document.createElement("button");
 				ok.textContent = "Send";
@@ -2035,8 +2014,7 @@ function askQuestion(args) {
 				question: q.question,
 				kind: isOption ? "option" : "custom",
 				answer: a,
-				preview:
-					isOption && opt && opt.preview ? opt.preview : undefined,
+				preview: isOption && opt && opt.preview ? opt.preview : undefined,
 			};
 		});
 		api({
@@ -2092,12 +2070,7 @@ const RISK_RULES = [
 		"sql",
 		"destroys database data (DROP/TRUNCATE)",
 	],
-	[
-		/\bmkfs(?:\.\w+)?\b/i,
-		3,
-		"mkfs",
-		"formats a filesystem -- erases the disk",
-	],
+	[/\bmkfs(?:\.\w+)?\b/i, 3, "mkfs", "formats a filesystem -- erases the disk"],
 	[/\bdd\b[^|&;\n]*\bof=\/dev\//i, 3, "dd", "raw-writes to a block device"],
 	[
 		/\b(?:shutdown|reboot|halt|poweroff|init\s+0)\b/i,
@@ -2255,11 +2228,7 @@ function renderEditDiffPreviews(container) {
 			items.push({
 				label:
 					inp.edits.length > 1
-						? base +
-							" \u00b7 edit " +
-							(ei + 1) +
-							"/" +
-							inp.edits.length
+						? base + " \u00b7 edit " + (ei + 1) + "/" + inp.edits.length
 						: base,
 				build: (host) =>
 					mountSideBySide(
@@ -2276,16 +2245,9 @@ function renderEditDiffPreviews(container) {
 		items.push({
 			label: base + " \u00b7 write",
 			build: (host) =>
-				mountSideBySide(
-					host,
-					inp.path || "",
-					null,
-					inp.content || "",
-					true,
-					{
-						readOnly: true,
-					},
-				),
+				mountSideBySide(host, inp.path || "", null, inp.content || "", true, {
+					readOnly: true,
+				}),
 		});
 	}
 	if (!items.length) return null;
@@ -2350,9 +2312,7 @@ function renderEditDiffPreviews(container) {
 						if (!needle) continue;
 						const at = content.indexOf(needle);
 						if (at >= 0) {
-							const start = content
-								.slice(0, at)
-								.split("\n").length;
+							const start = content.slice(0, at).split("\n").length;
 							tab.textContent += " \u00b7 L" + start;
 							tab.title = tab.textContent;
 							break;
@@ -2508,10 +2468,7 @@ function installCtxStepper(card, enabled, rebuild) {
 	inc.className = "sx-ctx-btn";
 	inc.textContent = "+";
 	const apply = (v) => {
-		localStorage.setItem(
-			"pi:diffCtx",
-			String(Math.max(0, Math.min(80, v))),
-		);
+		localStorage.setItem("pi:diffCtx", String(Math.max(0, Math.min(80, v))));
 		rebuild();
 	};
 	dec.onclick = () => apply(getDiffCtx() - 1);
@@ -2820,11 +2777,37 @@ function renderMessage(msg) {
 // ---- streaming state ----
 function setStreaming(on) {
 	streaming = on;
-	dot.classList.toggle("live", on);
 	stopBtn.disabled = !on;
 	if (!on) cur = null;
 	rescheduleStats(); // ponytail: poll stats fast while producing, slow while idle
+	renderStatusDot();
 }
+// ponytail: connection-health state for the header dot, so a dead/restarting
+// backend stays visible instead of being signalled only by a short-lived toast
+// (review: distinct disconnected/restarting/loading/failed states). The dot's
+// colour + animation is the single source of truth; setStreaming layers "working"
+// (green pulse) on top of the ready state. Bad states also pin the status text.
+let connState = "connecting"; // connecting | ready | reconnecting | stopped
+function renderStatusDot() {
+	// priority: stopped > reconnecting > connecting > working(ready+streaming) > ready
+	let cls;
+	if (connState === "stopped") cls = "dead";
+	else if (connState === "reconnecting") cls = "bad";
+	else if (connState === "connecting") cls = "conn";
+	else if (streaming) cls = "live";
+	else cls = "ready";
+	dot.className = cls;
+	if (connState === "connecting") statusText.textContent = "connecting…";
+	else if (connState === "reconnecting")
+		statusText.textContent = "reconnecting…";
+	else if (connState === "stopped") statusText.textContent = "webui stopped";
+}
+function setConnState(s) {
+	if (connState === s) return;
+	connState = s;
+	renderStatusDot();
+}
+renderStatusDot(); // amber "connecting" dot before the SSE stream opens
 // ponytail: compaction state -- disables the Compact button and drives the
 // activity bar while the context is being summarized, whether the trigger
 // was the button, a /compact, or auto-compaction at the threshold.
@@ -2937,11 +2920,7 @@ function handle(payload) {
 					cur._blk.thinking += e.delta || "";
 				scheduleRender();
 			} else if (e.type === "thinking_end") {
-				if (
-					cur._blk &&
-					cur._blk.type === "thinking" &&
-					e.content != null
-				)
+				if (cur._blk && cur._blk.type === "thinking" && e.content != null)
 					cur._blk.thinking = e.content;
 				cur._blk = null;
 				if (e.content != null) {
@@ -2994,10 +2973,7 @@ function handle(payload) {
 			// subagent: render the live details (child tool calls, parallel/chain
 			// progress, per-result status). The generic text path below still fills
 			// in the final "(running…)" / partial text as a fallback.
-			if (
-				payload.toolName === "subagent" &&
-				payload.partialResult.details
-			)
+			if (payload.toolName === "subagent" && payload.partialResult.details)
 				renderSubagentView(
 					w.out,
 					payload.partialResult.details,
@@ -3022,8 +2998,7 @@ function handle(payload) {
 					.map((b) => b.text)
 					.join("\n");
 				if (
-					(payload.toolName === "edit" ||
-						payload.toolName === "write") &&
+					(payload.toolName === "edit" || payload.toolName === "write") &&
 					w.args &&
 					!payload.isError
 				) {
@@ -3043,15 +3018,10 @@ function handle(payload) {
 						// refetch. Misses fall back to the 1-based default.
 						const ePath = ea.path || "";
 						const fileP = ePath
-							? fetch(
-									"/api/file?path=" +
-										encodeURIComponent(ePath),
-								)
+							? fetch("/api/file?path=" + encodeURIComponent(ePath))
 									.then((r) => r.json())
 									.then((j) =>
-										j && j.ok && j.content != null
-											? j.content
-											: null,
+										j && j.ok && j.content != null ? j.content : null,
 									)
 									.catch(() => null)
 							: Promise.resolve(null);
@@ -3070,16 +3040,11 @@ function handle(payload) {
 							fileP.then((content) => {
 								let start = null;
 								if (content) {
-									for (const needle of [
-										e.oldText,
-										e.newText,
-									]) {
+									for (const needle of [e.oldText, e.newText]) {
 										if (!needle) continue;
 										const at = content.indexOf(needle);
 										if (at >= 0) {
-											start = content
-												.slice(0, at)
-												.split("\n").length;
+											start = content.slice(0, at).split("\n").length;
 											break;
 										}
 									}
@@ -3102,13 +3067,7 @@ function handle(payload) {
 						var host = document.createElement("div");
 						host.className = "sx-host";
 						w.out.appendChild(host);
-						mountSideBySide(
-							host,
-							ea.path || "",
-							null,
-							ea.content || "",
-							true,
-						);
+						mountSideBySide(host, ea.path || "", null, ea.content || "", true);
 					}
 					if (t) {
 						var rt = document.createElement("div");
@@ -3125,11 +3084,7 @@ function handle(payload) {
 						payload.result &&
 						payload.result.details
 					) {
-						renderSubagentView(
-							w.out,
-							payload.result.details,
-							subagentDensity,
-						);
+						renderSubagentView(w.out, payload.result.details, subagentDensity);
 						if (t) {
 							var rt = document.createElement("div");
 							rt.className = "sa-foot";
@@ -3191,9 +3146,7 @@ function handle(payload) {
 				r.result.tokensBefore > 0
 			) {
 				var pct = Math.round(
-					(1 -
-						r.result.estimatedTokensAfter / r.result.tokensBefore) *
-						100,
+					(1 - r.result.estimatedTokensAfter / r.result.tokensBefore) * 100,
 				);
 				note(
 					`compacted: ${fmt(r.result.tokensBefore)} → ${fmt(r.result.estimatedTokensAfter)} tokens (−${pct}%${r.reason === "overflow" ? ", retrying" : ""})`,
@@ -3230,9 +3183,26 @@ const sb = [
 	"tok",
 	"cost",
 ].reduce((o, k) => ((o[k] = $("sb-" + k)), o), {});
+// ponytail: statusbar secondary group (git/think/cache/tok/$cost/ide) collapses
+// to a ⋯ popover under 720px (style.css @media). <details> is default-open so the
+// wide layout is inline without fighting the UA's closed-details hiding; we just
+// close it on narrow viewports and when the user shrinks into one.
+const sbSec = $("sb-sec");
+let sbNarrow = window.matchMedia("(max-width: 720px)").matches;
+if (sbSec) sbSec.open = !sbNarrow; // wide: inline (open); narrow: popover starts closed
+function syncSbOverflow() {
+	if (!sbSec) return;
+	const n = window.matchMedia("(max-width: 720px)").matches;
+	if (n !== sbNarrow) {
+		// only react to actual wide<->narrow crossings, not every resize tick, so
+		// a user-opened popover isn't snapped shut by a same-mode window nudge.
+		sbNarrow = n;
+		sbSec.open = !n; // wide -> open (inline); narrow -> closed
+	}
+}
+window.addEventListener("resize", syncSbOverflow);
 function refreshSbModel() {
-	sb.model.textContent =
-		(modelSel.selectedOptions[0] || {}).textContent || "…";
+	sb.model.textContent = (modelSel.selectedOptions[0] || {}).textContent || "…";
 }
 function refreshSbThink() {
 	sb.think.textContent = thinkSel.value || "—";
@@ -3260,9 +3230,7 @@ async function refreshPonytailMode(sessionFile) {
 	try {
 		const m = await fetch(
 			"/api/ponytail-mode" +
-				(sessionFile
-					? "?session=" + encodeURIComponent(sessionFile)
-					: ""),
+				(sessionFile ? "?session=" + encodeURIComponent(sessionFile) : ""),
 		).then((r) => r.json());
 		if (m && m.ok && m.mode) ponySel.value = m.mode;
 	} catch {}
@@ -3324,6 +3292,7 @@ updateIdeBadge(window.piWebuiIdeInfo || null);
 // ---- SSE ----
 const es = new EventSource("/api/events");
 es.onopen = () => {
+	setConnState("ready");
 	statusText.textContent = "ready";
 	setActivity("ready", false);
 	refreshHealth();
@@ -3389,8 +3358,7 @@ es.onmessage = (ev) => {
 		// intercept init responses to populate UI
 		if (p.type === "response" && p.success) {
 			if (p.id === "init-state" && p.data) {
-				if (p.data.thinkingLevel != null)
-					setThinkSel(p.data.thinkingLevel);
+				if (p.data.thinkingLevel != null) setThinkSel(p.data.thinkingLevel);
 				if (p.data.isStreaming != null && p.data.isStreaming) {
 					setStreaming(true);
 					setActivity("working…", true);
@@ -3460,8 +3428,7 @@ es.onmessage = (ev) => {
 					refreshStats();
 				}
 			} else if (
-				(p.command === "switch_session" ||
-					p.command === "new_session") &&
+				(p.command === "switch_session" || p.command === "new_session") &&
 				(!p.data || !p.data.cancelled)
 			) {
 				// session replaced (resume / new) — re-render history + state for the now-active session
@@ -3474,10 +3441,7 @@ es.onmessage = (ev) => {
 		} else {
 			if (p.type === "thinking_level_changed" && p.level != null)
 				setThinkSel(p.level);
-			else if (
-				p.type === "agent_end" ||
-				p.type === "session_info_changed"
-			)
+			else if (p.type === "agent_end" || p.type === "session_info_changed")
 				refreshStats();
 			handle(p);
 		}
@@ -3486,6 +3450,7 @@ es.onmessage = (ev) => {
 		if (/error|warn/i.test(env.payload))
 			toast(env.payload.split("\n")[0].slice(0, 90), "warn");
 	} else if (env.source === "pi_exit") {
+		setConnState("reconnecting"); // persist the disconnect — a toast alone is easy to miss
 		toast("pi subprocess exited — reconnecting…", "err");
 	} else if (env.source === "server" && env.type === "workspace_changed") {
 		// another tab (or this one) switched project: pi already respawned in the
@@ -3507,10 +3472,12 @@ es.onmessage = (ev) => {
 		refreshWorkspaces();
 		refreshSessionsSidebar();
 		refreshPlanState();
+	} else if (env.source === "server" && env.type === "stopping") {
+		showStopped();
 	}
 };
 es.onerror = () => {
-	statusText.textContent = "reconnecting…";
+	setConnState("reconnecting");
 	setActivity("reconnecting…", false);
 };
 
@@ -3603,6 +3570,32 @@ $("refresh-btn").onclick = () => location.reload();
 $("settings-btn").onclick = openSettings;
 $("settings-close").onclick = closeSettings;
 settingsBack.onclick = closeSettings;
+
+// ponytail: in-UI stop. The button POSTs /api/stop; the server kills its pi
+// child + exits. We close the SSE stream (no reconnect loop) and mark a static
+// "stopped" state — reload the page to start the webui again. Idempotent: the
+// initiating tab reaches it via the fetch AND via the "stopping" broadcast.
+let stopped = false;
+function showStopped() {
+	if (stopped) return;
+	stopped = true;
+	try {
+		es.close();
+	} catch {}
+	setConnState("stopped"); // red steady dot + pinned text (setStreaming renders via connState)
+	setStreaming(false);
+	setActivity("stopped", false);
+	toast("webui stopped — relaunch to restart", "ok");
+}
+async function stopWebui() {
+	try {
+		await fetch("/api/stop", { method: "POST" });
+	} catch {
+		/* server died mid-flight — the "stopping" broadcast / dropped SSE covers it */
+	}
+	showStopped();
+}
+$("stop-btn").onclick = stopWebui;
 // density toggle → drives renderSubagentView; persist as a hint.
 const saDensitySel = $("sa-density");
 if (subagentDensity) saDensitySel.value = subagentDensity;
@@ -3717,11 +3710,7 @@ async function send() {
 		// ponytail: RPC wire key is "follow_up" (snake-case), not "followUp";
 		// auto defaults to steer. See pi dist modes/rpc/rpc-types.d.ts.
 		const how =
-			mode === "auto"
-				? "steer"
-				: mode === "followUp"
-					? "follow_up"
-					: mode;
+			mode === "auto" ? "steer" : mode === "followUp" ? "follow_up" : mode;
 		cmd =
 			how === "prompt"
 				? { type: "prompt", message: text }
@@ -3796,17 +3785,20 @@ async function showSessions() {
 	const host = card.querySelector(".sessions");
 	rows.forEach((s) => {
 		const current = curSessionFile && pathEq(s.path, curSessionFile);
-		const row = document.createElement("div");
+		const row = document.createElement("button");
+		row.type = "button";
 		row.className = "srow" + (current ? " current" : "");
+		if (current) row.setAttribute("aria-current", "true");
 		setSafeHtml(
 			row,
-			`<div class="smeta"><span class="sdate">${esc(
+			`<span class="smeta"><span class="sdate">${esc(
 				fmtSessionDate(s.when),
-			)}</span><span class="scount">${s.messages || 0} msg${
-				current ? " · current" : ""
-			}</span></div>` + `<div class="sprev">${esc(s.preview)}</div>`,
+			)}</span><span class="scount">${s.messages || 0} msg</span></span>` +
+				`<span class="sprev">${esc(s.preview)}</span>`,
 		);
-		row.onclick = () => resumeSession(s.path, current);
+		if (current)
+			row.disabled = true; // already active
+		else row.onclick = () => resumeSession(s.path, false);
 		host.appendChild(row);
 	});
 }
@@ -3873,17 +3865,21 @@ async function refreshWorkspaces() {
 		return;
 	}
 	for (const w of ws) {
-		const row = document.createElement("div");
+		const row = document.createElement("button");
+		row.type = "button";
 		row.className = "ws-row" + (w.active ? " active" : "");
 		row.title = w.path;
+		if (w.active) row.setAttribute("aria-current", "true");
 		setSafeHtml(
 			row,
-			`<div class="ws-name">${esc(w.name)}</div>` +
-				`<div class="ws-meta">${w.sessions || 0} session${
+			`<span class="ws-name">${esc(w.name)}</span>` +
+				`<span class="ws-meta">${w.sessions || 0} session${
 					w.sessions === 1 ? "" : "s"
-				}</div>`,
+				}</span>`,
 		);
-		if (!w.active) row.onclick = () => switchWorkspace(w.path);
+		if (w.active)
+			row.disabled = true; // current workspace — can't switch to self
+		else row.onclick = () => switchWorkspace(w.path);
 		host.appendChild(row);
 	}
 }
@@ -3919,16 +3915,20 @@ async function refreshSessionsSidebar() {
 	}
 	for (const s of rows) {
 		const current = curSessionFile && pathEq(s.path, curSessionFile);
-		const row = document.createElement("div");
+		const row = document.createElement("button");
+		row.type = "button";
 		row.className = "ws-row" + (current ? " active" : "");
+		if (current) row.setAttribute("aria-current", "true");
 		setSafeHtml(
 			row,
-			`<div class="ws-name">${esc(s.preview)}</div>` +
-				`<div class="ws-meta">${esc(fmtSessionDate(s.when))} · ${
+			`<span class="ws-name">${esc(s.preview)}</span>` +
+				`<span class="ws-meta">${esc(fmtSessionDate(s.when))} · ${
 					s.messages || 0
-				} msg${current ? " · current" : ""}</div>`,
+				} msg</span>`,
 		);
-		row.onclick = () => resumeSession(s.path, current);
+		if (current)
+			row.disabled = true; // already active
+		else row.onclick = () => resumeSession(s.path, false);
 		host.appendChild(row);
 	}
 }
@@ -3995,6 +3995,7 @@ function updatePalette() {
 		if (palItems.length) {
 			renderPalette();
 			palette.style.display = "block";
+			inputEl.setAttribute("aria-expanded", "true");
 			return;
 		}
 	}
@@ -4005,6 +4006,9 @@ function renderPalette() {
 	palItems.forEach((c, i) => {
 		const d = document.createElement("div");
 		d.className = "item" + (i === palSel ? " sel" : "");
+		d.id = "pal-opt-" + i;
+		d.setAttribute("role", "option");
+		d.setAttribute("aria-selected", i === palSel ? "true" : "false");
 		setSafeHtml(
 			d,
 			`<span class="nm">/${esc(c.name)}</span> <span class="ds">${esc(c.description || c.source || "")}</span>`,
@@ -4015,13 +4019,22 @@ function renderPalette() {
 			inputEl.focus();
 			hidePalette();
 		};
+		// mouse hover tracks the keyboard highlight (palSel) so hover and
+		// selected stay in sync — consistent affordance, per the review.
+		d.onmouseenter = () => {
+			palSel = i;
+			renderPalette();
+		};
 		palette.appendChild(d);
 	});
+	inputEl.setAttribute("aria-activedescendant", "pal-opt-" + palSel);
 }
 function hidePalette() {
 	palette.style.display = "none";
 	palItems = [];
 	palSel = 0;
+	inputEl.removeAttribute("aria-activedescendant");
+	inputEl.setAttribute("aria-expanded", "false");
 }
 inputEl.addEventListener("keydown", (e) => {
 	if (palette.style.display !== "block") return;

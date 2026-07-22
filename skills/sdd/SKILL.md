@@ -1,6 +1,6 @@
 ---
 name: sdd
-description: "Strict 4-phase Spec-Driven Development with TiCoder test validation — Plan, Spec, Impl-Plan, Code+Test, with explicit user approval between phases. Use ONLY for substantial multi-file features, complex logic, data/API changes, or ambiguous requirements. Do NOT use for one-line fixes, typos, config tweaks, or single small edits. Never writes implementation code before Phase 3 approval."
+description: "Strict 4-phase Spec-Driven Development with TiCoder test validation — Plan, Spec, Impl-Plan, Code+Test with per-chunk spec/plan-compliance verification and resumable checkpoints, explicit user approval between phases. Use ONLY for substantial multi-file features, complex logic, data/API changes, or ambiguous requirements. Do NOT use for one-line fixes, typos, config tweaks, or single small edits. Never writes implementation code before Phase 3 approval."
 ---
 
 # SDD + TiCoder Advanced Workflow
@@ -68,8 +68,12 @@ Example run: `.sdd/plan_usage-tracking_17072026.md`,
 
 1. Upon Spec approval, generate `.sdd/tasks_{slug}_{DDMMYYYY}.md` (same slug/date)
    containing:
-   - **Task List:** Atomic, ordered steps (e.g., "Create DB schema", "Add API endpoint").
-   - **Dependencies:** Which task blocks which.
+   - **Task List:** Small, atomic, ordered **chunks** — each independently
+     implementable and verifiable in one pass (one small change + one test set).
+     Favor many small chunks over few big ones: every chunk must be a self-contained
+     step you can checkpoint and resume from. Tag each chunk with the FR(s) and plan
+     goal(s) it delivers, so Phase 4's compliance check has an explicit target.
+   - **Dependencies:** Which chunk blocks which.
    - **TiCoder Test Suite:** For EACH task, define the specific unit tests that must
      pass. Tag every test with the requirement it validates (e.g. `# FR-2`) so no
      criterion can silently vanish between spec and code.
@@ -82,24 +86,78 @@ Example run: `.sdd/plan_usage-tracking_17072026.md`,
 
 ### Phase 4: Implementation & Verification
 
-**Goal:** Execute tasks one by one with verified correctness.
+**Goal:** Execute chunks one at a time, proving spec + plan compliance after each
+before advancing. Every chunk boundary is a safe resumption point.
 
-**Action:**
+**Per-chunk loop — run once per chunk, never batch:**
 
-1. Upon Task approval, execute the **first task** only.
-2. **Code Generation:** Write code specifically to pass the approved tests for this task.
-3. **Test Execution:** Run the tests.
-   - If **Pass**: Mark task as `[x]` in the tasks file and proceed to next task.
-   - If **Fail**: Debug and fix code until tests pass. Do not proceed until green.
-4. **Verification:** After all tasks are complete, generate `.sdd/verify-report.md`
-   summarizing the outcome and mapping each FR to its passing test.
+1. **Pick the next unchecked chunk** in `.sdd/tasks_{slug}_{DDMMYYYY}.md`. (On a
+   fresh session this is exactly how you resume — see Resume Protocol below.)
+2. **Implement** the code for this one chunk only, against its approved tests.
+3. **Run the chunk's tests.**
+   - **Fail** → debug/fix until green. Never advance on red.
+4. **Compliance check (do NOT skip):** re-open `.sdd/spec_{slug}_{DDMMYYYY}.md`
+   and `.sdd/plan_{slug}_{DDMMYYYY}.md` and confirm the implementation actually
+   satisfies every FR + plan goal tagged on this chunk — not merely that tests
+   pass. Tests passing ≠ spec met; spec drift is the bug this phase exists to
+   catch.
+   - **Non-compliant** → fix before continuing.
+5. **Checkpoint:** mark the chunk `[x]` in the tasks file **and** write a 1–2 line
+   compliance note directly beneath it:
+
+     ```
+     - [x] Create DB schema
+       - Tests: `schema.test.js` (FR-1, FR-2) — PASS
+       - Compliance: matches spec Data Models + plan "schema-first" goal. ✓
+     ```
+
+   This edit is the durable progress record — write it before moving on so a crash
+   or a new session loses nothing.
+6. **Advance:** loop to the next unchecked chunk. Auto-continue; the user may
+   interrupt or start a fresh session at any checkpoint.
+
+**Terminal verification:** once every chunk is `[x]`, generate
+`.sdd/verify_{slug}_{DDMMYYYY}.md` mapping each FR to its passing test and the
+overall outcome.
+
+**Archive (completes the run):** move the set's four files — `plan_`, `spec_`,
+`tasks_`, `verify_` — into `.sdd/archive/` (create it if missing: `mkdir -p
+.sdd/archive`). The run is done and must leave the active phase rail. Confirm the
+four files no longer exist at the `.sdd/` top level — the server's
+`/api/plan-state` glob is non-recursive, so archived sets vanish from the stepper
+on the next poll and any open pane to the set closes. Archive **only after**
+`verify_` is written and every chunk is `[x]`; archiving an incomplete run
+orphans the Resume Protocol.
+
+### Resume Protocol (new session after any step)
+
+The tasks file is the single source of truth; nothing required to continue lives
+only in memory. To resume in a fresh session:
+
+1. Glob `.sdd/` to recover the active set (same `{slug}_{DDMMYYYY}`).
+2. Open `.sdd/tasks_{slug}_{DDMMYYYY}.md` and locate the **first unchecked**
+   chunk.
+3. Read the `[x]` + compliance notes above it to recover prior decisions, then
+   continue the Phase 4 loop from that chunk.
+
+A new session may be started after any checkpoint — progress is exactly what the
+last `[x]` + compliance note recorded.
 
 ## Enforcement Rules
 
 - **No Interleaving:** Do not mix phases. Do not write code in Phase 1 or 2. Do not
   define tasks in Phase 1.
-- **Artifact Persistence:** Save every phase to disk (`.sdd/plan.md`, `.sdd/spec.md`,
-  `.sdd/tasks.md`) to maintain context. Write each artifact BEFORE advancing.
+- **Artifact Persistence:** Save every phase to disk (`.sdd/plan_{slug}_{DDMMYYYY}.md`,
+  `.sdd/spec_{slug}_{DDMMYYYY}.md`, `.sdd/tasks_{slug}_{DDMMYYYY}.md`) to maintain
+  context. Write each artifact BEFORE advancing.
 - **Explicit Gates:** Wait for a clear "Yes" from the user before moving to the next phase.
 - **Test First:** Never write implementation code without an approved test case for that
   specific logic.
+- **Compliance Per Chunk:** No chunk is "done" until its tests pass AND its spec/plan
+  compliance note is written into the tasks file. The tasks file with its `[x]` marks
+  is the resumption contract.
+- **One Chunk at a Time:** Never implement multiple chunks before checking compliance.
+  Batching defeats the checkpoint/resume guarantee.
+- **Archive on Completion:** Once `verify_` is written and all chunks are `[x]`,
+  move the set into `.sdd/archive/`. Never archive an incomplete run — it orphans
+  the Resume Protocol.

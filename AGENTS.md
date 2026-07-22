@@ -39,24 +39,24 @@ workspace switching + hide the list — set by `/webui` for IDE use),
 `PI_WEBUI_NO_OPEN` (skip the launcher's browser auto-open).
 
 **Zero-build is a hard constraint** — no bundler/transpile/`npm install` at
-runtime. Edit `app.js`/`style.css`/`index.html` + refresh = the dev loop.
+runtime. Edit `public/app.js`/`public/style.css`/`public/index.html` + refresh = the dev loop.
 
 ## File map
 
 | File | Role |
 |------|------|
 | `server.js` | Bridge. CommonJS, ~no deps. Serves assets, frames JSONL (split on `\n` only), spawns/respawns `pi --mode rpc` (live `let PI_CWD`; `POST /api/workspace` tree-kills + respawns in a new project and broadcasts `workspace_changed` to all tabs), CSRF + DNS-rebinding gate, `safePath`, 1MB body cap. `PI_WEBUI_NO_SWITCH` gates switching. |
-| `index.html` | Markup only. Load order: `vendor/markdown-it.min.js` → `md.js` → `vendor/highlight.min.js` → `app.js`. |
-| `style.css` | All styling. Obsidian (modern dark) by default + switchable `paperlike` (`[data-theme]`) — see [`docs/design.md`](docs/design.md). |
-| `md.js` | Thin shim over vendored markdown-it 14.x: `md(markdown)` (`html:false`/`breaks:true`/`linkify:true`, links `target=_blank`) + `esc()` (project-wide HTML-escaper source of truth, null-safe→`""`). Loads AFTER `markdown-it.min.js`; `require`-able in Node (self-test: `node -e "console.log(require('./md.js').md('**x**'))"`). |
-| `app.js` | Entire frontend (vanilla JS): SSE, rendering, modals, diffs, commands palette, left workspace/session sidebar (`#wsbar`). Uses `md()`/`esc()` globals from md.js. |
+| `public/index.html` | Markup only. Load order: `vendor/markdown-it.min.js` → `md.js` → `vendor/highlight.min.js` → `app.js`. |
+| `public/style.css` | All styling. Obsidian (modern dark) by default + switchable `paperlike` (`[data-theme]`) — see [`docs/design.md`](docs/design.md). |
+| `public/md.js` | Thin shim over vendored markdown-it 14.x: `md(markdown)` (`html:false`/`breaks:true`/`linkify:true`, links `target=_blank`) + `esc()` (project-wide HTML-escaper source of truth, null-safe→`""`). Loads AFTER `markdown-it.min.js`; `require`-able in Node (self-test: `node -e "console.log(require('./public/md.js').md('**x**'))"`). |
+| `public/app.js` | Entire frontend (vanilla JS): SSE, rendering, modals, diffs, commands palette, left workspace/session sidebar (`#wsbar`). Uses `md()`/`esc()` globals from md.js. |
 | `workspaces.js` | Pure workspace discovery + switch validation (CommonJS, fs-only). `discoverWorkspaces` scans `~/.pi/agent/sessions/--<cwd>--/` and recovers each root from the newest `.jsonl`'s `{type:"session"}.cwd` (NOT the encoded folder name); `isKnownWorkspacePath` is the `POST /api/workspace` security gate (realpath must match a discovered workspace). Unit-tested (`test/workspaces.test.js`). |
 | `bin.js` | `pi-webui` global launcher. Spawns `server.js` **detached** (own process group → closing the console won't kill it), polls a temp log to report early death, opens the browser (`PI_WEBUI_NO_OPEN` skips), then exits. |
 | `test/` | `node:assert/strict` unit tests, no framework (`node test/<x>.test.js`). |
-| `vendor/` | Vendored runtimes, served via `server.js` `STATIC` whitelist (no npm/build): **markdown-it** v14.1.0 UMD (`window.markdownit`), **highlight.js** v11.11.1 common + `highlight.css` github-dark. `app.js` `highlightCode()` post-processes `pre code`. Both degrade silently if missing (md.js→escaped text; hljs→uncolored). |
+| `public/vendor/` | Vendored runtimes, served via `server.js` `STATIC` whitelist (no npm/build): **markdown-it** v14.1.0 UMD (`window.markdownit`), **highlight.js** v11.11.1 common + `highlight.css` github-dark. `app.js` `highlightCode()` post-processes `pre code`. Both degrade silently if missing (md.js→escaped text; hljs→uncolored). |
 | `docs/` | Specs: [`design.md`](docs/design.md) (UI/UX, visual source of truth), [`README.md`](docs/README.md) (index + SSOT). |
 | `package.json` | `keywords:["pi-package"]` → `pi install`-able. `pi` manifest declares `extensions`+`skills` (package-relative); `files:` whitelist ships both. |
-| `skills/sdd/` | 4-phase Spec-Driven Dev + TiCoder (Plan→Spec→Impl-Plan→Code+Test, approval between phases). Artifacts use **`.sdd/{type}_{slug}_{DDMMYYYY}.md`** (plan/spec/tasks/verify) so multiple runs coexist as history; `server.js /api/plan-state` globs `.sdd` and returns `{phase,slug,date,rel,mtime}` newest-first (legacy fixed names like `plan.md`/`verify-report.md` still match for back-compat). Discovered via `pi.skills` manifest (ships + auto-discovered); `/skill:sdd`. A **right rail** (`#sddbar`) shows the **latest active** set's **phase stepper** (`● reached / ○ pending`, current in accent; the rail hides once a set reaches `verify`) — narrow by default, click a reached phase to expand its doc as rendered markdown (state persists in `localStorage`); todos live only in their own panel, never the rail. Advisory only (size gate lives in the `description`). |
+| `skills/sdd/` | 4-phase Spec-Driven Dev + TiCoder (Plan→Spec→Impl-Plan→Code+Test, approval between phases). Artifacts use **`.sdd/{type}_{slug}_{DDMMYYYY}.md`** (plan/spec/tasks/verify) so multiple runs coexist as history; `server.js /api/plan-state` globs `.sdd` and returns `{phase,slug,date,rel,mtime}` newest-first (legacy fixed names like `plan.md`/`verify-report.md` still match for back-compat). Discovered via `pi.skills` manifest (ships + auto-discovered); `/skill:sdd`. A **right rail** (`#sddbar`) shows the **latest active** set's **phase stepper** (`● reached / ○ pending`, current in accent; the rail hides once a set reaches `verify`, at which point the skill archives the set's files into `.sdd/archive/`) — narrow by default, click a reached phase to expand its doc as rendered markdown (state persists in `localStorage`); todos live only in their own panel, never the rail. Advisory only (size gate lives in the `description`). |
 | `extensions/pi_minimal_webui/` | pi extension — see below. |
 | `jetbrains/` | Standalone Gradle plugin (separate project; zero-build invariant preserved). See [`jetbrains/README.md`](jetbrains/README.md). |
 
@@ -161,21 +161,3 @@ entry — these are load-bearing invariants. Numbers match `GOTCHAS.md #N`.
   carry `args` (or the tool isn't `edit`/`write`) → `curToolArgs` empty (GOTCHAS.md #7).
 - **Health** — `GET /api/health`; SSE at `GET /api/events`; commands via
   `POST /api/cmd`.
-
-## Open work
-
-- [ ] Rename `pi_minimal_webui` folder → e.g. `pi-webui-ask-bridge` (browser
-      side needs no change).
-- [ ] Watch the mutable top-level closure state in app.js as it grows (GOTCHAS.md #8).
-- [x] **Subagent per-command safeguard (Option A, IPC) — CLOSED 2026-06-25.**
-      The spawned `pi --mode json` subprocess DOES load safeguard + fire its
-      `tool_call` hook, but headless (`hasUI=false`) → `nonInteractive` →
-      default `allow` (stdin ignored, can't prompt). The real capability wall
-      is the tier `--tools` allowlist; dropped `bash` from the debugger tier →
-      5/6 tiers read-only, only `implementer` keeps bash (bounded by the
-      parent's delegation gate). Full IPC deferred — ~150-250 lines
-      interleaving a non-pi protocol into pi's NDJSON stdout, risking the
-      `\n`-only framing invariant (GOTCHAS.md #2) for marginal benefit. (Detail in
-      CHANGELOG.)
-
-Tick an item here **and** add a changelog entry when you close it.

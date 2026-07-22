@@ -4,6 +4,10 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>pi</title>
+		<link rel="manifest" href="manifest.webmanifest" />
+		<link rel="icon" href="icon-512.png" />
+		<link rel="apple-touch-icon" href="icon-192.png" />
+		<meta name="theme-color" content="#0a0a0b" />
 		<link rel="stylesheet" href="style.css" />
 		<link rel="stylesheet" href="vendor/highlight.css" />
 		<script>
@@ -15,6 +19,17 @@
 				if (t !== "paperlike" && t !== "obsidian") t = "obsidian";
 				document.documentElement.setAttribute("data-theme", t);
 			})();
+		</script>
+		<script>
+			// ponytail: register the installability-only SW (see sw.js). No-op where
+			// unsupported; failures are ignored (never block the app).
+			if ("serviceWorker" in navigator) {
+				window.addEventListener("load", function () {
+					navigator.serviceWorker
+						.register("/sw.js")
+						.catch(function () {});
+				});
+			}
 		</script>
 	</head>
 	<body>
@@ -176,6 +191,16 @@
 					</select>
 				</label>
 			</section>
+			<section class="set-sec">
+				<h4>server</h4>
+				<p class="set-hint">
+					stop the webui server + its pi process. relaunch (pi-webui
+					or /webui) to start again.
+				</p>
+				<button id="stop-btn" class="set-stop" type="button">
+					stop webui
+				</button>
+			</section>
 		</aside>
 		<div id="settings-back" aria-hidden="true"></div>
 
@@ -203,10 +228,17 @@
 
 		<footer>
 			<div class="composer">
-				<div id="palette"></div>
+				<div
+					id="palette"
+					role="listbox"
+					aria-label="slash commands"
+				></div>
 				<div id="widget"></div>
 				<textarea
 					id="input"
+					aria-controls="palette"
+					aria-expanded="false"
+					aria-autocomplete="list"
 					placeholder="Send a message…  ( / for commands/skills, Shift+Enter for newline )"
 					rows="1"
 				></textarea>
@@ -232,28 +264,35 @@
 				</div>
 			</div>
 			<div class="statusbar" id="statusbar">
-				<span>repo <code id="sb-repo">…</code></span
-				><span class="sep">·</span>
-				<span>git <code id="sb-git">…</code></span
-				><span class="sep">·</span>
-				<span>model <code id="sb-model">…</code></span
-				><span class="sep">·</span>
-				<span>think <code id="sb-think">…</code></span
-				><span class="sep">·</span>
-				<span>ctx <code id="sb-ctx">…</code></span
-				><span class="sep">·</span>
-				<span>cache <code id="sb-cache">…</code></span
-				><span class="sep">·</span>
-				<span>tok <code id="sb-tok">…</code></span
-				><span class="sep">·</span>
-				<span>$<code id="sb-cost">…</code></span
-				><span class="sep">·</span>
-				<span
-					>ide
-					<code id="sb-ide" title="IDE hosting this panel"
-						>…</code
-					></span
-				>
+				<span class="sb-grp primary">
+					<span>repo <code id="sb-repo">…</code></span>
+					<span class="sep">·</span>
+					<span>model <code id="sb-model">…</code></span>
+					<span class="sep">·</span>
+					<span>ctx <code id="sb-ctx">…</code></span>
+				</span>
+				<details class="sb-sec" id="sb-sec" open>
+					<summary class="sb-more" title="more status">⋯</summary>
+					<span class="sb-sec-items">
+						<span class="sep">·</span>
+						<span>git <code id="sb-git">…</code></span>
+						<span class="sep">·</span>
+						<span>think <code id="sb-think">…</code></span>
+						<span class="sep">·</span>
+						<span>cache <code id="sb-cache">…</code></span>
+						<span class="sep">·</span>
+						<span>tok <code id="sb-tok">…</code></span>
+						<span class="sep">·</span>
+						<span>$<code id="sb-cost">…</code></span>
+						<span class="sep">·</span>
+						<span
+							>ide
+							<code id="sb-ide" title="IDE hosting this panel"
+								>…</code
+							></span
+						>
+					</span>
+				</details>
 			</div>
 		</footer>
 

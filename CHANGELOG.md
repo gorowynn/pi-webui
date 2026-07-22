@@ -6,6 +6,173 @@
 
 ## Changelog
 
+### 2026-07-22 — feat(ui): review visuals — status-bar overflow, semantic rows/palette, persistent connection states
+
+- **Why:** first pass on the `docs/improvements.md` → **Visuals** section (items
+  1–3, all High). The status bar wrapped/competed for space on narrow windows;
+  session/workspace rows and palette entries were non-semantic clickable `<div>`s;
+  and a dead/restarting backend was signalled only by a short-lived toast.
+- **Status-bar density (`index.html`/`style.css`/`app.js`):** the 9-readout footer
+  splits into a **primary** group (repo·model·ctx) always visible and a
+  **secondary** group (git·think·cache·tok·$cost·ide) that collapses into a native
+  `<details>` ⋯ popover under 720px. Primary scrolls internally if the repo path
+  overflows; `syncSbOverflow()` keeps the `<details>` open on wide / closed on
+  narrow and only reacts to actual wide↔narrow crossings (so an open popover
+  isn't snapped shut by a same-mode resize).
+- **Affordances (`app.js`/`style.css`):** workspace rows, sidebar session rows,
+  and modal session rows are now real `<button>`s — native keyboard/focus,
+  `aria-current` on the active row, `disabled` so the current row is inert. Their
+  `<div>` children became `display:block` spans (`<button>` accepts only phrasing
+  content). Hover/current affordances are gated on `:not(:disabled)`; `:active`
+  adds a pressed inset. The slash palette is now `role="listbox"` with
+  `role="option"` items (`aria-selected`, stable ids); the textarea carries
+  `aria-controls/expanded/autocomplete` + `aria-activedescendant` tracks the
+  arrow-key highlight, and mouse hover stays in sync with keyboard selection.
+- **State clarity (`app.js`/`style.css`):** the header status dot is now a
+  connection-state indicator (`setConnState`/`renderStatusDot`): connecting (amber
+  pulse) → ready (green steady) → working (green pulse) → reconnecting (red pulse)
+  → stopped (red steady) — so a dead/restarting backend stays visible instead of
+  toast-only. `pi_exit` + SSE errors now pin reconnecting. Empty transcript shows
+  a CSS-only `#transcript:empty::before` hint.
+- **Verify:** `node --check` clean; TS LSP clean on `app.js`; server boots, serves
+  all assets (HTTP 200), `/api/health` ok. The 5 ast-grep `no-case-declarations-js`
+  hits on the braced `tool_execution_end` case are false positives (decls sit in
+  nested `if`/callbacks, not the case clause) — dispositioned as false-positive.
+
+### 2026-07-22 — feat(skill): archive finished SDD sets into `.sdd/archive/`
+
+- **Why:** finished runs (verify phase) cluttered `.sdd/` top level; user asked
+  to move completed sets out once the implementation is done.
+- **`skills/sdd/SKILL.md`:** Phase 4 gains a terminal **Archive** step — after
+  `verify_{slug}_{date}.md` is written and every chunk is `[x]`, move the set's
+  four files (`plan_`/`spec_`/`tasks_`/`verify_`) into `.sdd/archive/`
+  (`mkdir -p` if missing), then confirm they're gone from `.sdd/` top level.
+  Guarded: archive only after verify + all-green (archiving an incomplete run
+  orphans the Resume Protocol). New **Archive on Completion** enforcement rule.
+- **`AGENTS.md`:** one-line orientation note in the sdd bullet.
+- **No server/app.js change:** `/api/plan-state` globs `.sdd/` non-recursively
+  (`readdirSync` + `.md` filter), so the `archive/` subdir is ignored and
+  archived sets vanish from the phase rail on the next 30s poll automatically;
+  the open-pane sync logic already closes a pane whose artifact disappears
+  (verified the subdir-ignored behavior with a throwaway fs test).
+
+### 2026-07-22 — feat(ui): SDD sidebar shows chunk progress (done/total)
+
+- **Why:** the SDD rail showed only a bare phase stepper; with the new per-chunk
+  model (compliance notes + checkpoints in `tasks.md`, see previous entry) there
+  was no at-a-glance view of how many chunks are done. User asked for the sidebar
+  to surface more detail.
+- **`server.js` (`/api/plan-state`):** for `tasks` artifacts, read the file and
+  count markdown checkboxes → adds `done`/`total` to the artifact object.
+  Heuristic regex (`^\s*[-*]\s*\[[ xX]\]`); correctly skips the indented
+  `- Tests:`/`- Compliance:` compliance-note sub-bullets and plain dependency
+  bullets (verified: 2/4 on a representative file). Ponytail ceiling noted inline:
+  counts checkboxes inside fenced code too — go fence-aware only if it misleads.
+- **`public/app.js`:** the `tasks` rail step now stacks a `done/total` meta line
+  under the label (rail is only 88px, so inline wouldn't fit); the expanded pane
+  title shows `tasks · slug (3/7)`.
+- **`public/style.css`:** `.ss-txt` column + `.ss-meta` 10px muted line under the
+  phase label.
+- **Scope kept narrow:** no new artifact type, so the phase stepper's
+  `plan|spec|tasks|verify` model is unchanged.
+
+### 2026-07-22 — feat(skill): SDD per-chunk compliance verification + resumable checkpoints
+
+- **Why:** Phase 4 ran the whole task list to completion before any compliance
+  review, so spec/plan drift could accumulate across many tasks before being
+  caught — and a mid-run crash or fresh session had no clean place to resume.
+  User asked to split the plan into small chunks, verify spec/plan compliance
+  after each, then continue — and make a new session startable after any step.
+- **`skills/sdd/SKILL.md` changes:**
+  - **Phase 3** task list now mandates small, atomic **chunks** (one change + one
+    test set each), each tagged with the FR(s) + plan goal(s) it delivers — the
+    explicit target for Phase 4's compliance check.
+  - **Phase 4** rewritten as a strict per-chunk loop: pick next unchecked chunk →
+    implement → run tests → **compliance check** (re-open spec + plan, confirm
+    the implementation actually satisfies the tagged FRs/goals, not just that
+    tests pass) → **checkpoint** (mark `[x]` + write a 1–2 line compliance note
+    inline in the tasks file) → auto-advance. Terminal `verify_{slug}_{date}.md`
+    generated only once every chunk is `[x]`.
+  - **New Resume Protocol:** the tasks file is the single source of truth; a fresh
+    session globs `.sdd/`, opens `tasks_{slug}_{date}.md`, finds the first
+    unchecked chunk, reads the `[x]` + compliance notes above it, and continues.
+  - **Enforcement Rules:** added *Compliance Per Chunk* (tests pass AND note
+    written) and *One Chunk at a Time* (no batching before compliance); fixed
+    Artifact Persistence to use the `{slug}_{date}` filenames (was stale legacy
+    fixed names).
+- **No server/UI changes:** checkpoints live inline in `tasks.md`; no new
+  artifact type, so `server.js` `/api/plan-state` regex and `app.js` phase
+  stepper (which only know `plan|spec|tasks|verify`) are untouched.
+
+### 2026-07-22 — chore(repo): split browser assets into `public/`
+
+- **Why:** root was cluttering as the app grew (12 source/asset files); separate
+  what the browser fetches from Node-side. Zero-build invariant preserved —
+  this is tidiness, not a functional change.
+- **Moved into `public/`:** `index.html`, `app.js`, `md.js`, `style.css`,
+  `usage-provider.js`, `manifest.webmanifest`, `sw.js`, `icon-192.png`,
+  `icon-512.png`, `vendor/`. Server-side (`server.js`, `bin.js`, `workspaces.js`)
+  stays at root.
+- **Rewiring (minimal — `STATIC` maps URL→file, so URL paths unchanged):**
+  `server.js` points `HTML_PATH` + the static-serve `readFileSync` at `public/`
+  (2 lines; the `STATIC` whitelist itself untouched). `md.js`'s
+  `require("./vendor/markdown-it.min.js")` survives because `vendor/` moved with
+  it. `test/usage-provider.test.js` require repointed to `../public/usage-provider.js`.
+  `package.json` `files`: three browser-file entries → `"public"` (side effect:
+  now also ships `app.js`/`style.css`/`vendor/`, which were previously absent
+  from the whitelist — latent oversight). `AGENTS.md` file map + `md.js`
+  self-test command updated to new paths.
+- **Verified:** both unit suites pass; `md.js` self-test renders at new path;
+  all 13 endpoints boot-serve HTTP 200 with correct content-types.
+
+### 2026-07-22 — feat(ui): installable PWA (own window, taskbar icon)
+
+- **Why:** the webui reads as a standalone app; PWA is the rung-1/native way to
+  give it window + dock identity for ~zero cost — no rewrite, no build step
+  (chosen over Flutter/Tauri; Flutter is a full 6.5k-line rebuild that kills the
+  zero-build invariant, Tauri is the heavier runner-up only if a real binary /
+  tray / native menus are wanted later).
+- **Added:** `manifest.webmanifest`; `sw.js` — an installability-only service
+  worker (network-only, caches nothing so the edit+refresh dev loop is kept,
+  never intercepts `/api/` so the `/api/events` SSE stream can't buffer/break);
+  `icon-192.png` + `icon-512.png` — on-brand violet diamond (`--accent` on
+  `--bg`), drawn as a polygon (no font dependency). Wired into `index.html`
+  (manifest link, favicon, apple-touch-icon, `theme-color`, SW registration) and
+  the `server.js` `STATIC` whitelist (4 entries, no-cache like all assets).
+- **Install:** restart the server (HTML is cached at startup), open in
+  Chrome/Edge → install icon in the address bar → own chromeless window +
+  taskbar icon. `localhost` is a secure context so the SW registers.
+
+### 2026-07-22 — feat(ui): stop the webui — standalone `--stop` + in-UI button
+
+- **Standalone stop (`bin.js`):** `pi-webui --stop [port]` (alias `stop`) finds
+  whatever listens on the port and force-kills the **whole process tree**
+  (server + its `pi --mode rpc` child), not just the listener — so it works when
+  the server is hung, the process handle is lost (pi restarted), or it was
+  launched elsewhere (`pi-webui` vs `/webui` vs `node server.js`). Windows:
+  `netstat -ano` → PID is the last column (locale-independent — matches
+  `LISTENING`/`ABHÖREN`/…) → `taskkill /T /F`. POSIX: `lsof -ti tcp:PORT
+  -sTCP:LISTEN` → `pgrep -P` descendant walk → `SIGKILL` (process-group
+  fallback if no `pgrep`). This is the force fallback for the hang case, since a
+  hung server can't serve a button.
+- **In-UI stop button (`server.js`, `app.js`, `index.html`, `style.css`):**
+  Settings → **server → stop webui** (danger-styled). `POST /api/stop` responds
+  `{"ok":true}`, then `stopServer()` (150ms later so the 200 flushes)
+  broadcasts `{type:"stopping"}`, force-kills `pi`, and a `shuttingDown` guard
+  in the `pi` exit handler tears the server down (`server.close()` +
+  `process.exit(0)`) instead of respawning. The CSRF/`isAllowed` gate covers it
+  like every POST. Client-side `showStopped()` (idempotent) closes the
+  `EventSource` (no reconnect loop) + toasts; other open tabs reach it via the
+  broadcast. Graceful stop — needs the server responsive; for hangs use `--stop`.
+- **Why:** no way to stop a hung/crashed webui short of hunting PIDs by hand, and
+  no clean in-UI shutdown. The two are complementary: button = graceful,
+  `--stop` = force-by-port.
+- **Files:** `bin.js`, `server.js`, `app.js`, `index.html`, `style.css`.
+- **Verified:** `node --check`; Windows smoke — `pi-webui --stop` reaped a
+  parent+child tree by port (locale=de); `POST /api/stop` killed server + `pi`,
+  listener gone, no orphan. POSIX `lsof`/`pgrep` path mirrors the extension's
+  proven `killTree` (untested here — no POSIX box).
+
 ### 2026-07-21 — feat(ui): detached `pi-webui` launcher + workspace-switch lock + sidebar polish
 
 - **Detached launcher (`bin.js`):** `pi-webui` now spawns `server.js` in its own
