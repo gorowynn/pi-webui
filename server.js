@@ -227,6 +227,13 @@ function startPi() {
 		);
 		setTimeout(startPi, delay); // survive a crashed agent
 	});
+	// ponytail: announce the (re)spawned pi so clients re-sync and flip out of the
+	// "reconnecting" state a crash pushed them into. Without this the UI stayed
+	// stuck in reconnecting forever after a pi exit — only a full SSE drop (server
+	// restart) recovered it, since the browser↔server pipe survives a child crash.
+	// Fire at spawn time: pi.stdin buffers the client's resync RPCs until pi's
+	// reader is ready, so the response is always from the booted pi.
+	broadcast({ source: "server", type: "pi_ready" });
 }
 startPi();
 

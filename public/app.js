@@ -3452,6 +3452,19 @@ es.onmessage = (ev) => {
 	} else if (env.source === "pi_exit") {
 		setConnState("reconnecting"); // persist the disconnect — a toast alone is easy to miss
 		toast("pi subprocess exited — reconnecting…", "err");
+	} else if (env.source === "server" && env.type === "pi_ready") {
+		// pi (re)spawned after a crash/exit (server.js startPi). Re-sync state +
+		// transcript and flip out of "reconnecting". wasDown gates the toast so a
+		// workspace switch — which also respawns pi and emits workspace_changed —
+		// doesn't double-toast (the switch keeps connState at "ready").
+		const wasDown = connState === "reconnecting";
+		setConnState("ready");
+		statusText.textContent = "ready";
+		setActivity("ready", false);
+		api({ type: "get_state", id: "init-state" });
+		api({ type: "get_messages", id: "init-msgs" });
+		api({ type: "get_commands", id: "init-cmds" });
+		if (wasDown) toast("pi reconnected", "ok");
 	} else if (env.source === "server" && env.type === "workspace_changed") {
 		// another tab (or this one) switched project: pi already respawned in the
 		// new cwd. Clear the old run's view, re-init from the respawned pi, and
