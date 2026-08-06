@@ -52,6 +52,10 @@ const STATIC = {
 		file: "tool-presentation.js",
 		type: "text/javascript; charset=utf-8",
 	},
+	"/csv-preview.js": {
+		file: "csv-preview.js",
+		type: "text/javascript; charset=utf-8",
+	},
 	"/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
 	// ponytail: PWA install surface — manifest, service worker, icons. Served
 	// like any static asset (no-cache so sw.js edits propagate on reload).

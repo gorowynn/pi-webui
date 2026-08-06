@@ -240,7 +240,77 @@
 		img.className = "tool-svg";
 		img.alt = "SVG preview";
 		img.src = src;
-		host.appendChild(img);
+			host.appendChild(img);
+	}
+
+	// ---- bounded CSV table (R§2.3) ----
+	// Renders the parser's {headers, rows} as a <table>. Empty/unparseable input
+	// falls back to the bounded text preview. When truncated, shows a "view
+	// source" toggle that reveals the first 20KB raw (csvPreview.source).
+	function renderCsvPreview(host, content) {
+		var parsed = csvPreview.parse(content);
+		if (!parsed.headers.length && !parsed.rows.length) {
+			renderTextPreview(host, content);
+			return;
+		}
+		var wrap = document.createElement("div");
+		wrap.className = "csv-prev";
+		if (parsed.truncated) {
+			var cap = document.createElement("div");
+			cap.className = "csv-cap";
+			cap.textContent = "Preview limited for performance";
+			wrap.appendChild(cap);
+		}
+		var ncols = parsed.headers.length;
+		for (var r = 0; r < parsed.rows.length; r++)
+			if (parsed.rows[r].length > ncols) ncols = parsed.rows[r].length;
+		ncols = Math.min(ncols, 8);
+		var table = document.createElement("table");
+		if (parsed.headers.length) {
+			var thead = document.createElement("thead");
+			var htr = document.createElement("tr");
+			for (var c = 0; c < ncols; c++) {
+				var th = document.createElement("th");
+				th.textContent = parsed.headers[c] || "";
+				htr.appendChild(th);
+			}
+			thead.appendChild(htr);
+			table.appendChild(thead);
+		}
+		var tbody = document.createElement("tbody");
+		for (var r = 0; r < parsed.rows.length; r++) {
+			var btr = document.createElement("tr");
+			for (var c = 0; c < ncols; c++) {
+				var td = document.createElement("td");
+				td.textContent = parsed.rows[r][c] || "";
+				btr.appendChild(td);
+			}
+			tbody.appendChild(btr);
+		}
+		table.appendChild(tbody);
+		wrap.appendChild(table);
+		if (parsed.truncated) {
+			var btn = document.createElement("button");
+			btn.type = "button";
+			btn.className = "tool-more csv-src";
+			btn.textContent = "view source";
+			var pre = null;
+			btn.addEventListener("click", function () {
+				if (!pre) {
+					pre = document.createElement("pre");
+					pre.className = "tool-pre";
+					pre.textContent = csvPreview.source(content);
+					wrap.appendChild(pre);
+					btn.textContent = "hide source";
+				} else {
+					pre.remove();
+					pre = null;
+					btn.textContent = "view source";
+				}
+			});
+			wrap.appendChild(btn);
+		}
+		host.appendChild(wrap);
 	}
 
 	// ---- dispatch (R§2.1) ----
@@ -255,6 +325,10 @@
 		// errors are always plain text (don't parse an error message as code/csv)
 		if (!ctx.isError && name === "read" && args.path) {
 			var kind = contentKindFromPath(args.path);
+			if (kind === "csv") {
+				renderCsvPreview(host, text);
+				return;
+			}
 			if (kind === "svg") {
 				renderSvgPreview(host, text);
 				return;
@@ -266,7 +340,7 @@
 				});
 				return;
 			}
-			// csv / html → text preview for now (replaced in plan 2.3/2.4)
+			// html → text preview for now (replaced in plan 2.4)
 		}
 		renderTextPreview(host, text);
 	}
@@ -280,6 +354,7 @@
 		renderTextPreview: renderTextPreview,
 		renderNumberedCode: renderNumberedCode,
 		renderSvgPreview: renderSvgPreview,
+		renderCsvPreview: renderCsvPreview,
 		renderToolOutput: renderToolOutput,
 	};
 })();

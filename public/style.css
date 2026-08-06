@@ -533,6 +533,38 @@ pre code.hljs {
 	border-radius: var(--r);
 	background: #ffffff08;
 }
+/* bounded CSV table (R§2.3) */
+.tool .out .csv-prev {
+	margin: 4px 0;
+}
+.tool .out .csv-prev .csv-cap {
+	color: var(--warning);
+	font-size: 11px;
+	margin-bottom: 4px;
+}
+.tool .out .csv-prev table {
+	border-collapse: collapse;
+	width: 100%;
+	font-size: 12px;
+}
+.tool .out .csv-prev th,
+.tool .out .csv-prev td {
+	border: 1px solid var(--line);
+	padding: 3px 8px;
+	text-align: left;
+	white-space: nowrap;
+	max-width: 260px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.tool .out .csv-prev th {
+	background: var(--surface-raised);
+	color: var(--ink);
+	font-weight: 600;
+}
+.tool .out .csv-prev td {
+	color: var(--muted);
+}
 
 .activity {
 	flex: 0 0 auto;
