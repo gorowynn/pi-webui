@@ -277,9 +277,108 @@ function numberOrNull(value) {
 	return Number.isNaN(n) ? null : n;
 }
 
+// ---- mutations (plan 4.6) ----
+// All gated client-side behind a confirm modal. reset/revert require a clean tree
+// (pi-livecraft's invariant); commit/push/discard operate on the working tree.
+
+// Resets only the latest local commit, preserving its changes in the worktree.
+async function resetGitCommit(cwd, hash) {
+	const snapshot = await getGitSnapshot(cwd);
+	if (!snapshot.repository) throw new Error("The current directory is not a Git repository.");
+	if (snapshot.files.length > 0)
+		throw new Error("The repository must be clean before resetting a commit.");
+	if (!snapshot.commits[0] || snapshot.commits[0].hash !== hash)
+		throw new Error("Only the latest unpushed commit can be reset.");
+	await runGit(cwd, ["reset", hash + "^"]);
+	return { hash: hash };
+}
+
+// Reverts a displayed local commit by creating its inverse (no history rewrite).
+async function revertGitCommit(cwd, hash) {
+	const snapshot = await getGitSnapshot(cwd);
+	if (!snapshot.repository) throw new Error("The current directory is not a Git repository.");
+	if (snapshot.files.length > 0)
+		throw new Error("The repository must be clean before reverting a commit.");
+	if (!snapshot.commits.some((c) => c.hash === hash))
+		throw new Error("This commit cannot be reverted.");
+	await runGit(cwd, ["revert", "--no-edit", hash]);
+	return { hash: hash };
+}
+
+// Commits all current changes (git add -A) with the given message.
+async function commitChanges(cwd, message) {
+	const snapshot = await getGitSnapshot(cwd);
+	if (!snapshot.repository) throw new Error("The current directory is not a Git repository.");
+	if (snapshot.files.length === 0) throw new Error("There are no changes to commit.");
+	if (!message.trim()) throw new Error("A commit message is required.");
+	await runGit(cwd, ["add", "-A"]);
+	await runGit(cwd, ["commit", "-m", message.trim()]);
+}
+
+// Pushes commits ahead of the tracked branch.
+async function pushCommits(cwd) {
+	const snapshot = await getGitSnapshot(cwd);
+	if (!snapshot.repository) throw new Error("The current directory is not a Git repository.");
+	if (snapshot.ahead === 0) throw new Error("There are no commits to push.");
+	const push = await runGit(cwd, ["push"], [0, 1]);
+	return push.exitCode === 0 ? { pushed: true } : { pushed: false, pushError: gitError(push) };
+}
+
+// Discards changes for one file (staged, unstaged, or untracked).
+function pathsForGitStatus(output, targetPath) {
+	const fields = output.split("\0");
+	for (let index = 0; index < fields.length - 1; index += 1) {
+		const field = fields[index];
+		if (!field) continue;
+		const code = field.slice(0, 2);
+		const p = field.slice(3);
+		if (code.indexOf("R") >= 0 || code.indexOf("C") >= 0) {
+			const oldPath = fields[++index];
+			if (p === targetPath) return oldPath ? [p, oldPath] : [p];
+			continue;
+		}
+		if (p === targetPath) return [p];
+	}
+	throw new Error("This file has no changes to discard.");
+}
+async function discardFileChanges(cwd, repoPath) {
+	const snapshot = await getGitSnapshot(cwd);
+	if (!snapshot.repository) throw new Error("The current directory is not a Git repository.");
+	const file = snapshot.files.find((c) => c.path === repoPath);
+	if (!file) throw new Error("This file has no changes to discard.");
+	if (file.status === "added") {
+		await runGit(cwd, ["rm", "-f", "--cached", "--", repoPath], [0, 1, 128]);
+		await runGit(cwd, ["clean", "-fd", "--", repoPath]);
+		return;
+	}
+	const status = await runGit(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+	const paths = pathsForGitStatus(status.stdout, repoPath);
+	await runGit(cwd, ["restore", "--source=HEAD", "--staged", "--worktree", "--"].concat(paths));
+}
+
+// Discards ALL uncommitted changes (including untracked, excluding ignored).
+async function discardChanges(cwd) {
+	const snapshot = await getGitSnapshot(cwd);
+	if (!snapshot.repository) throw new Error("The current directory is not a Git repository.");
+	if (snapshot.files.length === 0) throw new Error("There are no changes to discard.");
+	const branch = await runGit(cwd, ["rev-parse", "--verify", "HEAD"], [0, 1]);
+	if (branch.exitCode === 0) {
+		await runGit(cwd, ["reset", "--hard", "HEAD"]);
+	} else {
+		await runGit(cwd, ["rm", "-rf", "--cached", "."]);
+	}
+	await runGit(cwd, ["clean", "-fd"]);
+}
+
 module.exports = {
 	getGitSnapshot: getGitSnapshot,
 	getGitFileDiff: getGitFileDiff,
+	commitChanges: commitChanges,
+	pushCommits: pushCommits,
+	resetGitCommit: resetGitCommit,
+	revertGitCommit: revertGitCommit,
+	discardFileChanges: discardFileChanges,
+	discardChanges: discardChanges,
 	parseGitStatus: parseGitStatus,
 	parseGitNameStatus: parseGitNameStatus,
 	mergeNumstats: mergeNumstats,

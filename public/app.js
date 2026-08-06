@@ -5009,6 +5009,7 @@ function renderGitList(s) {
 	if (s.ahead > 0) parts.push('<span class="git-ahead">▲ ' + s.ahead + " unpushed</span>");
 	parts.push('<span class="git-count">' + s.files.length + " changed</span>");
 	parts.push("</div>");
+	parts.push(gitActionButtons(s));
 	if (s.files.length) {
 		parts.push('<div class="git-sec-h">changes</div>');
 		parts.push('<div class="git-files">');
@@ -5034,6 +5035,12 @@ function renderGitList(s) {
 	}
 	parts.push("</div>");
 	setSafeHtml(card, parts.join(""));
+	const commitBtn = card.querySelector(".git-act.primary");
+	if (commitBtn) commitBtn.addEventListener("click", gitCommitModal);
+	const pushBtn = card.querySelector(".git-push");
+	if (pushBtn) pushBtn.addEventListener("click", () => gitConfirm("push", "Push " + s.ahead + " commit(s) to the remote?", "/api/git/push"));
+	const discBtn = card.querySelector(".git-discard-all");
+	if (discBtn) discBtn.addEventListener("click", () => gitConfirm("discard all", "Discard ALL uncommitted changes (including untracked files)? This cannot be undone.", "/api/git/discard"));
 	card.querySelectorAll(".git-file[data-path]").forEach((btn) => {
 		btn.addEventListener("click", () =>
 			showGitDiff(btn.getAttribute("data-path"), btn.getAttribute("data-commit") || null),
@@ -5122,6 +5129,81 @@ async function showGitDiff(p, commit) {
 	);
 	const b3 = card.querySelector(".git-back");
 	if (b3) b3.addEventListener("click", showGitModal);
+}
+
+// ---- git mutations (plan 4.6): all gated behind a confirm ----
+// After each mutation, re-fetch the snapshot so the modal reflects the new state.
+async function gitRefresh() {
+	try {
+		const data = await (await fetch("/api/git")).json();
+		if (data.ok) renderGitList(data.snapshot);
+	} catch {}
+}
+async function gitPost(path, body) {
+	try {
+		const r = await fetch(path, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body || {}),
+		});
+		return await r.json();
+	} catch (e) {
+		return { ok: false, error: e.message };
+	}
+}
+// Binary-confirm a destructive action (push/reset/revert/discard) via the native
+// dialog, then POST + toast + refresh. commit uses its own message modal below.
+async function gitConfirm(action, question, path, body) {
+	if (!window.confirm(question)) return;
+	const r = await gitPost(path, body);
+	if (r.ok) {
+		toast(action + " done", "ok");
+		await gitRefresh();
+	} else {
+		toast(action + " failed: " + (r.error || "unknown"), "err");
+	}
+}
+// Commit: a modal with a message textarea (message is required).
+function gitCommitModal() {
+	showModal(
+		'<div class="git"><h3>Commit</h3>' +
+			'<textarea class="git-msg" placeholder="commit message…" rows="3"></textarea>' +
+			'<div class="git-actions"><button type="button" class="git-commit-go primary">Commit</button>' +
+			'<button type="button" data-dismiss class="git-cancel">Cancel</button></div></div>',
+		true,
+	);
+	card.classList.add("git-card");
+	const ta = card.querySelector(".git-msg");
+	const go = card.querySelector(".git-commit-go");
+	if (ta) ta.focus();
+	if (go)
+		go.onclick = async () => {
+			const message = ta.value.trim();
+			if (!message) {
+				toast("a commit message is required", "warn");
+				return;
+			}
+			go.disabled = true;
+			const r = await gitPost("/api/git/commit", { message: message });
+			if (r.ok) {
+				toast("committed", "ok");
+				showGitModal();
+			} else {
+				go.disabled = false;
+				toast("commit failed: " + (r.error || "unknown"), "err");
+			}
+		};
+}
+function gitActionButtons(s) {
+	const parts = ['<div class="git-actions">'];
+	if (s.files.length)
+		parts.push('<button type="button" class="git-act primary">Commit</button>');
+	if (s.ahead > 0)
+		parts.push('<button type="button" class="git-act git-push">Push (' + s.ahead + ")</button>");
+	if (s.files.length)
+		parts.push('<button type="button" class="git-act git-discard-all">Discard all</button>');
+	parts.push("</div>");
+	return parts.join("");
 }
 
 // ---- register built-in UI commands ----

@@ -3362,3 +3362,55 @@ body.sdd-on.sdd-open #sddbar {
 	color: var(--accent);
 	display: block;
 }
+
+/* ===== git mutations (plan 4.6) ===== */
+.git-actions {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	align-items: center;
+}
+.git-act {
+	border: 1px solid var(--line);
+	background: var(--surface-inset);
+	color: var(--fg);
+	border-radius: calc(var(--r) - 2px);
+	padding: 5px 12px;
+	cursor: pointer;
+	font-size: 12px;
+}
+.git-act:hover {
+	border-color: var(--accent);
+}
+.git-act.primary {
+	background: var(--accent);
+	color: var(--on-accent);
+	border-color: var(--accent);
+}
+.git-push {
+	color: var(--warning, #d29922);
+}
+.git-discard-all {
+	color: var(--danger, #f85149);
+}
+.git-msg {
+	width: 100%;
+	font-family: inherit;
+	font-size: 13px;
+	resize: vertical;
+	background: var(--surface-inset);
+	border: 1px solid var(--line);
+	border-radius: calc(var(--r) - 2px);
+	padding: 8px;
+	color: var(--fg);
+	box-sizing: border-box;
+}
+.git-cancel {
+	border: 1px solid var(--line);
+	background: var(--surface-inset);
+	color: var(--fg);
+	border-radius: calc(var(--r) - 2px);
+	padding: 5px 12px;
+	cursor: pointer;
+	font-size: 12px;
+}

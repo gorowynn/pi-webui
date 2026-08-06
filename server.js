@@ -12,7 +12,7 @@ const { JsonLineDecoder, encodeJsonLine } = require("./jsonl.js"); // strict JSO
 const { createLiveBuffer } = require("./livebuf.js"); // current-turn buffer for reconnect replay (plan F§5.2)
 const { activeSessionMessages } = require("./session-entries.js"); // compaction-aware history (plan F§5.3)
 const { listRecentSessions } = require("./recent-sessions.js"); // head/tail session reader (plan F§4.1)
-const { getGitSnapshot, getGitFileDiff } = require("./git.js"); // read-only git porcelain (plan 4.5)
+const { getGitSnapshot, getGitFileDiff, commitChanges, pushCommits, resetGitCommit, revertGitCommit, discardFileChanges, discardChanges } = require("./git.js"); // git porcelain + mutations (plan 4.5/4.6)
 const { discoverWorkspaces, isKnownWorkspacePath } = require("./workspaces.js");
 const { opencodeGoWindows } = require("./public/usage-provider.js"); // dashboard HTML parser (shared with the browser, like md.js)
 
@@ -1288,6 +1288,64 @@ const server = http.createServer(async (req, res) => {
 			const snapshot = await getGitSnapshot(PI_CWD);
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: true, snapshot: snapshot }));
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+	// git mutations (plan 4.6). All scoped to PI_CWD; the client gates each behind a
+	// confirm modal. Bodies are tiny JSON ({message}/{hash}/{path}); 200 + ok:false
+	// on git error so the client shows the message in a toast.
+	if (req.method === "POST" && url.pathname === "/api/git/commit") {
+		try {
+			const body = JSON.parse((await readBody(req)) || "{}");
+			await commitChanges(PI_CWD, String(body.message || ""));
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true }));
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+	if (req.method === "POST" && url.pathname === "/api/git/push") {
+		try {
+			const r = await pushCommits(PI_CWD);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: r.pushed, error: r.pushed ? undefined : r.pushError }));
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+	if (req.method === "POST" && url.pathname === "/api/git/reset") {
+		try {
+			const body = JSON.parse((await readBody(req)) || "{}");
+			await resetGitCommit(PI_CWD, String(body.hash || ""));
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true }));
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+	if (req.method === "POST" && url.pathname === "/api/git/revert") {
+		try {
+			const body = JSON.parse((await readBody(req)) || "{}");
+			await revertGitCommit(PI_CWD, String(body.hash || ""));
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true }));
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+	if (req.method === "POST" && url.pathname === "/api/git/discard") {
+		try {
+			const body = JSON.parse((await readBody(req)) || "{}");
+			if (body.path) await discardFileChanges(PI_CWD, String(body.path));
+			else await discardChanges(PI_CWD);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true }));
 		} catch (e) {
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: false, error: e.message }));
