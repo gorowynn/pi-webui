@@ -124,7 +124,7 @@ editable edit-diff still fire.
 
 ---
 
-### Phase 3 — Structural UX · ~5d
+### Phase 3 — Structural UX · ~5d · **status: ✅ done**
 Interaction patterns, aesthetic-agnostic. The edit-diff stays editable (ours); tool cards get
 expand/collapse on top of Phase 2's renderers.
 
@@ -220,11 +220,11 @@ Copy this into your issue tracker. `Phase` · `Ref` (analysis doc) · `Eff` (day
 | 2.6 | Sandboxed HTML preview | 2 | R§2.4 | 0.5 | 2.1 | ✅ |
 | 2.7 | Tool protocol layer | 2 | R§2.9 | 1.0 | 2.1 | ✅ |
 | 2.8 | Offscreen placeholder | 2 | R§2.7 | 0.5 | 2.3, 2.4 | ✅ |
-| 3.1 | Tool-call cards (expand/collapse) | 3 | U§2.3 | 1.5 | 2.1 | ☐ |
-| 3.2 | Detail modes | 3 | U§2.1 | 0.5 | 3.1 | ☐ |
-| 3.3 | Sticky-error toasts | 3 | U§2.5 | 0.5 | — | ☐ |
-| 3.4 | Command palette | 3 | U§2.4 | 1.0 | — | ☐ |
-| 3.5 | Right-rail widget shell | 3 | U§2.6 | 1.5 | 0.1 | ☐ |
+| 3.1 | Tool-call cards (expand/collapse) | 3 | U§2.3 | 1.5 | 2.1 | ✅ |
+| 3.2 | Detail modes | 3 | U§2.1 | 0.5 | 3.1 | ✅ |
+| 3.3 | Sticky-error toasts | 3 | U§2.5 | 0.5 | — | ✅ |
+| 3.4 | Command palette | 3 | U§2.4 | 1.0 | — | ✅ |
+| 3.5 | Right-rail widget shell | 3 | U§2.6 | 1.5 | 0.1 | ✅ |
 | 4.1 | Recent-sessions reader | 4 | F§4.1 | 1.0 | — | ☐ |
 | 4.2 | Session-analysis math | 4 | F§4.2 | 2.0 | 0.2 | ☐ |
 | 4.3 | Session-analysis widget | 4 | U§4 | 1.5 | 3.5, 4.2 | ☐ |
