@@ -163,7 +163,7 @@ function addUser(text, images) {
 	setSafeHtml(
 		m,
 		`<div class="bubble user"><div class="role you">you</div></div>`,
-);
+	);
 	const b = m.querySelector(".user");
 	const span = document.createElement("div");
 	setSafeHtml(span, md(text));
@@ -181,7 +181,7 @@ function addUser(text, images) {
 		}
 		b.appendChild(grid);
 	}
-transcript.appendChild(m);
+	transcript.appendChild(m);
 	pinned = true;
 	unread = 0;
 	scrollDown();
@@ -534,7 +534,8 @@ function toolBlock(id, name, args, running) {
 function openTool(wrap, open) {
 	if (!wrap || !wrap.el) return;
 	wrap.el.classList.toggle("open", !!open);
-	if (wrap.head) wrap.head.setAttribute("aria-expanded", open ? "true" : "false");
+	if (wrap.head)
+		wrap.head.setAttribute("aria-expanded", open ? "true" : "false");
 }
 // format an elapsed tool-call duration for the card head
 function fmtToolDur(ms) {
@@ -3062,14 +3063,14 @@ function renderMessage(msg) {
 			isCompaction && typeof msg.tokensBefore === "number"
 				? `· ~${fmt(msg.tokensBefore)} tokens before`
 				: msg.customType
-				  ? `· ${msg.customType}`
-				  : "";
+					? `· ${msg.customType}`
+					: "";
 		const sum = document.createElement("summary");
 		sum.innerHTML =
 			`<span class="cm-glyph"></span>` +
 			`<span class="cm-label">${esc(
-					isCompaction ? "Context compacted" : msg.customType || "custom",
-				)}</span>` +
+				isCompaction ? "Context compacted" : msg.customType || "custom",
+			)}</span>` +
 			(meta ? `<span class="cm-meta">${esc(meta)}</span>` : "");
 		wrap.appendChild(sum);
 		if (msg.content != null) {
@@ -4185,9 +4186,15 @@ async function attachImages(files) {
 		toast("max " + CI.MAX_IMAGES + " images per message", "warn");
 		return;
 	}
-	const list = Array.from(files).filter((f) => f.type && f.type.indexOf("image/") === 0);
+	const list = Array.from(files).filter(
+		(f) => f.type && f.type.indexOf("image/") === 0,
+	);
 	let added = 0;
-	for (let i = 0; i < list.length && pendingImages.length < CI.MAX_IMAGES; i++) {
+	for (
+		let i = 0;
+		i < list.length && pendingImages.length < CI.MAX_IMAGES;
+		i++
+	) {
 		const prepared = await CI.prepareImage(list[i]);
 		if (prepared) {
 			pendingImages.push(prepared);
@@ -4730,6 +4737,19 @@ function buildCmdK() {
 	cmdkEl.addEventListener("mousedown", (e) => {
 		if (e.target === cmdkEl) closeCmdK();
 	});
+	// Interaction is DELEGATED on the container, not per item: the old
+	// per-item onclick/onmouseenter rebuilt the whole list on every hover, so a
+	// node swap between mousedown and mouseup (hover drift, or a slow webview
+	// mid-rebuild) retargeted the click to the container and swallowed it —
+	// mouse clicks appeared dead while keyboard still worked.
+	cmdkList.addEventListener("click", (e) => {
+		const it = e.target.closest(".cmdk-item");
+		if (it && cmdkItems[+it.dataset.i]) runCmdK(cmdkItems[+it.dataset.i]);
+	});
+	cmdkList.addEventListener("mouseover", (e) => {
+		const it = e.target.closest(".cmdk-item");
+		if (it) setCmdKSel(+it.dataset.i);
+	});
 }
 function openCmdK() {
 	if (!cmdkEl) buildCmdK();
@@ -4780,6 +4800,7 @@ function renderCmdK() {
 		const d = document.createElement("div");
 		d.className = "cmdk-item" + (i === cmdkSel ? " sel" : "");
 		d.id = "cmdk-opt-" + i;
+		d.dataset.i = String(i); // resolved by the delegated click/mouseover handlers
 		d.setAttribute("role", "option");
 		d.setAttribute("aria-selected", i === cmdkSel ? "true" : "false");
 		setSafeHtml(
@@ -4790,14 +4811,27 @@ function renderCmdK() {
 				esc(c.hint || "") +
 				"</span>",
 		);
-		d.onclick = () => runCmdK(c);
-		d.onmouseenter = () => {
-			cmdkSel = i;
-			renderCmdK();
-		};
 		cmdkList.appendChild(d);
 	});
 	cmdkInput.setAttribute("aria-activedescendant", "cmdk-opt-" + cmdkSel);
+}
+// Hover selection toggles the .sel class in place instead of rebuilding the
+// list (the old rebuild-per-hover flickered and raced clicks). cmdkSel stays
+// authoritative for the keyboard path, which still rebuilds via renderCmdK.
+function setCmdKSel(i) {
+	if (i === cmdkSel) return;
+	const old = cmdkList.querySelector(".cmdk-item.sel");
+	cmdkSel = i;
+	if (old) {
+		old.classList.remove("sel");
+		old.setAttribute("aria-selected", "false");
+	}
+	const fresh = cmdkList.children[i];
+	if (fresh) {
+		fresh.classList.add("sel");
+		fresh.setAttribute("aria-selected", "true");
+		cmdkInput.setAttribute("aria-activedescendant", fresh.id);
+	}
 }
 function runCmdK(c) {
 	closeCmdK();
@@ -4830,7 +4864,11 @@ function onCmdKKey(e) {
 // Alt+K or Ctrl+K opens the palette — but never over a pi latch modal.
 document.addEventListener("keydown", (e) => {
 	if (modal.style.display === "flex") return;
-	if ((e.altKey || e.ctrlKey) && !e.shiftKey && (e.key === "k" || e.key === "K")) {
+	if (
+		(e.altKey || e.ctrlKey) &&
+		!e.shiftKey &&
+		(e.key === "k" || e.key === "K")
+	) {
 		e.preventDefault();
 		openCmdK();
 	}
@@ -4857,9 +4895,7 @@ function showAnalysisModal() {
 	const turns = a.turns;
 	// bar metric: cost if any attributed, else output tokens (still useful signal)
 	const useCost = a.attributedCost > 0;
-	const metric = useCost
-		? (t) => t.cost
-		: (t) => t.usage.output;
+	const metric = useCost ? (t) => t.cost : (t) => t.usage.output;
 	const shown = turns.slice(-Math.min(80, turns.length));
 	const maxV = shown.reduce((m, t) => Math.max(m, metric(t)), 0);
 	const bars = shown
@@ -4867,7 +4903,9 @@ function showAnalysisModal() {
 			const v = metric(t);
 			const h = maxV > 0 ? Math.max(3, Math.round((v / maxV) * 100)) : 3;
 			const lbl =
-				"turn " + t.number + (useCost ? " · " + SA.formatTurnCost(v) : " · " + v + " out tok");
+				"turn " +
+				t.number +
+				(useCost ? " · " + SA.formatTurnCost(v) : " · " + v + " out tok");
 			return (
 				'<button type="button" class="an-bar' +
 				(useCost && v === maxV && maxV > 0 ? " peak" : "") +
@@ -4881,7 +4919,10 @@ function showAnalysisModal() {
 			);
 		})
 		.join("");
-	const cacheHit = anPct(a.tokens.cacheRead, a.tokens.cacheMiss + a.tokens.cacheRead);
+	const cacheHit = anPct(
+		a.tokens.cacheRead,
+		a.tokens.cacheMiss + a.tokens.cacheRead,
+	);
 	const costliest = turns
 		.slice()
 		.sort((x, y) => y.cost - x.cost)
@@ -4896,7 +4937,7 @@ function showAnalysisModal() {
 		esc(lbl) +
 		"</span></div>";
 	const tok = (lbl, v) =>
-		"<div class=\"an-tok\"><span class=\"an-tok-v\">" +
+		'<div class="an-tok"><span class="an-tok-v">' +
 		esc(SA.formatTokens(v)) +
 		'</span><span class="an-tok-l">' +
 		esc(lbl) +
@@ -4914,11 +4955,22 @@ function showAnalysisModal() {
 	parts.push('<div class="analysis">');
 	// stat row
 	parts.push('<div class="an-head">');
-	parts.push(stat(a.costAvailable ? SA.formatTurnCost(a.totalCost) : "—", "total"));
+	parts.push(
+		stat(a.costAvailable ? SA.formatTurnCost(a.totalCost) : "—", "total"),
+	);
 	parts.push(stat(String(a.turnCount), "turns"));
-	parts.push(stat(a.turnCount ? SA.formatTurnCost(a.averageTurnCost) : "—", "avg/turn"));
-	parts.push(stat(a.turnCount ? SA.formatTurnCost(a.medianTurnCost) : "—", "median"));
-	parts.push(stat(a.contextPercent != null ? Math.round(a.contextPercent) + "%" : "—", "context"));
+	parts.push(
+		stat(a.turnCount ? SA.formatTurnCost(a.averageTurnCost) : "—", "avg/turn"),
+	);
+	parts.push(
+		stat(a.turnCount ? SA.formatTurnCost(a.medianTurnCost) : "—", "median"),
+	);
+	parts.push(
+		stat(
+			a.contextPercent != null ? Math.round(a.contextPercent) + "%" : "—",
+			"context",
+		),
+	);
 	parts.push(stat(a.tokensAvailable ? cacheHit + "%" : "—", "cache hit"));
 	parts.push("</div>");
 	// per-turn bars
@@ -4956,7 +5008,9 @@ function showAnalysisModal() {
 					jump(
 						-1,
 						t.name + " ×" + t.count,
-						t.failed ? t.failed + " failed" : SA.formatTokens(t.outputLength) + " out",
+						t.failed
+							? t.failed + " failed"
+							: SA.formatTokens(t.outputLength) + " out",
 					),
 				)
 				.join(""),
@@ -4964,16 +5018,24 @@ function showAnalysisModal() {
 		parts.push("</div>");
 	}
 	if (costliest.length) {
-		parts.push('<div class="an-section"><div class="an-sec-h">costliest turns</div>');
+		parts.push(
+			'<div class="an-section"><div class="an-sec-h">costliest turns</div>',
+		);
 		parts.push(
 			costliest
-				.map((t) => jump(t.messageIndex, "turn " + t.number, SA.formatTurnCost(t.cost)))
+				.map((t) =>
+					jump(t.messageIndex, "turn " + t.number, SA.formatTurnCost(t.cost)),
+				)
 				.join(""),
 		);
 		parts.push("</div>");
 	}
 	if (failed.length) {
-		parts.push('<div class="an-section"><div class="an-sec-h">failed calls (' + failed.length + ")</div>");
+		parts.push(
+			'<div class="an-section"><div class="an-sec-h">failed calls (' +
+				failed.length +
+				")</div>",
+		);
 		parts.push(
 			failed
 				.slice(0, 12)
@@ -5008,7 +5070,10 @@ function showAnalysisModal() {
 // unpushed commits with their files. Click a file → unified diff view (colored
 // +/− lines) with a back button. §6.3: ~60% of git-sidebar value, no mutation risk.
 async function showGitModal() {
-	showModal('<div class="git"><h3>Git</h3><p class="um-hint">loading…</p></div>', true);
+	showModal(
+		'<div class="git"><h3>Git</h3><p class="um-hint">loading…</p></div>',
+		true,
+	);
 	card.classList.add("git-card");
 	let data;
 	try {
@@ -5040,7 +5105,8 @@ function renderGitList(s) {
 	parts.push('<div class="git">');
 	parts.push('<div class="git-head">');
 	parts.push('<span class="git-branch">⎇ ' + esc(s.branch) + "</span>");
-	if (s.ahead > 0) parts.push('<span class="git-ahead">▲ ' + s.ahead + " unpushed</span>");
+	if (s.ahead > 0)
+		parts.push('<span class="git-ahead">▲ ' + s.ahead + " unpushed</span>");
 	parts.push('<span class="git-count">' + s.files.length + " changed</span>");
 	parts.push("</div>");
 	parts.push(gitActionButtons(s));
@@ -5053,7 +5119,11 @@ function renderGitList(s) {
 		parts.push('<p class="um-hint">clean working tree</p>');
 	}
 	if (s.commits.length) {
-		parts.push('<div class="git-sec-h">unpushed commits (' + s.commits.length + ")</div>");
+		parts.push(
+			'<div class="git-sec-h">unpushed commits (' +
+				s.commits.length +
+				")</div>",
+		);
 		parts.push('<div class="git-files">');
 		s.commits.forEach((c) => {
 			parts.push(
@@ -5072,12 +5142,29 @@ function renderGitList(s) {
 	const commitBtn = card.querySelector(".git-act.primary");
 	if (commitBtn) commitBtn.addEventListener("click", gitCommitModal);
 	const pushBtn = card.querySelector(".git-push");
-	if (pushBtn) pushBtn.addEventListener("click", () => gitConfirm("push", "Push " + s.ahead + " commit(s) to the remote?", "/api/git/push"));
+	if (pushBtn)
+		pushBtn.addEventListener("click", () =>
+			gitConfirm(
+				"push",
+				"Push " + s.ahead + " commit(s) to the remote?",
+				"/api/git/push",
+			),
+		);
 	const discBtn = card.querySelector(".git-discard-all");
-	if (discBtn) discBtn.addEventListener("click", () => gitConfirm("discard all", "Discard ALL uncommitted changes (including untracked files)? This cannot be undone.", "/api/git/discard"));
+	if (discBtn)
+		discBtn.addEventListener("click", () =>
+			gitConfirm(
+				"discard all",
+				"Discard ALL uncommitted changes (including untracked files)? This cannot be undone.",
+				"/api/git/discard",
+			),
+		);
 	card.querySelectorAll(".git-file[data-path]").forEach((btn) => {
 		btn.addEventListener("click", () =>
-			showGitDiff(btn.getAttribute("data-path"), btn.getAttribute("data-commit") || null),
+			showGitDiff(
+				btn.getAttribute("data-path"),
+				btn.getAttribute("data-commit") || null,
+			),
 		);
 	});
 }
@@ -5086,14 +5173,18 @@ function gitFileBtn(f, commit) {
 	const initial = f.status.charAt(0).toUpperCase();
 	const delta =
 		f.additions != null || f.deletions != null
-			? '<span class="git-delta">+' + (f.additions || 0) + " -" + (f.deletions || 0) + "</span>"
+			? '<span class="git-delta">+' +
+				(f.additions || 0) +
+				" -" +
+				(f.deletions || 0) +
+				"</span>"
 			: "";
 	return (
 		'<button type="button" class="git-file" data-path="' +
 		esc(f.path) +
 		'"' +
 		(commit ? ' data-commit="' + esc(commit) + '"' : "") +
-		"><span class=\"git-stat " +
+		'><span class="git-stat ' +
 		esc(f.status) +
 		'">' +
 		esc(initial) +
@@ -5106,8 +5197,7 @@ function gitFileBtn(f, commit) {
 }
 
 async function showGitDiff(p, commit) {
-	const back =
-		'<button type="button" class="git-back">← back</button>';
+	const back = '<button type="button" class="git-back">← back</button>';
 	setSafeHtml(
 		card,
 		'<div class="git">' +
@@ -5120,7 +5210,10 @@ async function showGitDiff(p, commit) {
 	if (backBtn) backBtn.addEventListener("click", showGitModal);
 	let data;
 	try {
-		const q = "path=" + encodeURIComponent(p) + (commit ? "&commit=" + encodeURIComponent(commit) : "");
+		const q =
+			"path=" +
+			encodeURIComponent(p) +
+			(commit ? "&commit=" + encodeURIComponent(commit) : "");
 		data = await (await fetch("/api/git/diff?" + q)).json();
 	} catch (e) {
 		data = { ok: false, error: e.message };
@@ -5233,9 +5326,15 @@ function gitActionButtons(s) {
 	if (s.files.length)
 		parts.push('<button type="button" class="git-act primary">Commit</button>');
 	if (s.ahead > 0)
-		parts.push('<button type="button" class="git-act git-push">Push (' + s.ahead + ")</button>");
+		parts.push(
+			'<button type="button" class="git-act git-push">Push (' +
+				s.ahead +
+				")</button>",
+		);
 	if (s.files.length)
-		parts.push('<button type="button" class="git-act git-discard-all">Discard all</button>');
+		parts.push(
+			'<button type="button" class="git-act git-discard-all">Discard all</button>',
+		);
 	parts.push("</div>");
 	return parts.join("");
 }
@@ -5244,29 +5343,50 @@ function gitActionButtons(s) {
 registerCommand("new-session", "new session", "start a fresh session", () =>
 	api({ type: "new_session" }),
 );
-registerCommand("compact", "compact context", "summarize the conversation", () =>
-	api({ type: "compact" }),
+registerCommand(
+	"compact",
+	"compact context",
+	"summarize the conversation",
+	() => api({ type: "compact" }),
 );
 registerCommand("stop", "stop generation", "abort the current turn", () =>
 	api({ type: "abort" }),
 );
-registerCommand("settings", "settings", "open the settings panel", openSettings);
-registerCommand("git", "git status", "review changes & unpushed commits", showGitModal);
+registerCommand(
+	"settings",
+	"settings",
+	"open the settings panel",
+	openSettings,
+);
+registerCommand(
+	"git",
+	"git status",
+	"review changes & unpushed commits",
+	showGitModal,
+);
 registerCommand(
 	"rename-session",
 	"rename session",
 	"name the current session",
 	renameCurrentSession,
 );
-registerCommand("usage", "session usage", "cost/tool/cache breakdown for this session", showAnalysisModal);
+registerCommand(
+	"usage",
+	"session usage",
+	"cost/tool/cache breakdown for this session",
+	showAnalysisModal,
+);
 registerCommand(
 	"scroll-bottom",
 	"scroll to bottom",
 	"jump to the latest message",
 	scrollDown,
 );
-registerCommand("focus-input", "focus input", "put the cursor in the composer", () =>
-	inputEl.focus(),
+registerCommand(
+	"focus-input",
+	"focus input",
+	"put the cursor in the composer",
+	() => inputEl.focus(),
 );
 registerCommand("theme-dark", "theme: dark", "switch to the dark theme", () => {
 	themeSel.value = "dark";
@@ -5281,8 +5401,11 @@ registerCommand(
 		themeSel.onchange();
 	},
 );
-registerCommand("view-cycle", "cycle detail mode", "simple / headers / detailed", () =>
-	viewBtn ? viewBtn.click() : null,
+registerCommand(
+	"view-cycle",
+	"cycle detail mode",
+	"simple / headers / detailed",
+	() => (viewBtn ? viewBtn.click() : null),
 );
 
 // ---- right-rail drag-resize (plan 3.5 / U§2.6) ----

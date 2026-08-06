@@ -131,6 +131,7 @@ entry — these are load-bearing invariants. Numbers match `GOTCHAS.md #N`.
 | diff LCS / large diffs; permission-modal diff preview, `curToolArgs`, `tool_execution_*` | 6, 7 |
 | app.js module-scope state, the ~26 closure `let`s | 8 |
 | sessions, `switch_session`, crash restart, multi-tab | 9 |
+| Windows Git subprocesses, `PATHEXT`, local `git.js` collision, `gitExecutableForPlatform` | 18 |
 | workspace switch (`/api/workspace`, `workspace_changed`, `#wsbar`), `PI_WEBUI_NO_SWITCH` | 4, 9 |
 | security: CSRF, DNS-rebinding, `validateLink`, body cap | 10 |
 | asset load order, markdown-it / md.js / highlight, vendor whitelist | 11 |

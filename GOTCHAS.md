@@ -113,3 +113,13 @@ keyword to the index in `AGENTS.md`.
     `com.intellij.testFramework.*` but ships in `intellij.platform.core.jar`
     (runtime-available); `FileEditorProvider`/`FileEditorManager`/`FileEditorPolicy`
     are in `intellij.platform.analysis.jar`.
+18. **Never invoke bare `git` from this repository on Windows.** Windows command
+    resolution searches the working directory before `PATH` and commonly has
+    `.JS` in `PATHEXT`, so local [`git.js`](git.js) shadows Git for Windows and
+    launches through the user's JavaScript file association. A polled synchronous
+    call then blocks the HTTP server and reopens the file whenever the editor
+    exits. Use `gitExecutableForPlatform()` (`git.exe` on Windows) with argument
+    arrays and no shell. That only protects bridge-owned calls: at server boot,
+    `sanitizeWindowsPathExt()` must also remove `.JS` from the inherited
+    `PATHEXT` so spawned pi, extensions, language servers, and tools cannot make
+    the same collision.

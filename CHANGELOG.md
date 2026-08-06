@@ -6,6 +6,37 @@
 
 ## Changelog
 
+### 2026-08-06 — fix(windows): stop local git.js from shadowing Git for Windows
+
+- **Root cause:** Windows searches the process working directory before `PATH`
+  and this machine's `PATHEXT` includes `.JS`. The health poll's bare `git`
+  command therefore launched the repository's own `git.js` through its file
+  association. Because the probe was synchronous, the server stopped answering
+  session/snapshot requests while the editor was open; the next poll reopened
+  it after close, producing the apparent crash/reload loop.
+- **Fix (`git.js`, `server.js`):** centralize platform command selection in
+  `gitExecutableForPlatform()` (`git.exe` on Windows), use it for every
+  bridge-owned Git subprocess, and replace health probe shell strings with
+  `execFileSync` argument arrays. The first patch still let spawned pi and its
+  tools inherit `.JS`; server startup now also calls `sanitizeWindowsPathExt()`
+  so every descendant resolves bare `git` to Git for Windows.
+- **Regression (`test/git.test.js`):** assert Windows selects explicit
+  `git.exe` and strips only `.JS` from inherited `PATHEXT`; live smoke verified
+  health, a populated resumable-session list, and the bundled snapshot endpoint
+  while running from this repository.
+- **Follow-up — windowless spawns (`git.js`, `server.js`):** every git spawn
+  site (`runGit`, plus the `taskkill` kill path) now passes
+  `windowsHide: true`. Headless servers (detached launcher, `/webui`, IDE panel)
+  have no console, so a console-less parent spawning git.exe flashed a window
+  per call — and the git snapshot fires 6 parallel spawns, so opening git
+  status burst a pile of windows.
+- **Follow-up — palette clicks (`public/app.js`):** Alt+K mouse clicks were
+  dead while keyboard worked: per-item `onmouseenter` rebuilt the whole list on
+  every hover, so a node swap between `mousedown` and `mouseup` (hover drift or
+  a slow webview) retargeted the click to the container. Interaction is now
+  delegated on `cmdkList` (click/mouseover resolve `data-i`) and hover
+  selection toggles `.sel` in place without rebuilding.
+
 ### 2026-08-05 — feat(usage): OpenCode Go subscription quota tracking in the usage bar
 
 - **Why:** the usage bar already covers z.ai (quota) and Codex (quota); OpenCode

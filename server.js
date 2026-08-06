@@ -6,18 +6,33 @@ const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
-const { spawn, execSync } = require("child_process");
+const { spawn, execFileSync } = require("child_process");
 const os = require("os");
 const { JsonLineDecoder, encodeJsonLine } = require("./jsonl.js"); // strict JSONL codec (plan F§4.5)
 const { createLiveBuffer } = require("./livebuf.js"); // current-turn buffer for reconnect replay (plan F§5.2)
 const { activeSessionMessages } = require("./session-entries.js"); // compaction-aware history (plan F§5.3)
 const { listRecentSessions } = require("./recent-sessions.js"); // head/tail session reader (plan F§4.1)
-const { getGitSnapshot, getGitFileDiff, commitChanges, pushCommits, resetGitCommit, revertGitCommit, discardFileChanges, discardChanges } = require("./git.js"); // git porcelain + mutations (plan 4.5/4.6)
+const {
+	getGitSnapshot,
+	getGitFileDiff,
+	commitChanges,
+	pushCommits,
+	resetGitCommit,
+	revertGitCommit,
+	discardFileChanges,
+	discardChanges,
+	gitExecutableForPlatform,
+	sanitizeWindowsPathExt,
+} = require("./git.js"); // git porcelain + mutations (plan 4.5/4.6)
+// Protect every descendant — pi itself, extensions, language servers, and tools —
+// from resolving this repository's git.js through Windows PATHEXT.
+sanitizeWindowsPathExt(process.env, process.platform);
 const { improvePrompt } = require("./isolated-prompt.js"); // disposable isolated pi prompt (plan 4.7/4.8)
 const { discoverWorkspaces, isKnownWorkspacePath } = require("./workspaces.js");
 const { opencodeGoWindows } = require("./public/usage-provider.js"); // dashboard HTML parser (shared with the browser, like md.js)
 
 const PORT = parseInt(process.env.PORT || "4317", 10);
+const GIT_BIN = gitExecutableForPlatform(process.platform);
 const PI_BIN = process.env.PI_BIN || "pi";
 const PI_ARGS = (process.env.PI_ARGS || "").split(/\s+/).filter(Boolean); // e.g. "--no-session"
 let PI_CWD = process.env.PI_CWD || process.cwd(); // let: workspace switch re-points it live
@@ -274,11 +289,16 @@ function killPiTree(force) {
 	if (!pi || !pi.pid) return true;
 	try {
 		if (process.platform === "win32")
-			execSync(`taskkill /pid ${pi.pid} /T /F`, { stdio: "ignore" });
+			execSync(`taskkill /pid ${pi.pid} /T /F`, {
+				stdio: "ignore",
+				windowsHide: true,
+			});
 		else process.kill(pi.pid, force ? "SIGKILL" : "SIGTERM");
 		return true;
 	} catch (e) {
-		console.error(`[kill] ${force ? "force" : "graceful"} failed: ${e.message}`);
+		console.error(
+			`[kill] ${force ? "force" : "graceful"} failed: ${e.message}`,
+		);
 		return false;
 	}
 }
@@ -578,16 +598,20 @@ function gitInfo() {
 	if (Date.now() - gitCache.t < 7000) return gitCache.data;
 	let data = null;
 	try {
-		const branch = execSync("git rev-parse --abbrev-ref HEAD", {
-			cwd: PI_CWD,
-			stdio: ["ignore", "pipe", "ignore"],
-			encoding: "utf8",
-			windowsHide: true, // health endpoint is polled every 2s — must never pop a window
-		}).trim();
+		const branch = execFileSync(
+			GIT_BIN,
+			["rev-parse", "--abbrev-ref", "HEAD"],
+			{
+				cwd: PI_CWD,
+				stdio: ["ignore", "pipe", "ignore"],
+				encoding: "utf8",
+				windowsHide: true, // health endpoint is polled every 2s — must never pop a window
+			},
+		).trim();
 		// porcelain XY: staged = index col (X), unstaged = worktree col (Y),
 		// untracked = "??". A file in both columns (e.g. MM/DD) counts in both —
 		// accurate: it has staged AND unstaged changes.
-		const counts = execSync("git status --porcelain", {
+		const counts = execFileSync(GIT_BIN, ["status", "--porcelain"], {
 			cwd: PI_CWD,
 			stdio: ["ignore", "pipe", "ignore"],
 			encoding: "utf8",
@@ -924,42 +948,54 @@ const server = http.createServer(async (req, res) => {
 		// disturb the existing init flow. Unwrapped (messages/commands/models are
 		// arrays, not {key:[...]} envelopes) for a clean client shape.
 		try {
-			const ask = (type, id) =>
-				rpcRequest({ type, id })
+			// ponytail: each call MUST let rpcRequest mint a UNIQUE id. A fixed id
+			// (the old "snap-state"/…) collided under concurrency — two overlapping
+			// snapshots would overwrite each other's entry in rpcPending, orphaning
+			// the first promise AND its timeout timer so it neither resolved nor
+			// timed out → the HTTP handler hung forever (a reconnect/retry spiral
+			// never recovers). The client ignores these ids anyway (it matches
+			// init-*/sb-* on SSE, never snap-*), so random ids are safe.
+			const ask = (type) =>
+				rpcRequest({ type })
 					.then((r) => r.data)
 					.catch(() => null);
 			const [state, ents, cmds, mdls, stats] = await Promise.all([
-				ask("get_state", "snap-state"),
-				ask("get_entries", "snap-entries"), // parent-chain, not flat — survives compaction (plan F§5.3)
-				ask("get_commands", "snap-cmds"),
-				ask("get_available_models", "snap-models"),
-				ask("get_session_stats", "snap-stats"),
+				ask("get_state"),
+				ask("get_entries"), // parent-chain, not flat — survives compaction (plan F§5.3)
+				ask("get_commands"),
+				ask("get_available_models"),
+				ask("get_session_stats"),
 			]);
+			// ponytail: build the FULL body BEFORE writeHead. The old code called
+			// writeHead(200) first, then constructed the JSON inline as the arg to
+			// res.end — so any throw in activeSessionMessages()/lb.snapshot()/
+			// JSON.stringify landed in catch, which called writeHead(200) AGAIN →
+			// ERR_HTTP_HEADERS_SENT → uncaught → the whole server crashed (and the
+			// launcher's respawn loop reopened whatever the resumed turn was doing).
+			const body = JSON.stringify({
+				ok: true,
+				state: state || null,
+				// walk the entry parent-chain from leafId so compaction can't truncate
+				// history: compaction entries render as a synthetic custom marker and
+				// the pre-compact messages they summarize are dropped by pi anyway.
+				// (plan F§5.3 — was flat get_messages, which hid everything before a
+				// compaction.) Falls back to [] if get_entries failed.
+				messages: activeSessionMessages(
+					(ents && ents.entries) || [],
+					ents && ents.leafId,
+				),
+				commands: (cmds && cmds.commands) || [],
+				models: (mdls && mdls.models) || [],
+				stats: stats || {},
+				// current-turn buffer (plan F§5.2): lets a reconnecting tab rebuild
+				// in-flight tool cards / streaming text instead of losing them.
+				// Empty unless a turn is mid-flight. Point-in-time copy (see
+				// livebuf.snapshot). Awaitable RPCs fan out FIRST, so this reads
+				// the buffer state after those responses (most recent).
+				liveEvents: lb.snapshot(),
+			});
 			res.writeHead(200, { "Content-Type": "application/json" });
-			res.end(
-				JSON.stringify({
-					ok: true,
-					state: state || null,
-					// walk the entry parent-chain from leafId so compaction can't truncate
-					// history: compaction entries render as a synthetic custom marker and
-					// the pre-compact messages they summarize are dropped by pi anyway.
-					// (plan F§5.3 — was flat get_messages, which hid everything before a
-					// compaction.) Falls back to [] if get_entries failed.
-					messages: activeSessionMessages(
-						(ents && ents.entries) || [],
-						ents && ents.leafId,
-					),
-					commands: (cmds && cmds.commands) || [],
-					models: (mdls && mdls.models) || [],
-					stats: stats || {},
-					// current-turn buffer (plan F§5.2): lets a reconnecting tab rebuild
-					// in-flight tool cards / streaming text instead of losing them.
-					// Empty unless a turn is mid-flight. Point-in-time copy (see
-					// livebuf.snapshot). Awaitable RPCs fan out FIRST, so this reads
-					// the buffer state after those responses (most recent).
-					liveEvents: lb.snapshot(),
-				}),
-			);
+			res.end(body);
 		} catch (e) {
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end(JSON.stringify({ ok: false, error: e.message }));
@@ -992,7 +1028,9 @@ const server = http.createServer(async (req, res) => {
 	if (req.method === "GET" && url.pathname === "/api/file") {
 		// manual-edit feature: read a project file (sandboxed to PI_CWD).
 		try {
-			const content = readWorkspaceFile(url.searchParams.get("path") || "");
+			const content = readWorkspaceFile(
+				url.searchParams.get("path") || "",
+			);
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: true, content }));
 		} catch (e) {
@@ -1312,7 +1350,12 @@ const server = http.createServer(async (req, res) => {
 		try {
 			const r = await pushCommits(PI_CWD);
 			res.writeHead(200, { "Content-Type": "application/json" });
-			return res.end(JSON.stringify({ ok: r.pushed, error: r.pushed ? undefined : r.pushError }));
+			return res.end(
+				JSON.stringify({
+					ok: r.pushed,
+					error: r.pushed ? undefined : r.pushError,
+				}),
+			);
 		} catch (e) {
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: false, error: e.message }));
@@ -1375,7 +1418,13 @@ const server = http.createServer(async (req, res) => {
 			const commit = url.searchParams.get("commit") || undefined;
 			const result = await getGitFileDiff(PI_CWD, p, commit);
 			res.writeHead(200, { "Content-Type": "application/json" });
-			return res.end(JSON.stringify({ ok: true, diff: result.diff, path: result.path }));
+			return res.end(
+				JSON.stringify({
+					ok: true,
+					diff: result.diff,
+					path: result.path,
+				}),
+			);
 		} catch (e) {
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: false, error: e.message }));
