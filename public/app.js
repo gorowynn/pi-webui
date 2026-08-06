@@ -2991,6 +2991,42 @@ function renderMessage(msg) {
 			text: t,
 			isError: msg.isError,
 		});
+	} else if (msg.role === "custom") {
+		// compaction-aware history (plan F§5.3): a compaction entry from the entry
+		// parent-chain renders as a muted, collapsible marker between the dropped
+		// (pre-compact) span and the kept messages — so a compacted session never
+		// looks abruptly truncated. Summary is pi-generated markdown; md() escapes
+		// raw HTML (html:false), same path as assistant text. Collapsed by default
+		// (it's metadata, not conversation). Generic custom messages render too.
+		const wrap = document.createElement("details");
+		wrap.className = "compact-mark";
+		const isCompaction = msg.customType === "compaction";
+		const meta =
+			isCompaction && typeof msg.tokensBefore === "number"
+				? `· ~${fmt(msg.tokensBefore)} tokens before`
+				: msg.customType
+				  ? `· ${msg.customType}`
+				  : "";
+		const sum = document.createElement("summary");
+		sum.innerHTML =
+			`<span class="cm-glyph"></span>` +
+			`<span class="cm-label">${esc(
+					isCompaction ? "Context compacted" : msg.customType || "custom",
+				)}</span>` +
+			(meta ? `<span class="cm-meta">${esc(meta)}</span>` : "");
+		wrap.appendChild(sum);
+		if (msg.content != null) {
+			const body = document.createElement("div");
+			body.className = "cm-body";
+			const src =
+				typeof msg.content === "string"
+					? msg.content
+					: toolProtocol.toolContentText(msg.content);
+			if (src) setSafeHtml(body, md(src));
+			wrap.appendChild(body);
+		}
+		transcript.appendChild(wrap);
+		cur = null;
 	} else if (msg.role === "bashExecution") {
 		const el = document.createElement("details");
 		el.className = "tool done";

@@ -10,6 +10,7 @@ const { spawn, execSync } = require("child_process");
 const os = require("os");
 const { JsonLineDecoder, encodeJsonLine } = require("./jsonl.js"); // strict JSONL codec (plan F§4.5)
 const { createLiveBuffer } = require("./livebuf.js"); // current-turn buffer for reconnect replay (plan F§5.2)
+const { activeSessionMessages } = require("./session-entries.js"); // compaction-aware history (plan F§5.3)
 const { discoverWorkspaces, isKnownWorkspacePath } = require("./workspaces.js");
 const { opencodeGoWindows } = require("./public/usage-provider.js"); // dashboard HTML parser (shared with the browser, like md.js)
 
@@ -968,9 +969,9 @@ const server = http.createServer(async (req, res) => {
 				rpcRequest({ type, id })
 					.then((r) => r.data)
 					.catch(() => null);
-			const [state, msgs, cmds, mdls, stats] = await Promise.all([
+			const [state, ents, cmds, mdls, stats] = await Promise.all([
 				ask("get_state", "snap-state"),
-				ask("get_messages", "snap-msgs"),
+				ask("get_entries", "snap-entries"), // parent-chain, not flat — survives compaction (plan F§5.3)
 				ask("get_commands", "snap-cmds"),
 				ask("get_available_models", "snap-models"),
 				ask("get_session_stats", "snap-stats"),
@@ -980,7 +981,15 @@ const server = http.createServer(async (req, res) => {
 				JSON.stringify({
 					ok: true,
 					state: state || null,
-					messages: (msgs && msgs.messages) || [],
+					// walk the entry parent-chain from leafId so compaction can't truncate
+					// history: compaction entries render as a synthetic custom marker and
+					// the pre-compact messages they summarize are dropped by pi anyway.
+					// (plan F§5.3 — was flat get_messages, which hid everything before a
+					// compaction.) Falls back to [] if get_entries failed.
+					messages: activeSessionMessages(
+						(ents && ents.entries) || [],
+						ents && ents.leafId,
+					),
 					commands: (cmds && cmds.commands) || [],
 					models: (mdls && mdls.models) || [],
 					stats: stats || {},

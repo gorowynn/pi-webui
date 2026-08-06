@@ -390,6 +390,68 @@ pre code.hljs {
 	white-space: normal;
 	border-top: 1px solid #ffffff14;
 }
+/* compaction marker (plan F§5.3): a muted, collapsible callout where pi compacted
+   context. Reads as a system boundary, not a chat bubble — centered label +
+   expandable markdown summary (the compacted span). Collapsed by default (the
+   summary is metadata; the live conversation continues below it). Native
+   <details> for the toggle (accessible, no JS). */
+.compact-mark {
+	margin: 14px 0;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--surface-inset);
+	overflow: hidden;
+	font-size: 0.875em;
+}
+.compact-mark > summary {
+	list-style: none;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 7px 12px;
+	color: var(--muted);
+	user-select: none;
+}
+.compact-mark > summary::-webkit-details-marker {
+	display: none;
+}
+.compact-mark > summary::after {
+	content: "▸";
+	margin-left: auto;
+	color: var(--muted);
+	transition: transform 0.15s ease;
+}
+.compact-mark[open] > summary::after {
+	transform: rotate(90deg);
+}
+.compact-mark .cm-glyph {
+	width: 8px;
+	height: 8px;
+	background: var(--accent-soft);
+	border-radius: 2px;
+	transform: rotate(45deg);
+	flex: 0 0 auto;
+}
+.compact-mark .cm-label {
+	font-weight: 600;
+	color: var(--ink);
+}
+.compact-mark .cm-meta {
+	color: var(--muted);
+}
+.compact-mark .cm-body {
+	padding: 8px 12px 10px;
+	border-top: 1px solid var(--line);
+	max-height: 320px;
+	overflow: auto;
+}
+.compact-mark .cm-body > :first-child {
+	margin-top: 0;
+}
+.compact-mark .cm-body > :last-child {
+	margin-bottom: 0;
+}
 .tool {
 	margin: 0 0 10px;
 	font-family: ui-monospace, Menlo, Consolas, monospace;
