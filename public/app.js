@@ -2884,8 +2884,8 @@ function renderMessage(msg) {
 	} else if (msg.role === "assistant") {
 		// stash tool-call args so the matching toolResult below can do typed
 		// rendering (read → code/csv/…) on replay too (plan 2.1 / R§2.1).
-		for (const p of msg.content || [])
-			if (p.type === "toolCall" && p.id) replayArgs[p.id] = p.arguments;
+		for (const c of toolProtocol.toolCallsInMessage(msg))
+			replayArgs[c.id] = c.args;
 		// suppress empty assistant messages (tool-only / blank) — parity with the
 		// live path's finalizeBubble, which also drops them. No bubble = no label.
 		if (nonEmptyContent(msg.content).length) {
@@ -2894,10 +2894,7 @@ function renderMessage(msg) {
 		}
 		cur = null;
 	} else if (msg.role === "toolResult") {
-		const t = (msg.content || [])
-			.filter((b) => b.type === "text")
-			.map((b) => b.text)
-			.join("\n");
+		const t = toolProtocol.toolContentText(msg.content);
 		const rargs = (msg.toolCallId && replayArgs[msg.toolCallId]) || null;
 		const w = toolBlock(
 			msg.toolCallId || "r" + Math.random(),
@@ -3130,10 +3127,7 @@ function handle(payload) {
 					payload.partialResult.details,
 					subagentDensity,
 				);
-			const t = (payload.partialResult.content || [])
-				.filter((b) => b.type === "text")
-				.map((b) => b.text)
-				.join("\n");
+			const t = toolProtocol.toolContentText(payload.partialResult.content);
 			if (payload.toolName !== "subagent") w.out.textContent = t;
 			break;
 		}
@@ -3144,10 +3138,9 @@ function handle(payload) {
 			if (w) {
 				w.el.classList.remove("run");
 				w.el.classList.add(payload.isError ? "err" : "done");
-				t = ((payload.result && payload.result.content) || [])
-					.filter((b) => b.type === "text")
-					.map((b) => b.text)
-					.join("\n");
+				t = toolProtocol.toolContentText(
+					payload.result && payload.result.content,
+				);
 				if (
 					(payload.toolName === "edit" || payload.toolName === "write") &&
 					w.args &&
