@@ -133,6 +133,43 @@
 		return name || "tool";
 	}
 
+	// ---- header detail (the readable command/path for the card head) ----
+	// describeToolCall returns the full activity label (e.g. "bash: npm test");
+	// toolCallDetail returns just the meaningful part (command/path/pattern) for
+	// the card's .cmd span alongside the tool name (plan 3.1 / U§2.3).
+	function toolCallDetail(name, args) {
+		if (!args) return "";
+		switch (name) {
+			case "bash":
+				return String(args.command || "").slice(0, 80);
+			case "read":
+			case "edit":
+			case "write":
+				return args.path || "";
+			case "grep":
+			case "find":
+				return args.pattern || args.path || "";
+			case "web_search":
+				return String(args.query || "").slice(0, 80);
+			case "web_fetch":
+				return args.url || "";
+			case "todo": {
+				var a = args.action;
+				var n = function (x) {
+					return Array.isArray(x) ? x.length : 0;
+				};
+				if (a === "plan" || a === "add")
+					return a + " " + n(args.items) + " task(s)";
+				if (a === "update") return "update " + n(args.updates);
+				if (a === "remove") return "remove " + n(args.ids);
+				if (a === "clear") return "cleared";
+				return "";
+			}
+			default:
+				return "";
+		}
+	}
+
 	// ---- bounded text preview (R§2.6) ----
 	// Returns the first `maxLines` lines plus a `remaining` count. The renderer
 	// shows a "view M more lines" button that swaps in the full text. Stops a
@@ -470,6 +507,7 @@
 		languageFromPath: languageFromPath,
 		contentKindFromPath: contentKindFromPath,
 		describeToolCall: describeToolCall,
+		toolCallDetail: toolCallDetail,
 		toolTextPreview: toolTextPreview,
 		renderTextPreview: renderTextPreview,
 		renderNumberedCode: renderNumberedCode,

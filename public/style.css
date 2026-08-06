@@ -395,70 +395,105 @@ pre code.hljs {
 	font-family: ui-monospace, Menlo, Consolas, monospace;
 	font-size: 12.5px;
 	border: 1px solid var(--line);
+	border-left: 3px solid var(--line);
 	border-radius: var(--r);
 	box-shadow: var(--shadow);
 	background: #00000040;
 }
-.tool > summary {
-	list-style: none;
+/* per-state border colors (plan 3.1 / U§2.3): running → accent, error → danger */
+.tool.run {
+	border-color: var(--accent);
+	border-left-color: var(--accent);
+}
+.tool.err {
+	border-color: var(--danger);
+	border-left-color: var(--danger);
+}
+/* card head: caret + tool name + readable command … duration */
+.tool .head {
 	cursor: pointer;
 	padding: 6px 10px;
 	display: flex;
-	flex-direction: column;
-	gap: 2px;
-	align-items: stretch;
+	flex-direction: row;
+	align-items: baseline;
+	gap: 6px;
 	overflow-wrap: anywhere;
-}
-.tool > summary::-webkit-details-marker {
-	display: none;
-}
-.tool .head {
 	color: var(--muted);
-	flex: 1;
 }
-/* two-line head: line 1 = caret + tool name, line 2 = the call args */
+.tool .head:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+	border-radius: var(--r);
+}
 .tool .trow {
 	display: flex;
 	gap: 6px;
 	align-items: baseline;
+	flex: 1 1 auto;
+	min-width: 0;
 }
 .tool .head .name {
 	color: var(--accent);
+	flex: 0 0 auto;
 }
-.tool .head code {
-	display: block;
+.tool .head .cmd {
 	color: var(--muted);
-	white-space: pre-wrap;
-	font-family: inherit;
-	padding-left: 16px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+}
+.tool .head .dur {
+	flex: 0 0 auto;
+	color: var(--muted);
+	opacity: 0.7;
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
 }
 .tool .caret {
 	color: var(--muted);
 	font-size: 10px;
+	flex: 0 0 auto;
 	transition: transform 0.15s ease;
 }
+/* [open] covers the legacy <details> bashExecution box; .open the new card */
+.tool.open .caret,
 .tool[open] .caret {
 	transform: rotate(90deg);
 }
-.tool.run > summary .name::before {
+.tool.run .name::before {
 	content: "● ";
 	color: var(--warning);
 	animation: pulse 1s infinite;
 }
-.tool.done > summary .name::before {
+.tool.done .name::before {
 	content: "✓ ";
 	color: var(--success);
 }
-.tool.err > summary .name::before {
+.tool.err .name::before {
 	content: "✗ ";
 	color: var(--danger);
+}
+/* grid-rows expand animation (plan 3.1 / U§2.3): .out-wrap is 0fr when closed,
+   1fr when .open — a smooth height transition with no JS. min-height:0 lets the
+   out shrink to 0; max-height+overflow keep it scrollable when open. */
+.tool .out-wrap {
+	display: grid;
+	grid-template-rows: 0fr;
+	transition: grid-template-rows 0.18s ease;
+}
+.tool.open .out-wrap {
+	grid-template-rows: 1fr;
+	border-top: 1px solid var(--line);
+}
+.tool .out-wrap > .out {
+	min-height: 0;
 }
 .tool .out {
 	color: var(--muted);
 	white-space: pre-wrap;
 	margin: 0;
 	padding: 8px 12px;
-	border-top: 1px solid var(--line);
 	max-height: 320px;
 	overflow: auto;
 }

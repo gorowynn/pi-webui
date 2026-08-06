@@ -432,23 +432,52 @@ function scheduleRender() {
 function toolBlock(id, name, args, running) {
 	let wrap = toolBlocks.get(id);
 	if (!wrap) {
-		const el = document.createElement("details");
-		el.className = "tool" + (running ? " run" : "");
-		if (running) el.open = true;
-		const a = args ? JSON.stringify(args) : "";
-		// two-line head: line 1 = caret + tool name, line 2 = the call args.
-		const argsHtml = a ? `<code>${esc(a)}</code>` : "";
+		const el = document.createElement("div");
+		el.className = "tool" + (running ? " run open" : "");
+		el.setAttribute("role", "group");
+		const detail = toolPresent.toolCallDetail(name, args);
+		const cmdHtml = detail ? `<span class="cmd">${esc(detail)}</span>` : "";
+		// card head: caret + tool name + readable command … duration (filled at
+		// end). .out-wrap is the grid-rows animation target (0fr→1fr on .open).
 		setSafeHtml(
 			el,
-			`<summary class="head"><span class="trow"><span class="caret">▸</span><span class="name">${esc(name || "tool")}</span></span>${argsHtml}</summary><div class="out"></div>`,
+			`<div class="head" role="button" tabindex="0" aria-expanded="${running ? "true" : "false"}"><span class="trow"><span class="caret">▸</span><span class="name">${esc(name || "tool")}</span>${cmdHtml}</span><span class="dur"></span></div><div class="out-wrap"><div class="out"></div></div>`,
 		);
+		const head = el.querySelector(".head");
+		const toggle = () => openTool(wrap, !el.classList.contains("open"));
+		head.addEventListener("click", toggle);
+		head.addEventListener("keydown", (e) => {
+			if (e.key === "Enter" || e.key === " ") {
+				e.preventDefault();
+				toggle();
+			}
+		});
 		transcript.appendChild(el);
-		wrap = { el, out: el.querySelector(".out") };
+		wrap = {
+			el,
+			out: el.querySelector(".out"),
+			head,
+			dur: el.querySelector(".dur"),
+			startedAt: running ? Date.now() : 0,
+		};
 		toolBlocks.set(id, wrap);
 	}
 	if (args != null) wrap.args = args;
 	autoscroll();
 	return wrap;
+}
+// toggle a tool card open/closed (was native <details>.open; now a class + the
+// grid-rows animation). aria-expanded stays in sync for screen readers.
+function openTool(wrap, open) {
+	if (!wrap || !wrap.el) return;
+	wrap.el.classList.toggle("open", !!open);
+	if (wrap.head) wrap.head.setAttribute("aria-expanded", open ? "true" : "false");
+}
+// format an elapsed tool-call duration for the card head
+function fmtToolDur(ms) {
+	if (!ms || ms < 0) return "";
+	if (ms < 1000) return ms + "ms";
+	return (ms / 1000).toFixed(1) + "s";
 }
 
 // ---- subagent live view ----
@@ -3177,6 +3206,8 @@ function handle(payload) {
 			if (w) {
 				w.el.classList.remove("run");
 				w.el.classList.add(payload.isError ? "err" : "done");
+				if (w.startedAt && w.dur)
+					w.dur.textContent = fmtToolDur(Date.now() - w.startedAt);
 				t = toolProtocol.toolContentText(
 					payload.result && payload.result.content,
 				);
@@ -3187,7 +3218,7 @@ function handle(payload) {
 				) {
 					// rich side-by-side diff; the new pane is editable + applyable
 					w.el.classList.add("hasdiff");
-					w.el.open = true;
+					openTool(w, true);
 					setSafeHtml(w.out, "");
 					var ea = w.args;
 					if (
@@ -3287,7 +3318,7 @@ function handle(payload) {
 							text: t,
 							isError: payload.isError,
 						});
-						if (t.length > 500) w.el.open = false;
+						if (t.length > 500) openTool(w, false);
 					}
 				}
 			}
