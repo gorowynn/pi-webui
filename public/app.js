@@ -26,6 +26,7 @@ let availableModels = []; // from get_available_models; drives model + tier sele
 // mirrors the pi:model / pi:todos idiom; default "full".
 let subagentDensity = localStorage.getItem("pi:sa-density") || "full";
 const toolBlocks = new Map(); // toolCallId -> {head, out}
+let replayArgs = {}; // toolCallId -> args, rebuilt per replay (renderMessage)
 let cur = null; // {bubble, textPar, textBuf, thinkEl, thinkBuf}
 // ponytail: the tool currently awaiting/under a permission prompt. Set at
 // tool_execution_start (which fires immediately before THIS tool's safeguard
@@ -1025,27 +1026,11 @@ async function applyEdit(path, baselineNew, edited, isWrite, btn, onOk) {
 }
 
 // ---- working indicator: spinner + current activity ----
+// describeTool (the tool-call header label) moved to tool-presentation.js as
+// toolPresent.describeToolCall (plan 2.1 / F§4.4). Thin alias keeps the existing
+// call site readable.
 function describeTool(name, args) {
-	if (!args) return name || "tool";
-	if (name === "edit" || name === "write") return `${name} ${args.path || ""}`;
-	if (name === "read") return `reading ${args.path || ""}`;
-	if (name === "bash")
-		return `bash: ${String(args.command || "").slice(0, 60)}`;
-	if (name === "grep" || name === "find")
-		return `${name}: ${args.pattern || args.path || ""}`;
-	if (name === "todo") {
-		const a = args && args.action;
-		const n = (x) => (Array.isArray(x) ? x.length : 0);
-		if (a === "plan" || a === "add")
-			return `todo ${a}: ${n(args.items)} task(s)`;
-		if (a === "update") return `todo update: ${n(args.updates)} change(s)`;
-		if (a === "remove") return `todo remove: ${n(args.ids)}`;
-		if (a === "clear") return "todo cleared";
-		return "todo";
-	}
-	if (name === "web_search" || name === "web_fetch")
-		return `${name}: ${String(args.query || args.url || "").slice(0, 60)}`;
-	return name || "tool";
+	return toolPresent.describeToolCall(name, args);
 }
 // ---- activity bar: one line above the chatbox that reports what the
 // session is doing right now — "thinking…", "running bash: npm test",
@@ -2897,6 +2882,10 @@ function renderMessage(msg) {
 				.join("\n");
 		addUser(txt);
 	} else if (msg.role === "assistant") {
+		// stash tool-call args so the matching toolResult below can do typed
+		// rendering (read → code/csv/…) on replay too (plan 2.1 / R§2.1).
+		for (const p of msg.content || [])
+			if (p.type === "toolCall" && p.id) replayArgs[p.id] = p.arguments;
 		// suppress empty assistant messages (tool-only / blank) — parity with the
 		// live path's finalizeBubble, which also drops them. No bubble = no label.
 		if (nonEmptyContent(msg.content).length) {
@@ -2909,15 +2898,22 @@ function renderMessage(msg) {
 			.filter((b) => b.type === "text")
 			.map((b) => b.text)
 			.join("\n");
+		const rargs = (msg.toolCallId && replayArgs[msg.toolCallId]) || null;
 		const w = toolBlock(
 			msg.toolCallId || "r" + Math.random(),
 			msg.toolName || "result",
-			null,
+			rargs,
 			false,
 		);
 		w.el.classList.remove("run");
 		w.el.classList.add(msg.isError ? "err" : "done");
-		w.out.textContent = t;
+		w.out.replaceChildren();
+		toolPresent.renderToolOutput(w.out, {
+			name: msg.toolName,
+			args: rargs,
+			text: t,
+			isError: msg.isError,
+		});
 	} else if (msg.role === "bashExecution") {
 		const el = document.createElement("details");
 		el.className = "tool done";
@@ -3247,7 +3243,18 @@ function handle(payload) {
 							w.out.appendChild(rt);
 						}
 					} else {
-						w.out.textContent = t;
+						// ponytail: typed tool-output rendering (plan 2.1 / R§2.1).
+						// read → numbered highlighted code (2.2) / csv table (2.3) /
+						// html iframe (2.4) / svg <img> (2.5); everything else →
+						// bounded text preview (2.6). edit/write (diff) + subagent
+						// (live view) are handled in their own branches above.
+						w.out.replaceChildren();
+						toolPresent.renderToolOutput(w.out, {
+							name: payload.toolName,
+							args: w.args,
+							text: t,
+							isError: payload.isError,
+						});
 						if (t.length > 500) w.el.open = false;
 					}
 				}
@@ -3475,6 +3482,7 @@ function applyMessages(messages) {
 	if (!Array.isArray(messages)) return;
 	setSafeHtml(transcript, "");
 	toolBlocks.clear();
+	replayArgs = {}; // rebuild the toolCall-id → args map for this replay
 	messages.forEach(renderMessage);
 	scrollDown();
 }

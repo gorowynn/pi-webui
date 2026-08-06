@@ -462,6 +462,77 @@ pre code.hljs {
 	max-height: 320px;
 	overflow: auto;
 }
+/* ---- tool-output typed renders (plan 2.x / R§2.x) ----
+   raw tool content is never innerHTML'd here — textContent only, safe md
+   pipeline, <img> data URL (svg), or sandboxed iframe (html). */
+/* bounded text preview + "view more" (R§2.6) */
+.tool .out .tool-pre {
+	margin: 0;
+	white-space: pre-wrap;
+	color: var(--muted);
+}
+.tool .out .tool-more {
+	display: inline-block;
+	margin-top: 6px;
+	background: var(--accent-soft);
+	color: var(--accent);
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	padding: 2px 8px;
+	font: inherit;
+	font-size: 11.5px;
+	cursor: pointer;
+}
+.tool .out .tool-more:hover {
+	background: var(--accent-hover);
+	color: var(--on-accent);
+}
+/* line-numbered highlighted code (R§2.2) — gutter + code in a flex row */
+.numcode {
+	display: flex;
+	gap: 0;
+	align-items: stretch;
+	line-height: 1.5; /* shared so gutter + code stay aligned */
+}
+.numcode .nc-gutter {
+	flex: 0 0 auto;
+	display: flex;
+	flex-direction: column;
+	text-align: right;
+	padding: 8px 8px 8px 12px;
+	color: var(--muted);
+	opacity: 0.55;
+	user-select: none;
+	background: #00000022;
+	border-right: 1px solid var(--line);
+}
+.numcode .nc-ln {
+	display: block;
+	font-variant-numeric: tabular-nums;
+}
+.numcode .nc-cap {
+	flex: 0 0 auto;
+	padding: 4px 10px;
+	color: var(--warning);
+	font-size: 11px;
+}
+.numcode .nc-code {
+	flex: 1 1 auto;
+	margin: 0;
+	padding: 8px 12px;
+	white-space: pre; /* no wrap — horizontal scroll keeps the gutter aligned */
+	overflow-x: auto;
+	color: var(--ink);
+}
+/* SVG preview (R§2.5) — <img> from a data URL can't execute SVG scripts */
+.tool .out .tool-svg {
+	display: block;
+	max-width: min(100%, 600px);
+	max-height: 300px;
+	margin: 8px 0;
+	border-radius: var(--r);
+	background: #ffffff08;
+}
 
 .activity {
 	flex: 0 0 auto;
