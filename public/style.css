@@ -2585,10 +2585,33 @@ body.sdd-on #sddbar {
 	width: 88px;
 }
 body.sdd-on.sdd-open {
-	margin-right: min(400px, 58vw);
+	margin-right: var(--rail-width, min(400px, 58vw));
 }
 body.sdd-on.sdd-open #sddbar {
-	width: min(400px, 58vw);
+	width: var(--rail-width, min(400px, 58vw));
+}
+/* right-rail drag-resize handle (plan 3.5 / U§2.6) — on the bar's left edge;
+   width persists via the --rail-width CSS var (set by app.js). Flat surface,
+   no gradient (anti-slop). */
+#sddbar > .rail-resize {
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 6px;
+	cursor: col-resize;
+	z-index: 5;
+	border-radius: 2px;
+	transition: background-color 0.12s ease;
+}
+#sddbar > .rail-resize:hover,
+#sddbar > .rail-resize.active {
+	background: var(--accent);
+	opacity: 0.45;
+}
+#sddbar > .rail-resize:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -1px;
 }
 .sdd-rail {
 	flex: 0 0 88px;

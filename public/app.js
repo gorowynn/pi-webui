@@ -4520,4 +4520,75 @@ registerCommand("view-cycle", "cycle detail mode", "simple / headers / detailed"
 	viewBtn ? viewBtn.click() : null,
 );
 
+// ---- right-rail drag-resize (plan 3.5 / U§2.6) ----
+// The #sddbar (and future widget rail) is drag-resizable via a .rail-resize
+// handle on its left edge; the width persists as the --rail-width CSS var (read
+// by the body.sdd-on.sdd-open rules). Clamped 240–720px. Only active when the
+// pane is open. Mouse + touch.
+function initRailResize() {
+	const bar = $("sddbar");
+	if (!bar || bar.querySelector(".rail-resize")) return;
+	const handle = document.createElement("div");
+	handle.className = "rail-resize";
+	handle.setAttribute("role", "separator");
+	handle.setAttribute("aria-orientation", "vertical");
+	handle.setAttribute("aria-label", "resize sidebar");
+	handle.title = "drag to resize";
+	bar.appendChild(handle);
+	const saved = parseFloat(localStorage.getItem("pi:rail-width"));
+	if (saved >= 240 && saved <= 720)
+		document.documentElement.style.setProperty("--rail-width", saved + "px");
+	let dragging = false,
+		startX = 0,
+		startW = 0;
+	const down = (clientX) => {
+		if (!document.body.classList.contains("sdd-open")) return false;
+		dragging = true;
+		startX = clientX;
+		startW = bar.offsetWidth;
+		handle.classList.add("active");
+		document.body.style.userSelect = "none";
+		document.body.style.cursor = "col-resize";
+		return true;
+	};
+	const move = (clientX) => {
+		if (!dragging) return;
+		const delta = startX - clientX; // left drag = wider (right-anchored)
+		const w = Math.max(240, Math.min(720, startW + delta));
+		document.documentElement.style.setProperty("--rail-width", w + "px");
+	};
+	const up = () => {
+		if (!dragging) return;
+		dragging = false;
+		handle.classList.remove("active");
+		document.body.style.userSelect = "";
+		document.body.style.cursor = "";
+		localStorage.setItem("pi:rail-width", String(bar.offsetWidth));
+	};
+	handle.addEventListener("mousedown", (e) => {
+		if (down(e.clientX)) e.preventDefault();
+	});
+	document.addEventListener("mousemove", (e) => move(e.clientX));
+	document.addEventListener("mouseup", up);
+	handle.addEventListener(
+		"touchstart",
+		(e) => {
+			if (down(e.touches[0].clientX)) e.preventDefault();
+		},
+		{ passive: false },
+	);
+	document.addEventListener(
+		"touchmove",
+		(e) => {
+			if (dragging) {
+				move(e.touches[0].clientX);
+				e.preventDefault();
+			}
+		},
+		{ passive: false },
+	);
+	document.addEventListener("touchend", up);
+}
+initRailResize();
+
 autosize();
