@@ -151,6 +151,16 @@ entry — these are load-bearing invariants. Numbers match `GOTCHAS.md #N`.
   `list_sessions`** (only `new_session`/`switch_session`/`set_session_name`) →
   the JSONL dir-scan is forced. `ask_user_question` stays shadowed (stock
   renders via `ctx.ui.custom()`, a no-op in RPC).
+- **Awaitable RPC is additive to fire-and-forget.** `POST /api/cmd` + the SSE
+  `response` stream (what the smuggle channels depend on) are unchanged. Added
+  `rpcRequest()` + `POST /api/rpc` (awaits pi's `{type:"response"}` keyed by id,
+  30s timeout) and `GET /api/snapshot` (the 5 bootstrap RPCs fanned out in
+  parallel — one round-trip). The JSONL reader broadcasts every payload to SSE
+  **and then** resolves any pending awaitable (`resolveRpc`) — so smuggle
+  ordering (tool_execution_start before its sibling response) is structurally
+  preserved. `rejectAllRpc` on pi exit fails pending fast (plan 0.2 / F§5.1).
+  Also: `jsonl.js` codec (F§4.5), centralized `killPiTree` (F§4.7),
+  `WorkspaceFileError`/`readWorkspaceFile` off `safePath` (F§4.8).
 
 ## Manual smoke tests (quick sanity)
 
@@ -160,4 +170,6 @@ entry — these are load-bearing invariants. Numbers match `GOTCHAS.md #N`.
   shows a read-only old|new hunk diff. No diff = `tool_execution_start` didn't
   carry `args` (or the tool isn't `edit`/`write`) → `curToolArgs` empty (GOTCHAS.md #7).
 - **Health** — `GET /api/health`; SSE at `GET /api/events`; commands via
-  `POST /api/cmd`.
+  `POST /api/cmd`; awaitable RPC at `POST /api/rpc`; one-shot bootstrap at
+  `GET /api/snapshot` (`node test/rpc-sse.test.js` covers the additivity).
+  `node test/jsonl.test.js` covers the JSONL codec.

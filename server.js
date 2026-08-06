@@ -8,7 +8,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawn, execSync } = require("child_process");
 const os = require("os");
-const { StringDecoder } = require("string_decoder");
+const { JsonLineDecoder, encodeJsonLine } = require("./jsonl.js"); // strict JSONL codec (plan F§4.5)
 const { discoverWorkspaces, isKnownWorkspacePath } = require("./workspaces.js");
 const { opencodeGoWindows } = require("./public/usage-provider.js"); // dashboard HTML parser (shared with the browser, like md.js)
 
@@ -169,29 +169,18 @@ function startPi() {
 				windowsHide: true,
 			});
 
-	// Strict JSONL reader: split on \n only, strip trailing \r. (readline is non-compliant.)
-	// ponytail: StringDecoder buffers incomplete UTF-8 tails across chunks so a
-	// multibyte char (—, “”, emoji) split on a stdout seam decodes correctly
-	// instead of becoming U+FFFD. chunk.toString("utf8") decoded each chunk in
-	// isolation — the source of intermittent garbled characters in assistant text.
-	let buf = "";
-	const dec = new StringDecoder("utf8");
+	// Strict JSONL reader (jsonl.js codec): split on \n, strip \r, buffer
+	// incomplete UTF-8 across chunks (so a multibyte char split on a stdout seam
+	// decodes instead of becoming U+FFFD — GOTCHAS #1/#2), plus a per-record cap
+	// as a runaway-line guard. Factored from the old inline buf/StringDecoder loop
+	// in plan F§4.5; behavior-preserving (broadcast still fires for every obj).
+	const dec = new JsonLineDecoder();
 	pi.stdout.on("data", (chunk) => {
-		buf += dec.write(chunk);
-		let i;
-		while ((i = buf.indexOf("\n")) !== -1) {
-			let line = buf.slice(0, i);
-			buf = buf.slice(i + 1);
-			if (line.endsWith("\r")) line = line.slice(0, -1);
-			if (!line) continue;
-			let obj;
-			try {
-				obj = JSON.parse(line);
-			} catch {
-				continue;
-			} // ignore non-JSON noise
+		dec.push(chunk, (obj) => {
 			broadcast({ source: "pi", payload: obj });
-		}
+			// settle any awaitable RPC waiting on this response (plan F§5.1).
+			if (obj && obj.type === "response" && obj.id) resolveRpc(obj);
+		});
 	});
 
 	pi.stderr.on("data", (chunk) =>
@@ -205,6 +194,7 @@ function startPi() {
 	});
 	pi.on("exit", (code, sig) => {
 		if (shuttingDown) return shutdownNow();
+		rejectAllRpc("pi exited"); // fail fast: pending awaitable RPCs won't resolve
 		broadcast({ source: "pi_exit", payload: { code, sig } });
 		if (deliberateRestart) {
 			// workspace switch (not a crash): respawn now in the (already-updated)
@@ -238,6 +228,25 @@ function startPi() {
 }
 startPi();
 
+// ponytail: cross-platform process-tree termination (plan F§4.7). Centralized
+// so workspace switch (graceful), stop (force), and future isolated-prompt
+// cleanup share one tested path. POSIX: SIGTERM/SIGKILL. Windows: taskkill /T /F
+// kills the whole tree (no gentle equivalent — a bare signal to the .cmd shim
+// strands the real child). Returns false if the kill threw, so a caller can fall
+// back (stop -> direct shutdown).
+function killPiTree(force) {
+	if (!pi || !pi.pid) return true;
+	try {
+		if (process.platform === "win32")
+			execSync(`taskkill /pid ${pi.pid} /T /F`, { stdio: "ignore" });
+		else process.kill(pi.pid, force ? "SIGKILL" : "SIGTERM");
+		return true;
+	} catch (e) {
+		console.error(`[kill] ${force ? "force" : "graceful"} failed: ${e.message}`);
+		return false;
+	}
+}
+
 // ponytail: switch the active project root. Only a discovered-workspace realpath
 // reaches here (the route validates via isKnownWorkspacePath first). Updates the
 // live PI_CWD, then tree-kills pi so its exit handler respawns in the new cwd and
@@ -258,13 +267,7 @@ function switchWorkspace(newCwd) {
 		});
 		return;
 	}
-	try {
-		if (process.platform === "win32")
-			execSync(`taskkill /pid ${pi.pid} /T /F`, { stdio: "ignore" });
-		else pi.kill("SIGTERM");
-	} catch (e) {
-		console.error(`[pi] workspace-switch kill failed: ${e.message}`);
-	}
+	killPiTree(false); // graceful: deliberate restart — exit handler respawns in PI_CWD
 }
 
 // ponytail: graceful self-shutdown for the in-UI Stop button (POST /api/stop).
@@ -277,14 +280,7 @@ function stopServer() {
 	shuttingDown = true;
 	broadcast({ source: "server", type: "stopping" });
 	if (pi && pi.pid) {
-		try {
-			if (process.platform === "win32")
-				execSync(`taskkill /pid ${pi.pid} /T /F`, { stdio: "ignore" });
-			else process.kill(pi.pid, "SIGKILL");
-		} catch (e) {
-			console.error(`[stop] pi kill failed: ${e.message}`);
-			shutdownNow();
-		}
+		if (!killPiTree(true)) shutdownNow(); // force-kill failed -> tear down directly
 	} else {
 		shutdownNow();
 	}
@@ -677,7 +673,59 @@ function listSessions() {
 
 function sendToPi(obj) {
 	if (!pi || !pi.stdin.writable) throw new Error("pi not running");
-	pi.stdin.write(JSON.stringify(obj) + "\n");
+	pi.stdin.write(encodeJsonLine(obj));
+}
+
+// ── awaitable RPC registry (plan F§5.1 — the keystone) ──────────────────────
+// sendToPi stays fire-and-forget (POST /api/cmd + the SSE response stream the
+// client matches by id — the smuggle channels depend on it). This ADDS an
+// awaitable path: rpcRequest(obj) sends + registers a Promise keyed by obj.id;
+// when the JSONL reader parses pi's {type:"response", id}, resolveRpc settles it
+// (with a timeout). The reader STILL broadcasts every payload to SSE, so the
+// existing client flow + tool_execution_start smuggling are untouched
+// (GOTCHAS #1/#6) — the awaitable path is opt-in per call.
+const rpcPending = new Map(); // id -> {resolve, reject, timer}
+const RPC_TIMEOUT_MS = 30000; // a bootstrap RPC answers well under this
+
+function rpcRequest(obj, timeoutMs) {
+	if (!obj || typeof obj !== "object") obj = {};
+	if (!obj.id) obj.id = "rpc-" + Math.random().toString(36).slice(2, 10);
+	const id = obj.id;
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			if (rpcPending.delete(id)) reject(new Error("rpc timeout"));
+		}, timeoutMs || RPC_TIMEOUT_MS);
+		rpcPending.set(id, { resolve, reject, timer });
+		try {
+			sendToPi(obj);
+		} catch (e) {
+			clearTimeout(timer);
+			rpcPending.delete(id);
+			reject(e);
+		}
+	});
+}
+
+// settle a pending awaitable RPC when pi's {type:"response", id} lands. Called
+// from the JSONL reader (after broadcast). Unknown ids (fire-and-forget cmds the
+// client sent, or cmds another caller originated) are a no-op.
+function resolveRpc(obj) {
+	const p = rpcPending.get(obj.id);
+	if (!p) return;
+	rpcPending.delete(obj.id);
+	clearTimeout(p.timer);
+	if (obj.success === false) p.reject(new Error(obj.error || "rpc failed"));
+	else p.resolve(obj);
+}
+
+// fail every pending awaitable RPC fast (pi exited/crashed — no response will
+// come) instead of letting each wait out its 30s timeout.
+function rejectAllRpc(reason) {
+	for (const p of rpcPending.values()) {
+		clearTimeout(p.timer);
+		p.reject(new Error(reason));
+	}
+	rpcPending.clear();
 }
 
 // ponytail: sandbox any browser-supplied path to PI_CWD so the webui can't
@@ -687,6 +735,26 @@ function sendToPi(obj) {
 // ~/.ssh would pass. realpathSync does, so compare resolved-real paths. It throws
 // on a not-yet-existing target (manual-edit writes new files), so in that case
 // resolve the existing parent and re-append the basename.
+// ponytail: structured workspace-file error (plan F§4.8). Carries an HTTP
+// status so routes can map it; code lets callers distinguish traversal (403)
+// from not-found (404). IS-A Error, so existing `catch (e) { ... e.message }`
+// routes keep working unchanged.
+class WorkspaceFileError extends Error {
+	constructor(message, status = 400) {
+		super(message);
+		this.name = "WorkspaceFileError";
+		this.status = status;
+		this.code = "WORKSPACE_FILE";
+	}
+}
+
+// ponytail: sandbox any browser-supplied path to PI_CWD so the webui can't
+// read/write outside the project (the manual-edit diff feature uses this).
+// Resolve, then require the result to be PI_CWD itself or live beneath it.
+// path.resolve does NOT follow symlinks — a link inside PI_CWD aimed at ~/.ssh
+// would pass. realpathSync does, so compare resolved-real paths. It throws on a
+// not-yet-existing target (manual-edit writes new files), so in that case resolve
+// the existing parent and re-append the basename.
 function safePath(rel) {
 	const base = fs.realpathSync(PI_CWD);
 	const full = path.resolve(base, rel || "");
@@ -694,14 +762,35 @@ function safePath(rel) {
 	try {
 		real = fs.realpathSync(full);
 	} catch {
-		real = path.join(
-			fs.realpathSync(path.dirname(full)),
-			path.basename(full),
-		);
+		// not-yet-existing target (new file): resolve the existing parent and
+		// re-append the basename.
+		try {
+			real = path.join(
+				fs.realpathSync(path.dirname(full)),
+				path.basename(full),
+			);
+		} catch {
+			throw new WorkspaceFileError("parent directory not found", 404);
+		}
 	}
 	if (real !== base && !real.startsWith(base + path.sep))
-		throw new Error("path escapes project root");
+		throw new WorkspaceFileError("path escapes project root", 403);
 	return real;
+}
+
+// ponytail: convenience primitive (plan F§4.8) — resolve + read in one call, so
+// future file-touching features (git diffs, isolated-prompt scratch) reuse the
+// same sandboxed guard instead of reimplementing safePath + readFileSync.
+function readWorkspaceFile(rel) {
+	const full = safePath(rel);
+	try {
+		return fs.readFileSync(full, "utf8");
+	} catch (e) {
+		throw new WorkspaceFileError(
+			e.code === "ENOENT" ? "file not found" : e.message,
+			404,
+		);
+	}
 }
 
 // ponytail: cap POST bodies (~1MB) so a runaway client can't OOM the bridge.
@@ -824,6 +913,61 @@ const server = http.createServer(async (req, res) => {
 		return;
 	}
 
+	if (req.method === "POST" && url.pathname === "/api/rpc") {
+		// awaitable single RPC (plan F§5.1): like /api/cmd but resolves with pi's
+		// {type:"response"} payload instead of fire-and-forget. Body = the command
+		// obj (id optional — one is minted if absent). 200 + ok:false on error so
+		// the client's fetch resolves cleanly (mirrors /api/file's posture).
+		try {
+			const obj = JSON.parse((await readBody(req)) || "{}");
+			const resp = await rpcRequest(obj);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			res.end(JSON.stringify({ ok: true, id: resp.id, data: resp.data }));
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+		return;
+	}
+
+	if (req.method === "GET" && url.pathname === "/api/snapshot") {
+		// one-round-trip bootstrap (plan F§5.1): fans out the 5 RPCs the client
+		// used to send fire-and-forget (get_state/messages/commands/models/stats)
+		// in parallel via the awaitable path, returning one bundled object. Each
+		// response is ALSO broadcast on SSE (the reader broadcasts everything),
+		// where the client ignores ids it didn't issue — purely additive, doesn't
+		// disturb the existing init flow. Unwrapped (messages/commands/models are
+		// arrays, not {key:[...]} envelopes) for a clean client shape.
+		try {
+			const ask = (type, id) =>
+				rpcRequest({ type, id })
+					.then((r) => r.data)
+					.catch(() => null);
+			const [state, msgs, cmds, mdls, stats] = await Promise.all([
+				ask("get_state", "snap-state"),
+				ask("get_messages", "snap-msgs"),
+				ask("get_commands", "snap-cmds"),
+				ask("get_available_models", "snap-models"),
+				ask("get_session_stats", "snap-stats"),
+			]);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			res.end(
+				JSON.stringify({
+					ok: true,
+					state: state || null,
+					messages: (msgs && msgs.messages) || [],
+					commands: (cmds && cmds.commands) || [],
+					models: (mdls && mdls.models) || [],
+					stats: stats || {},
+				}),
+			);
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+		return;
+	}
+
 	if (req.method === "POST" && url.pathname === "/api/stop") {
 		// respond BEFORE tearing down so the fetch resolves cleanly; the kill +
 		// exit land on the next tick (150ms gives the 200 time to flush locally).
@@ -849,8 +993,7 @@ const server = http.createServer(async (req, res) => {
 	if (req.method === "GET" && url.pathname === "/api/file") {
 		// manual-edit feature: read a project file (sandboxed to PI_CWD).
 		try {
-			const full = safePath(url.searchParams.get("path") || "");
-			const content = fs.readFileSync(full, "utf8");
+			const content = readWorkspaceFile(url.searchParams.get("path") || "");
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: true, content }));
 		} catch (e) {
