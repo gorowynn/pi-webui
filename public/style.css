@@ -565,6 +565,16 @@ pre code.hljs {
 .tool .out .csv-prev td {
 	color: var(--muted);
 }
+/* sandboxed HTML preview (R§2.4) — opt-in iframe */
+.tool .out .html-prev {
+	display: block;
+	width: 100%;
+	height: 300px;
+	margin: 8px 0;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	background: #fff; /* rendered HTML is usually light-themed */
+}
 
 .activity {
 	flex: 0 0 auto;

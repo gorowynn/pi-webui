@@ -313,11 +313,57 @@
 		host.appendChild(wrap);
 	}
 
+	// ---- sandboxed HTML preview (R§2.4) ----
+	// Two defense layers (both required): (1) <iframe sandbox=""> is the MOST
+	// restrictive mode — no scripts, forms, popups, same-origin, or plugins; the
+	// framed content cannot touch the parent. (2) stripScripts() scrubs <script>,
+	// on* handlers and javascript: URLs beforehand as defense-in-depth. NEVER set
+	// sandbox="allow-scripts" (or allow-same-origin) — that escapes the sandbox.
+	// Opt-in: shows the source as code first; the user clicks to render.
+	function stripScripts(html) {
+		return String(html == null ? "" : html)
+			.replace(/<script\b[^>]*>(?:[\s\S]*?<\/script\s*>|[\s\S]*)/gi, "")
+			.replace(/<script\b[^>]*\/\s*>/gi, "")
+			.replace(/<\/script\s*>/gi, "")
+			.replace(
+				/\s+on[a-z][\w:-]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,
+				"",
+			)
+			.replace(
+				/\s+(?:href|src|action|formaction|poster|xlink:href)\s*=\s*(?:"\s*javascript:[^"]*"|'\s*javascript:[^']*'|javascript:[^\s>]+)/gi,
+				"",
+			);
+	}
+	function renderHtmlPreview(host, content) {
+		content = content == null ? "" : String(content);
+		// default: inert source code (opt-in render — untrusted HTML stays inert)
+		renderNumberedCode(host, content, { lang: "xml" });
+		var btn = document.createElement("button");
+		btn.type = "button";
+		btn.className = "tool-more html-render";
+		btn.textContent = "render preview";
+		var frame = null;
+		btn.addEventListener("click", function () {
+			if (!frame) {
+				frame = document.createElement("iframe");
+				frame.className = "html-prev";
+				frame.setAttribute("sandbox", ""); // most restrictive
+				frame.setAttribute("srcdoc", stripScripts(content));
+				host.appendChild(frame);
+				btn.textContent = "hide preview";
+			} else {
+				frame.remove();
+				frame = null;
+				btn.textContent = "render preview";
+			}
+		});
+		host.appendChild(btn);
+	}
+
 	// ---- dispatch (R§2.1) ----
 	// ctx: { name, args, text, isError }. Decides the render kind from the tool +
 	// (for read) the path extension, then delegates. Appends to `host` (caller
-	// clears it first). csv/html are added in follow-up commits; until then they
-	// fall through to the bounded text preview.
+	// clears it first). Errors fall to text (don't parse an error as code/csv).
 	function renderToolOutput(host, ctx) {
 		var name = ctx.name,
 			args = ctx.args || {},
@@ -327,6 +373,10 @@
 			var kind = contentKindFromPath(args.path);
 			if (kind === "csv") {
 				renderCsvPreview(host, text);
+				return;
+			}
+			if (kind === "html") {
+				renderHtmlPreview(host, text);
 				return;
 			}
 			if (kind === "svg") {
@@ -340,12 +390,11 @@
 				});
 				return;
 			}
-			// html → text preview for now (replaced in plan 2.4)
 		}
 		renderTextPreview(host, text);
 	}
 
-	window.toolPresent = {
+	var api = {
 		extOf: extOf,
 		languageFromPath: languageFromPath,
 		contentKindFromPath: contentKindFromPath,
@@ -355,6 +404,10 @@
 		renderNumberedCode: renderNumberedCode,
 		renderSvgPreview: renderSvgPreview,
 		renderCsvPreview: renderCsvPreview,
+		renderHtmlPreview: renderHtmlPreview,
+		stripScripts: stripScripts,
 		renderToolOutput: renderToolOutput,
 	};
+	if (typeof module !== "undefined" && module.exports) module.exports = api;
+	if (typeof window !== "undefined") window.toolPresent = api;
 })();
