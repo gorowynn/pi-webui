@@ -65,7 +65,7 @@ independent and can start immediately.
 
 ## Phases
 
-### Phase 0 — Foundation (keystones + hardening) · ~3.5d
+### Phase 0 — Foundation (keystones + hardening) · ~3.5d · **status: ✅ done (0.2 client-side bootstrap adoption → follow-up)**
 Everything downstream depends on this. No visible change except faster bootstrap.
 
 | ID | Item | Ref | Effort | Dep |
@@ -202,11 +202,11 @@ Copy this into your issue tracker. `Phase` · `Ref` (analysis doc) · `Eff` (day
 
 | ID | Item | Phase | Ref | Eff | Dep | Status |
 |----|------|-------|-----|-----|-----|--------|
-| 0.1 | Color-token system | 0 | U§1 | 1.0 | — | ☐ |
-| 0.2 | Awaitable RPC + snapshot | 0 | F§5 | 1.5 | — | ☐ |
-| 0.3 | jsonl codec | 0 | F§4.5 | 0.25 | — | ☐ |
-| 0.4 | Process-tree kill | 0 | F§4.7 | 0.5 | — | ☐ |
-| 0.5 | Path-traversal guard | 0 | F§4.8 | 0.25 | — | ☐ |
+| 0.1 | Color-token system | 0 | U§1 | 1.0 | — | ✅ |
+| 0.2 | Awaitable RPC + snapshot | 0 | F§5 | 1.5 | — | 🟡 srv ✅ |
+| 0.3 | jsonl codec | 0 | F§4.5 | 0.25 | — | ✅ |
+| 0.4 | Process-tree kill | 0 | F§4.7 | 0.5 | — | ✅ |
+| 0.5 | Path-traversal guard | 0 | F§4.8 | 0.25 | — | ✅ |
 | 1.1 | Deferred highlight | 1 | R§1.2 | 0.05 | — | ☐ |
 | 1.2 | Transcript centering | 1 | U§2.8 | 0.03 | — | ☐ |
 | 1.3 | Scroll-to-bottom pill | 1 | U§2.7 | 0.1 | — | ☐ |
