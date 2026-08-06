@@ -9,6 +9,14 @@ description: >-
   tokens below mirror them.
 # ── colors (normative = dark theme) ──────────────────────────────────────
 colors:
+  # Token system: 8 source colors (canvas/surface/ink/primary/done/success/
+  # attention/danger) drive the palette. Neutral constants (surface-inset/user/
+  # think, hairline, fg-muted, primary-soft) are direct; derived accent/status
+  # soft + hover tints use CSS color-mix() (Chrome 111+/Safari 16.2+/FF 113+,
+  # all since May 2023) so they recompute per-theme without hand-mixing. These
+  # frontmatter names are descriptive; style.css :root is the live source of
+  # truth (--canvas/--surface/--ink/--accent/--secondary/…). Where they
+  # disagree, :root wins.
   # Neutral — anthracite surfaces, Ink Black up through inset panels
   canvas: "#000000"            # Ink Black — app canvas
   surface: "#0D1117"           # Anthracite — header / sidebars / footer
