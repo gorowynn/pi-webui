@@ -3536,9 +3536,12 @@ updateIdeBadge(window.piWebuiIdeInfo || null);
 function applyState(data) {
 	if (!data) return;
 	if (data.thinkingLevel != null) setThinkSel(data.thinkingLevel);
-	if (data.isStreaming != null && data.isStreaming) {
-		setStreaming(true);
-		setActivity("working…", true);
+	if (data.isStreaming != null) {
+		// authoritative (plan 5.1): pi's get_state knows whether a turn is live.
+		// Previously only the true branch set the flag, so a reconnect after a
+		// mid-turn crash left a stale "streaming" indicator pinned forever.
+		setStreaming(!!data.isStreaming);
+		if (data.isStreaming) setActivity("working…", true);
 	}
 	if (data.isCompacting) {
 		setCompacting(true);
@@ -3600,15 +3603,53 @@ async function fetchSnapshot() {
 		const r = await fetch("/api/snapshot");
 		const snap = await r.json();
 		if (!snap || !snap.ok) return false;
+		// capture pi's streaming flag BEFORE applyState sets it (plan 5.1): if the
+		// buffer replays a partial turn but pi is idle, that turn died in a crash
+		// and must be finalized so the transcript isn't frozen mid-stream.
+		const piStreaming = snap.state && snap.state.isStreaming;
 		applyState(snap.state);
 		applyMessages(snap.messages);
 		applyCommands(snap.commands);
 		applyModels(snap.models);
 		applyStats(snap.stats);
+		// replay the current-turn buffer on top of the rebuilt committed history so
+		// in-flight tool cards / streaming text survive a reconnect. handle() is
+		// safe to re-run here: applyMessages just cleared toolBlocks + nulled cur,
+		// and agent_start (always first in the buffer) resets per-tool tracking —
+		// nothing duplicates. For a live mid-turn SSE drop (pi still running), the
+		// replayed turn then continues as pi streams more events.
+		const replayed = replayLiveEvents(snap.liveEvents);
+		if (replayed && !piStreaming) {
+			// partial turn (the buffer holds no agent_end — turns clear on agent_end)
+			// + pi idle → the turn is dead (pi crashed/was killed mid-turn). Finalize
+			// the ghost bubble + stop streaming, and neutralize tool cards still
+			// mid-run so their spinner doesn't imply still-active.
+			handle({ type: "agent_end" });
+			for (const b of toolBlocks.values())
+				if (b.el.classList.contains("run")) {
+					b.el.classList.remove("run");
+					b.el.classList.add("done");
+				}
+		}
 		return true;
 	} catch {
 		return false;
 	}
+}
+// replay the current-turn buffer (plan F§5.2): re-apply each buffered event's
+// payload through handle() — the same path live SSE events take — so tool cards
+// + streaming text rebuild identically. Returns true if any event was replayed
+// (fetchSnapshot uses this to decide whether to finalize a dead/partial turn on
+// an idle pi). The sequence each event carries is currently unused (the whole
+// buffer replays after a transcript clear); it's the foundation for future
+// incremental gap-only replay.
+function replayLiveEvents(events) {
+	if (!Array.isArray(events) || !events.length) return false;
+	for (let i = 0; i < events.length; i++) {
+		const ev = events[i];
+		if (ev && ev.payload) handle(ev.payload);
+	}
+	return true;
 }
 // ---- SSE ----
 const es = new EventSource("/api/events");

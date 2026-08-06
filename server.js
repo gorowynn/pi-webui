@@ -9,6 +9,7 @@ const path = require("path");
 const { spawn, execSync } = require("child_process");
 const os = require("os");
 const { JsonLineDecoder, encodeJsonLine } = require("./jsonl.js"); // strict JSONL codec (plan F§4.5)
+const { createLiveBuffer } = require("./livebuf.js"); // current-turn buffer for reconnect replay (plan F§5.2)
 const { discoverWorkspaces, isKnownWorkspacePath } = require("./workspaces.js");
 const { opencodeGoWindows } = require("./public/usage-provider.js"); // dashboard HTML parser (shared with the browser, like md.js)
 
@@ -99,6 +100,10 @@ let restartAttempts = 0;
 let startStamp = 0;
 let deliberateRestart = false; // ponytail: workspace switch — exit handler respawns in the new cwd, skipping crash backoff
 const clients = new Set(); // open SSE responses
+// current-turn event buffer (plan F§5.2): survives a pi CRASH so a reconnecting
+// tab can rebuild in-flight tool cards; cleared on workspace switch (old
+// project's turn must not leak) and on agent_end (turn committed → get_messages).
+const lb = createLiveBuffer();
 
 function broadcast(obj) {
 	const line = "data: " + JSON.stringify(obj) + "\n\n";
@@ -189,7 +194,13 @@ function startPi() {
 	const dec = new JsonLineDecoder();
 	pi.stdout.on("data", (chunk) => {
 		dec.push(chunk, (obj) => {
-			broadcast({ source: "pi", payload: obj });
+			// tag every pi event with a monotonic sequence (plan F§5.2) and buffer
+			// the current turn's events for reconnect replay. push() returns the
+			// sequence; the buffer only keeps turn-content events (agent_start→…,
+			// cleared on agent_end). Sequence rides on the broadcast WRAPPER (not
+			// pi's payload), so the client can ignore it until incremental replay.
+			const sequence = lb.push(obj);
+			broadcast({ source: "pi", payload: obj, sequence });
 			// settle any awaitable RPC waiting on this response (plan F§5.1).
 			if (obj && obj.type === "response" && obj.id) resolveRpc(obj);
 		});
@@ -214,6 +225,7 @@ function startPi() {
 			// pi's stdin is writable at once, so the client's resync get_state /
 			// get_messages buffer in the pipe until pi boots.
 			deliberateRestart = false;
+			lb.clear(); // old project's in-flight turn must not leak into the new one
 			startPi();
 			broadcast({
 				source: "server",
@@ -271,6 +283,7 @@ function switchWorkspace(newCwd) {
 	if (!pi) {
 		// no running pi (only briefly at boot) — respawn + broadcast directly.
 		deliberateRestart = false;
+		lb.clear(); // old project's in-flight turn must not leak into the new one
 		startPi();
 		broadcast({
 			source: "server",
@@ -971,6 +984,12 @@ const server = http.createServer(async (req, res) => {
 					commands: (cmds && cmds.commands) || [],
 					models: (mdls && mdls.models) || [],
 					stats: stats || {},
+					// current-turn buffer (plan F§5.2): lets a reconnecting tab rebuild
+					// in-flight tool cards / streaming text instead of losing them.
+					// Empty unless a turn is mid-flight. Point-in-time copy (see
+					// livebuf.snapshot). Awaitable RPCs fan out FIRST, so this reads
+					// the buffer state after those responses (most recent).
+					liveEvents: lb.snapshot(),
 				}),
 			);
 		} catch (e) {
