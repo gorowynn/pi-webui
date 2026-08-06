@@ -330,7 +330,29 @@ function renderAssistantContent(content) {
 // spaces — the "renders broken until reload" bug). Rendering from
 // payload.message.content makes live read byte-identical input to reload, so
 // the two can't diverge regardless of transport hiccups.
-function finalizeBubble(content) {
+// Per-turn usage strip (plan 4.4): a thin muted-mono line under each
+// assistant turn — cache-miss · cache-read · output · $cost — so cost/cache is
+// visible per-turn without a separate panel. Skipped when there's no token
+// signal (no usage, or all-zero). Uses sessionAnalysis.messageUsage/formatTokens.
+function renderUsageStrip(bubble, message) {
+	if (!bubble || !message) return;
+	const SA = window.sessionAnalysis;
+	if (!SA || !SA.messageUsage) return;
+	const u = SA.messageUsage(message);
+	if (!u) return;
+	if (!u.cacheMiss && !u.cacheRead && !u.output && !u.cost) return;
+	const parts = [
+		"cache-miss " + SA.formatTokens(u.cacheMiss),
+		"cache-read " + SA.formatTokens(u.cacheRead),
+		"output " + SA.formatTokens(u.output),
+	];
+	if (u.cost > 0) parts.push(SA.formatTurnCost(u.cost));
+	const strip = document.createElement("div");
+	strip.className = "turn-usage";
+	strip.textContent = parts.join(" · ");
+	bubble.appendChild(strip);
+}
+function finalizeBubble(content, message) {
 	if (!cur) return;
 	const src = content != null ? content : cur.content;
 	// nothing renderable (tool-only / truly-empty turn) — drop the whole message
@@ -353,6 +375,7 @@ function finalizeBubble(content) {
 	cur.thinkCount = null;
 	cur.thinkBuf = "";
 	renderAssistantContent(src);
+	renderUsageStrip(cur.bubble, message);
 }
 // ponytail: thinking-block lifecycle. The <details> carries its own
 // state: the .thinking class swaps the summary indicator from caret to
@@ -2971,6 +2994,7 @@ function renderMessage(msg) {
 		if (nonEmptyContent(msg.content).length) {
 			newAssistantBubble();
 			renderAssistantContent(msg.content);
+			renderUsageStrip(cur.bubble, msg);
 		}
 		cur = null;
 	} else if (msg.role === "toolResult") {
@@ -3118,6 +3142,7 @@ function handle(payload) {
 					payload.message && Array.isArray(payload.message.content)
 						? payload.message.content
 						: null,
+					payload.message,
 				);
 				// ponytail: count toward the "↓ N new" pill if the user scrolled away.
 				// cur only exists when text/thinking streamed, so tool-only turns whose

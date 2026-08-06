@@ -736,6 +736,30 @@ pre code.hljs {
 .bubble p:last-child {
 	margin-bottom: 0;
 }
+/* Per-turn usage strip (plan 4.4): a muted mono line under an assistant turn —
+   cache-miss · cache-read · output · $cost. Fades in; reduced-motion safe. */
+.bubble .turn-usage {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 11px;
+	color: var(--muted);
+	margin-top: 8px;
+	padding-top: 5px;
+	border-top: 1px solid var(--line);
+	animation: turn-usage-in 0.3s ease;
+}
+@keyframes turn-usage-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.bubble .turn-usage {
+		animation: none;
+	}
+}
 .bubble h1,
 .bubble h2,
 .bubble h3,
