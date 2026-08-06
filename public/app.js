@@ -3408,6 +3408,89 @@ function updateIdeBadge(info) {
 }
 window.piWebuiIdeStatus = updateIdeBadge;
 updateIdeBadge(window.piWebuiIdeInfo || null);
+// ---- snapshot bootstrap (plan 0.2 / F§5.1) ----
+// One GET /api/snapshot replaces the 4 fire-and-forget init RPCs the client used
+// to send (one HTTP round-trip instead of five SSE-matched responses). The
+// apply* helpers are the exact logic the SSE init-* handlers used inline —
+// factored out so both paths share them (the SSE branches stay as back-compat
+// for any future fire-and-forget init id, and sb-stats still serves periodic
+// refreshStats polling).
+function applyState(data) {
+	if (!data) return;
+	if (data.thinkingLevel != null) setThinkSel(data.thinkingLevel);
+	if (data.isStreaming != null && data.isStreaming) {
+		setStreaming(true);
+		setActivity("working…", true);
+	}
+	if (data.isCompacting) {
+		setCompacting(true);
+		setActivity("compacting context…", true);
+	}
+	if (setCurrentModel(data.model)) {
+		applyCurrentModel();
+		refreshUsageBar();
+		refreshStats();
+	}
+	curSessionFile = data.sessionFile || null;
+	refreshPonytailMode(data.sessionFile);
+	refreshSessionsSidebar();
+}
+function applyMessages(messages) {
+	if (!Array.isArray(messages)) return;
+	setSafeHtml(transcript, "");
+	toolBlocks.clear();
+	messages.forEach(renderMessage);
+	scrollDown();
+}
+function applyCommands(cmds) {
+	if (Array.isArray(cmds)) commands = cmds;
+}
+function applyModels(models) {
+	if (Array.isArray(models)) populateModels(models);
+}
+function applyStats(data) {
+	if (!data) return;
+	const t = data.tokens || {};
+	if (usageViewKind(currentProvider) === "session") {
+		sessionUsage = t;
+		refreshUsageBar();
+	}
+	sb.tok.textContent = `${fmt(t.input)}↓ ${fmt(t.output)}↑`;
+	// cache hit rate = cacheRead / total input. pi's `input` is the NON-cached
+	// portion only (Anthropic convention), so total = input + cacheRead —
+	// dividing by `input` alone yielded >100% values (saw 542%). Always ≤100%.
+	const inp = t.input || 0;
+	const total = inp + (t.cacheRead || 0);
+	const hit = total ? Math.round(((t.cacheRead || 0) / total) * 100) : null;
+	sb.cache.textContent = `${fmt(t.cacheRead)}↓ ${fmt(t.cacheWrite)}↑${hit != null ? ` ${hit}%` : ""}`;
+	sb.cache.title =
+		"cache: read↓ (from cache) / write↑ (newly created); % = reads ÷ (reads + fresh input)";
+	sb.cost.textContent = data.cost != null ? data.cost.toFixed(3) : "…";
+	const cu = data.contextUsage;
+	sb.ctx.textContent =
+		cu && cu.percent != null
+			? `${cu.percent.toFixed(0)}% (${fmt(cu.tokens)}/${fmt(cu.contextWindow)})`
+			: "—";
+}
+// fetch the bundled bootstrap object (state+messages+commands+models+stats) in
+// one round-trip and apply it. Fire-and-forget at every call site (like the old
+// api() RPCs were) — resolves false on failure; the pi_ready/workspace_changed
+// re-sync paths re-call it.
+async function fetchSnapshot() {
+	try {
+		const r = await fetch("/api/snapshot");
+		const snap = await r.json();
+		if (!snap || !snap.ok) return false;
+		applyState(snap.state);
+		applyMessages(snap.messages);
+		applyCommands(snap.commands);
+		applyModels(snap.models);
+		applyStats(snap.stats);
+		return true;
+	} catch {
+		return false;
+	}
+}
 // ---- SSE ----
 const es = new EventSource("/api/events");
 es.onopen = () => {
@@ -3426,10 +3509,7 @@ es.onopen = () => {
 	} catch (e) {
 		/* corrupt JSON — ignore, start empty */
 	}
-	api({ type: "get_state", id: "init-state" });
-	api({ type: "get_messages", id: "init-msgs" });
-	api({ type: "get_commands", id: "init-cmds" });
-	api({ type: "get_available_models", id: "init-models" });
+	fetchSnapshot(); // one GET /api/snapshot instead of 4 fire-and-forget RPCs (plan 0.2)
 	refreshWorkspaces(); // populate the left workspace sidebar on (re)connect
 };
 // ponytail: pause stat/health/usage polling while the tab is backgrounded — avoids
@@ -3476,71 +3556,12 @@ es.onmessage = (ev) => {
 		const p = env.payload;
 		// intercept init responses to populate UI
 		if (p.type === "response" && p.success) {
-			if (p.id === "init-state" && p.data) {
-				if (p.data.thinkingLevel != null) setThinkSel(p.data.thinkingLevel);
-				if (p.data.isStreaming != null && p.data.isStreaming) {
-					setStreaming(true);
-					setActivity("working…", true);
-				}
-				if (p.data.isCompacting) {
-					setCompacting(true);
-					setActivity("compacting context…", true);
-				}
-				if (setCurrentModel(p.data.model)) {
-					applyCurrentModel();
-					refreshUsageBar();
-					refreshStats();
-				}
-				curSessionFile = p.data.sessionFile || null;
-				refreshPonytailMode(p.data.sessionFile);
-				refreshSessionsSidebar(); // active-session highlight for the left sidebar
-			} else if (
-				p.id === "init-msgs" &&
-				p.data &&
-				Array.isArray(p.data.messages)
-			) {
-				setSafeHtml(transcript, "");
-				toolBlocks.clear();
-				p.data.messages.forEach(renderMessage);
-				scrollDown();
-			} else if (
-				p.id === "init-cmds" &&
-				p.data &&
-				Array.isArray(p.data.commands)
-			) {
-				commands = p.data.commands;
-			} else if (
-				p.id === "init-models" &&
-				p.data &&
-				Array.isArray(p.data.models)
-			) {
-				populateModels(p.data.models);
-			} else if (p.id === "sb-stats" && p.data) {
-				const t = p.data.tokens || {};
-				if (usageViewKind(currentProvider) === "session") {
-					sessionUsage = t;
-					refreshUsageBar();
-				}
-				sb.tok.textContent = `${fmt(t.input)}↓ ${fmt(t.output)}↑`;
-				// cache hit rate = cacheRead / total input. pi's `input` is the NON-cached
-				// portion only (Anthropic convention), so total = input + cacheRead —
-				// dividing by `input` alone yielded >100% values (saw 542%). Always ≤100%.
-				const inp = t.input || 0;
-				const total = inp + (t.cacheRead || 0);
-				const hit = total
-					? Math.round(((t.cacheRead || 0) / total) * 100)
-					: null;
-				sb.cache.textContent = `${fmt(t.cacheRead)}↓ ${fmt(t.cacheWrite)}↑${hit != null ? ` ${hit}%` : ""}`;
-				sb.cache.title =
-					"cache: read↓ (from cache) / write↑ (newly created); % = reads ÷ (reads + fresh input)";
-				sb.cost.textContent =
-					p.data.cost != null ? p.data.cost.toFixed(3) : "…";
-				const cu = p.data.contextUsage;
-				sb.ctx.textContent =
-					cu && cu.percent != null
-						? `${cu.percent.toFixed(0)}% (${fmt(cu.tokens)}/${fmt(cu.contextWindow)})`
-						: "—";
-			} else if (p.command === "set_model" && p.data) {
+			if (p.id === "init-state" && p.data) applyState(p.data);
+			else if (p.id === "init-msgs" && p.data) applyMessages(p.data.messages);
+			else if (p.id === "init-cmds" && p.data) applyCommands(p.data.commands);
+			else if (p.id === "init-models" && p.data) applyModels(p.data.models);
+			else if (p.id === "sb-stats" && p.data) applyStats(p.data);
+			else if (p.command === "set_model" && p.data) {
 				if (setCurrentModel(p.data)) {
 					localStorage.setItem("pi:model", currentModelId);
 					refreshUsageBar();
@@ -3551,9 +3572,7 @@ es.onmessage = (ev) => {
 				(!p.data || !p.data.cancelled)
 			) {
 				// session replaced (resume / new) — re-render history + state for the now-active session
-				api({ type: "get_state", id: "init-state" });
-				api({ type: "get_messages", id: "init-msgs" });
-				api({ type: "get_commands", id: "init-cmds" });
+				fetchSnapshot();
 			}
 		} else if (p.type === "extension_ui_request") {
 			uiRequest(p);
@@ -3580,9 +3599,7 @@ es.onmessage = (ev) => {
 		setConnState("ready");
 		statusText.textContent = "ready";
 		setActivity("ready", false);
-		api({ type: "get_state", id: "init-state" });
-		api({ type: "get_messages", id: "init-msgs" });
-		api({ type: "get_commands", id: "init-cmds" });
+		fetchSnapshot();
 		if (wasDown) toast("pi reconnected", "ok");
 	} else if (env.source === "server" && env.type === "workspace_changed") {
 		// another tab (or this one) switched project: pi already respawned in the
@@ -3598,9 +3615,7 @@ es.onmessage = (ev) => {
 			`switched to ${env.workspace ? env.workspace.split(/[\\/]/).pop() : "workspace"}`,
 			"ok",
 		);
-		api({ type: "get_state", id: "init-state" });
-		api({ type: "get_messages", id: "init-msgs" });
-		api({ type: "get_commands", id: "init-cmds" });
+		fetchSnapshot();
 		refreshWorkspaces();
 		refreshSessionsSidebar();
 		refreshPlanState();
