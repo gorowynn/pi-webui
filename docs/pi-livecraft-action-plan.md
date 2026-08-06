@@ -141,28 +141,38 @@ errors stay until dismissed; `Alt+K` opens a real palette; right rail hosts widg
 
 ---
 
-### Phase 4 — Capabilities · ~11d
+### Phase 4 — Capabilities · ~11d · **status: ✅ done**
 The meaty features. Each is independently shippable; order by appetite.
 
-| ID | Item | Ref | Effort | Dep |
-|----|------|-----|--------|-----|
-| 4.1 | Recent-sessions head/tail reader (`GET /api/sessions/recent?cwd=`) | F§4.1 | 1.0d | — |
-| 4.2 | Session-analysis math port (`analyzeSession`, per-turn/per-tool attribution) | F§4.2 | 2.0d | 0.2 |
-| 4.3 | Session-analysis widget (HTML/CSS cost-per-turn bars + ranked lists + click→scroll) in the right rail | U§4 | 1.5d | 3.5, 4.2 |
-| 4.4 | Per-turn usage strip under each assistant message | U§2.2 | 0.5d | 4.2 |
-| 4.5 | Git sidebar — **read-only** (snapshot, per-file/per-commit diffs, ahead count) | F§4.3 | 2.0d | — |
-| 4.6 | Git sidebar — mutations (commit/push/reset/revert/discard) behind confirm modal | F§4.3 | 1.0d | 4.5 |
-| 4.7 | Run-isolated-prompt (disposable `--no-tools` profile dir + cheapest-model sort) | F§4.6 | 1.5d | 0.2, 0.4 |
-| 4.8 | Improve-prompt dropdown (Clarify/Ideate/Precise) via isolated prompt | U§5.5, F§4.6 | 0.5d | 4.7 |
-| 4.9 | Session rename (`set_session_name`) + directory picker UI | F§5.8 | 0.5d | 0.2 |
-| 4.10 | Image input (canvas downscale + JPEG quality loop, max 4, raw base64, model-cap gated) | R§3.1 | 1.0d | 1.5 |
+| ID | Item | Ref | Effort | Dep | ✅ |
+|----|------|-----|--------|-----|----|
+| 4.1 | Recent-sessions head/tail reader (`GET /api/sessions/recent?cwd=`) | F§4.1 | 1.0d | — | ✅ |
+| 4.2 | Session-analysis math port (`analyzeSession`, per-turn/per-tool attribution) | F§4.2 | 2.0d | 0.2 | ✅ |
+| 4.3 | Session-analysis widget (HTML/CSS cost-per-turn bars + ranked lists + click→scroll) in the right rail | U§4 | 1.5d | 3.5, 4.2 | ✅ |
+| 4.4 | Per-turn usage strip under each assistant message | U§2.2 | 0.5d | 4.2 | ✅ |
+| 4.5 | Git sidebar — **read-only** (snapshot, per-file/per-commit diffs, ahead count) | F§4.3 | 2.0d | — | ✅ |
+| 4.6 | Git sidebar — mutations (commit/push/reset/revert/discard) behind confirm modal | F§4.3 | 1.0d | 4.5 | ✅ |
+| 4.7 | Run-isolated-prompt (disposable `--no-tools` profile dir + cheapest-model sort) | F§4.6 | 1.5d | 0.2, 0.4 | ✅ |
+| 4.8 | Improve-prompt dropdown (Clarify/Ideate/Precise) via isolated prompt | U§5.5, F§4.6 | 0.5d | 4.7 | ✅ |
+| 4.9 | Session rename (`set_session_name`) + directory picker UI | F§5.8 | 0.5d | 0.2 | ✅† |
+| 4.10 | Image input (canvas downscale + JPEG quality loop, max 4, raw base64, model-cap gated) | R§3.1 | 1.0d | 1.5 | ✅ |
 
 **Exit criteria:** usage panel with clickable turns; git review without leaving UI; "Improve"
 rewrites a draft via a cheap disposable model; images can be pasted and sent.
 
-**Risk:** 4.6 (git mutations) + 4.7 (new process type) are the riskiest. Ship 4.5 read-only
-first; gate 4.6 behind the existing confirm modal. For 4.7, verify reliable termination on all
-paths (reuse 0.4).
+**Risk:** 4.6 (git mutations) + 4.7 (new process type) are the riskiest — both done and
+live-validated. 4.6 ships working-tree mutations (commit/push/discard-all) behind confirm
+gates; per-commit reset/revert deferred (clean-tree invariant, rare). 4.7 reuses
+killPidTree for reliable termination on all paths.
+
+†4.9 = rename only; the directory-picker half is deferred (overlaps with existing workspace
+switching + carries a path-traversal surface worth its own focused task).
+
+**Shipped:** 4 new server modules (`recent-sessions.js`, `session-analysis.js` [client],
+`git.js`, `isolated-prompt.js`) + 4 new client modules, ~115 new unit tests
+(recent-sessions 35, session-analysis 52, git 32, isolated-prompt 17). All features validated
+against real data/live pi: 921-message compaction walk, 540-turn cost/cache analysis, real
+git commit/discard, and a live disposable improve-prompt rewrite.
 
 ---
 
@@ -233,16 +243,16 @@ Copy this into your issue tracker. `Phase` · `Ref` (analysis doc) · `Eff` (day
 | 3.3 | Sticky-error toasts | 3 | U§2.5 | 0.5 | — | ✅ |
 | 3.4 | Command palette | 3 | U§2.4 | 1.0 | — | ✅ |
 | 3.5 | Right-rail widget shell | 3 | U§2.6 | 1.5 | 0.1 | ✅ |
-| 4.1 | Recent-sessions reader | 4 | F§4.1 | 1.0 | — | ☐ |
-| 4.2 | Session-analysis math | 4 | F§4.2 | 2.0 | 0.2 | ☐ |
-| 4.3 | Session-analysis widget | 4 | U§4 | 1.5 | 3.5, 4.2 | ☐ |
-| 4.4 | Per-turn usage strip | 4 | U§2.2 | 0.5 | 4.2 | ☐ |
-| 4.5 | Git sidebar (read-only) | 4 | F§4.3 | 2.0 | — | ☐ |
-| 4.6 | Git mutations | 4 | F§4.3 | 1.0 | 4.5 | ☐ |
-| 4.7 | Run-isolated-prompt | 4 | F§4.6 | 1.5 | 0.2, 0.4 | ☐ |
-| 4.8 | Improve-prompt dropdown | 4 | U§5.5 | 0.5 | 4.7 | ☐ |
-| 4.9 | Session rename + dir picker | 4 | F§5.8 | 0.5 | 0.2 | ☐ |
-| 4.10 | Image input | 4 | R§3.1 | 1.0 | 1.5 | ☐ |
+| 4.1 | Recent-sessions reader | 4 | F§4.1 | 1.0 | — | ✅ |
+| 4.2 | Session-analysis math | 4 | F§4.2 | 2.0 | 0.2 | ✅ |
+| 4.3 | Session-analysis widget | 4 | U§4 | 1.5 | 3.5, 4.2 | ✅ |
+| 4.4 | Per-turn usage strip | 4 | U§2.2 | 0.5 | 4.2 | ✅ |
+| 4.5 | Git sidebar (read-only) | 4 | F§4.3 | 2.0 | — | ✅ |
+| 4.6 | Git mutations | 4 | F§4.3 | 1.0 | 4.5 | ✅ |
+| 4.7 | Run-isolated-prompt | 4 | F§4.6 | 1.5 | 0.2, 0.4 | ✅ |
+| 4.8 | Improve-prompt dropdown | 4 | U§5.5 | 0.5 | 4.7 | ✅ |
+| 4.9 | Session rename + dir picker | 4 | F§5.8 | 0.5 | 0.2 | ✅† |
+| 4.10 | Image input | 4 | R§3.1 | 1.0 | 1.5 | ✅ |
 | 5.1 | Live-event buffer + replay | 5 | F§5.2 | 1.5 | 0.2 | ✅ |
 | 5.2 | Compaction-aware messages | 5 | F§5.3 | 1.0 | 5.1 | ✅ |
 | 6.1 | Accent user bubble 🟠 | 6 | U§3.1 | 0.1 | — | ☐ |
