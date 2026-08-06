@@ -1058,12 +1058,51 @@ function note(text, cls) {
 	scrollDown();
 }
 
+// ponytail: two-tier toasts (plan 3.3 / U§2.5). Errors are sticky — they stay
+// until dismissed (a failed send no longer vanishes); info/ok auto-dismiss and
+// warn lingers longer. Stacked bottom-right in a #toast-stack container; click
+// anywhere or the × to dismiss. CSS slide respects prefers-reduced-motion.
+let toastStack = null;
 function toast(msg, kind) {
+	if (!toastStack) {
+		toastStack = document.createElement("div");
+		toastStack.id = "toast-stack";
+		toastStack.setAttribute("aria-live", "polite");
+		document.body.appendChild(toastStack);
+	}
+	const sticky = kind === "err" || kind === "error";
 	const t = document.createElement("div");
-	t.className = "toast" + (kind ? " " + kind : "");
-	t.textContent = msg;
-	document.body.appendChild(t);
-	setTimeout(() => t.remove(), 4000);
+	t.className = "toast" + (kind ? " " + kind : "") + (sticky ? " sticky" : "");
+	t.setAttribute("role", sticky ? "alert" : "status");
+	const span = document.createElement("span");
+	span.className = "toast-msg";
+	span.textContent = msg;
+	t.appendChild(span);
+	if (sticky) {
+		const x = document.createElement("button");
+		x.type = "button";
+		x.className = "toast-x";
+		x.setAttribute("aria-label", "dismiss");
+		x.textContent = "×";
+		x.onclick = (e) => {
+			e.stopPropagation();
+			dismissToast(t);
+		};
+		t.appendChild(x);
+	}
+	t.onclick = () => dismissToast(t);
+	toastStack.appendChild(t);
+	requestAnimationFrame(() => t.classList.add("in"));
+	if (!sticky) {
+		const ms = kind === "warn" ? 6000 : kind === "ok" ? 3000 : 4000;
+		setTimeout(() => dismissToast(t), ms);
+	}
+}
+function dismissToast(t) {
+	if (!t || !t.parentNode) return;
+	t.classList.remove("in");
+	t.classList.add("out");
+	setTimeout(() => t.remove(), 200);
 }
 
 // ---- extension UI modal ----
