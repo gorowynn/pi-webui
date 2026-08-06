@@ -4123,6 +4123,27 @@ function fmtSessionDate(iso) {
 		d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + hm
 	);
 }
+// Humanize a byte count for the session-list size indicator.
+function fmtBytes(n) {
+	if (typeof n !== "number" || !isFinite(n) || n < 0) return "—";
+	if (n < 1024) return n + " B";
+	const u = ["KB", "MB", "GB"];
+	let v = n / 1024,
+		i = 0;
+	while (v >= 1024 && i < u.length - 1) {
+		v /= 1024;
+		i++;
+	}
+	return (v < 10 ? v.toFixed(1) : Math.round(v)) + " " + u[i];
+}
+// A session's size indicator: exact message count when the whole file was read,
+// otherwise a humanized byte size (the head/tail reader hides the count for large
+// files to avoid a misleading undercount — plan 4.1).
+function sessionSizeLabel(s) {
+	if (s && s.messages != null) return s.messages + " msg";
+	if (s && typeof s.size === "number") return fmtBytes(s.size);
+	return "—";
+}
 async function showSessions() {
 	showModal(`<h3>Sessions</h3><p class="um-hint">loading…</p>`, true);
 	let data;
@@ -4160,8 +4181,8 @@ async function showSessions() {
 			row,
 			`<span class="smeta"><span class="sdate">${esc(
 				fmtSessionDate(s.when),
-			)}</span><span class="scount">${s.messages || 0} msg</span></span>` +
-				`<span class="sprev">${esc(s.preview)}</span>`,
+			)}</span><span class="scount">${esc(sessionSizeLabel(s))}</span></span>` +
+				`<span class="sprev">${esc(s.name || s.preview)}</span>`,
 		);
 		if (current)
 			row.disabled = true; // already active
@@ -4288,10 +4309,10 @@ async function refreshSessionsSidebar() {
 		if (current) row.setAttribute("aria-current", "true");
 		setSafeHtml(
 			row,
-			`<span class="ws-name">${esc(s.preview)}</span>` +
-				`<span class="ws-meta">${esc(fmtSessionDate(s.when))} · ${
-					s.messages || 0
-				} msg</span>`,
+			`<span class="ws-name">${esc(s.name || s.preview)}</span>` +
+				`<span class="ws-meta">${esc(fmtSessionDate(s.when))} · ${esc(
+					sessionSizeLabel(s),
+				)}</span>`,
 		);
 		if (current)
 			row.disabled = true; // already active

@@ -11,6 +11,7 @@ const os = require("os");
 const { JsonLineDecoder, encodeJsonLine } = require("./jsonl.js"); // strict JSONL codec (plan F§4.5)
 const { createLiveBuffer } = require("./livebuf.js"); // current-turn buffer for reconnect replay (plan F§5.2)
 const { activeSessionMessages } = require("./session-entries.js"); // compaction-aware history (plan F§5.3)
+const { listRecentSessions } = require("./recent-sessions.js"); // head/tail session reader (plan F§4.1)
 const { discoverWorkspaces, isKnownWorkspacePath } = require("./workspaces.js");
 const { opencodeGoWindows } = require("./public/usage-provider.js"); // dashboard HTML parser (shared with the browser, like md.js)
 
@@ -609,10 +610,12 @@ function gitInfo() {
 // JSONL under ~/.pi/agent/sessions/<encoded-cwd>/. The dir-name encoding mirrors
 // pi's session-manager.getSessionDir() verbatim (realpath, strip one leading sep,
 // replace / \ : with '-', wrap in '--'), so the lookup can't drift from pi.
-// One pass per file: line 1 {type:"session"} -> id/timestamp/cwd; first
-// {type:"message",role:"user"} -> preview; count message lines for a rough size.
-// Files are KB–low MB, so a full read is fine; cap scanned lines at 60k to bound
-// a pathological file. No path param is taken -> no traversal surface.
+// One pass per file via recent-sessions.js (plan 4.1): a head/tail reader that
+// recovers {id,cwd,name,updatedAt} from only the first 64 KB + a backward-
+// scanned tail — never parsing multi-MB middles. Exact message count only when
+// the whole file fits the window; otherwise messages:null + size (bytes). name
+// falls back to the first user prompt; updatedAt is the latest message time.
+// No path param is taken -> no traversal surface.
 function sessionDirFor(cwd) {
 	let resolved;
 	try {
@@ -624,77 +627,23 @@ function sessionDirFor(cwd) {
 		"--" + resolved.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-") + "--";
 	return path.join(AGENT_DIR, "sessions", safe);
 }
-function firstUserText(content) {
-	let t = "";
-	if (typeof content === "string") t = content;
-	else if (Array.isArray(content))
-		t = content
-			.filter((b) => b && b.type === "text")
-			.map((b) => b.text || "")
-			.join(" ");
-	return t.replace(/\s+/g, " ").trim();
-}
 function listSessions() {
-	const dir = sessionDirFor(PI_CWD);
-	let files = [];
-	try {
-		files = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
-	} catch {
-		return []; // no sessions dir yet (fresh project)
-	}
-	const out = [];
-	for (const f of files) {
-		const full = path.join(dir, f);
-		let txt;
-		try {
-			txt = fs.readFileSync(full, "utf8");
-		} catch {
-			continue;
-		}
-		const lines = txt.split("\n");
-		let id = null,
-			when = null,
-			cwd = null,
-			preview = "",
-			messages = 0,
-			sawSession = false;
-		for (let i = 0; i < lines.length && i < 60000; i++) {
-			const l = lines[i];
-			if (!l || l[0] !== "{") continue;
-			let e;
-			try {
-				e = JSON.parse(l);
-			} catch {
-				continue;
-			}
-			if (!e) continue;
-			if (e.type === "session" && !sawSession) {
-				sawSession = true;
-				id = e.id || null;
-				when = e.timestamp || null;
-				cwd = e.cwd || null;
-			} else if (e.type === "message" && e.message) {
-				messages++;
-				if (!preview && e.message.role === "user")
-					preview = firstUserText(e.message.content).slice(0, 160);
-			}
-		}
-		let mtime = 0;
-		try {
-			mtime = fs.statSync(full).mtimeMs;
-		} catch {}
-		out.push({
-			path: full,
-			id,
-			when,
-			cwd,
-			preview: preview || "(no messages)",
-			messages,
-			mtime,
-		});
-	}
-	out.sort((a, b) => b.mtime - a.mtime);
-	return out;
+	const raw = listRecentSessions(sessionDirFor(PI_CWD));
+	// Map to the client's long-standing shape, adding the new fields. `when` stays
+	// the creation timestamp (ms) for fmtSessionDate; updatedAt/size are additive.
+	return raw.map((s) => ({
+		path: s.sessionPath,
+		id: s.id,
+		cwd: s.cwd,
+		when: s.createdAt,
+		updatedAt: s.updatedAt,
+		name: s.name,
+		preview: s.firstPrompt || "(no messages)",
+		messages: s.messages, // null when the file was too large to read whole
+		size: s.size,
+		truncated: s.truncated,
+		mtime: s.mtime,
+	}));
 }
 
 function sendToPi(obj) {
