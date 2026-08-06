@@ -473,23 +473,17 @@ pre code.hljs {
 	content: "✗ ";
 	color: var(--danger);
 }
-/* grid-rows expand animation (plan 3.1 / U§2.3): .out-wrap is 0fr when closed,
-   1fr when .open — a smooth height transition with no JS. The grid ITEM
-   (.out-clip) MUST have overflow:hidden so its automatic minimum clamps to 0
-   (otherwise 0fr resolves to the content's min-content and the output leaks
-   when collapsed). .out inside keeps its own max-height+overflow for scroll. */
+/* tool-output area: hidden when collapsed, shown when .open. An instant
+   display toggle — NOT a height animation. The grid 0fr→1fr transition fought
+   scroll-anchoring (the viewport jumped when a card above closed) and tripped
+   the offscreen virtualizer mid-collapse (flicker). overflow-anchor (default
+   auto) keeps the viewport pinned to visible content on the instant change. */
 .tool .out-wrap {
-	display: grid;
-	grid-template-rows: 0fr;
-	transition: grid-template-rows 0.18s ease;
+	display: none;
 }
 .tool.open .out-wrap {
-	grid-template-rows: 1fr;
+	display: block;
 	border-top: 1px solid var(--line);
-}
-.tool .out-clip {
-	overflow: hidden;
-	min-height: 0;
 }
 .tool .out {
 	color: var(--muted);

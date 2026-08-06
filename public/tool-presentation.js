@@ -472,6 +472,10 @@
 						previewState.delete(m);
 						continue;
 					}
+					// skip collapsed cards: their .out-wrap is display:none (content already
+					// hidden), and collapsing here would force a wasteful re-render on reopen
+					// (and re-triggered mid-close during the old grid animation = flicker).
+					if (!m.closest(".tool.open")) continue;
 					if (entries[i].isIntersecting) {
 						if (!s.rendered) {
 							renderIntoManaged(m, s.ctx);
