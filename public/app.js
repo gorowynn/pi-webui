@@ -157,18 +157,31 @@ if (jumpBottom)
 		});
 	});
 
-function addUser(text) {
+function addUser(text, images) {
 	const m = document.createElement("div");
 	m.className = "msg";
 	setSafeHtml(
 		m,
 		`<div class="bubble user"><div class="role you">you</div></div>`,
-	);
+);
 	const b = m.querySelector(".user");
 	const span = document.createElement("div");
 	setSafeHtml(span, md(text));
 	b.appendChild(span);
-	transcript.appendChild(m);
+	if (Array.isArray(images) && images.length) {
+		const grid = document.createElement("div");
+		grid.className = "msg-imgs";
+		for (const img of images) {
+			const im = document.createElement("img");
+			im.className = "msg-img";
+			im.src = "data:" + (img.mimeType || "image/jpeg") + ";base64," + img.data;
+			im.alt = "attached image";
+			im.loading = "lazy";
+			grid.appendChild(im);
+		}
+		b.appendChild(grid);
+	}
+transcript.appendChild(m);
 	pinned = true;
 	unread = 0;
 	scrollDown();
@@ -2991,14 +3004,19 @@ function uiRequest(req) {
 function renderMessage(msg) {
 	if (msg.role === "user") {
 		let txt = "";
+		let imgs = null;
 		const c = msg.content;
 		if (typeof c === "string") txt = c;
-		else if (Array.isArray(c))
+		else if (Array.isArray(c)) {
 			txt = c
 				.filter((b) => b.type === "text")
 				.map((b) => b.text)
 				.join("\n");
-		addUser(txt);
+			// image parts (plan 4.10): render alongside the text in the user bubble
+			imgs = c.filter((b) => b.type === "image" && b.data);
+			if (!imgs.length) imgs = null;
+		}
+		addUser(txt, imgs);
 	} else if (msg.role === "assistant") {
 		// stash tool-call args so the matching toolResult below can do typed
 		// rendering (read → code/csv/…) on replay too (plan 2.1 / R§2.1).
@@ -4114,13 +4132,109 @@ inputEl.oninput = () => {
 	updatePalette();
 };
 
+// ---- image input (plan 4.10) ----
+// pendingImages: prepared {type:"image",data,mimeType} awaiting send (max 4).
+// imgStripEl shows them as thumbnails with remove buttons. Images are prepped
+// client-side by composer-images.js (canvas downscale + JPEG quality loop), so
+// they bound both the HTTP body and model context before they ever leave the tab.
+let pendingImages = [];
+const imgStripEl = $("imgstrip");
+function currentModelAcceptsImages() {
+	if (!currentModelId || !availableModels) return false;
+	const m = availableModels.find(
+		(x) => x.provider + "/" + x.id === currentModelId,
+	);
+	return !!(m && Array.isArray(m.input) && m.input.indexOf("image") >= 0);
+}
+function renderImgStrip() {
+	if (!imgStripEl) return;
+	setSafeHtml(imgStripEl, "");
+	pendingImages.forEach((img, idx) => {
+		const wrap = document.createElement("div");
+		wrap.className = "imgthumb";
+		const im = document.createElement("img");
+		im.src = "data:" + (img.mimeType || "image/jpeg") + ";base64," + img.data;
+		im.alt = "attached image " + (idx + 1);
+		wrap.appendChild(im);
+		const rm = document.createElement("button");
+		rm.type = "button";
+		rm.className = "imgthumb-x";
+		rm.setAttribute("aria-label", "remove image " + (idx + 1));
+		rm.textContent = "×";
+		rm.onclick = () => {
+			pendingImages.splice(idx, 1);
+			renderImgStrip();
+		};
+		wrap.appendChild(rm);
+		imgStripEl.appendChild(wrap);
+	});
+	imgStripEl.style.display = pendingImages.length ? "flex" : "none";
+}
+// Prepare + queue image files (paste / drop / picker). Skips non-images, caps at
+// 4, toasts on failure (decode error, over-limit, model doesn't accept images).
+async function attachImages(files) {
+	if (!files || !files.length) return;
+	const CI = window.composerImages;
+	if (!CI || !CI.prepareImage) return;
+	if (!currentModelAcceptsImages()) {
+		toast("the selected model does not accept images", "warn");
+		return;
+	}
+	const room = CI.MAX_IMAGES - pendingImages.length;
+	if (room <= 0) {
+		toast("max " + CI.MAX_IMAGES + " images per message", "warn");
+		return;
+	}
+	const list = Array.from(files).filter((f) => f.type && f.type.indexOf("image/") === 0);
+	let added = 0;
+	for (let i = 0; i < list.length && pendingImages.length < CI.MAX_IMAGES; i++) {
+		const prepared = await CI.prepareImage(list[i]);
+		if (prepared) {
+			pendingImages.push(prepared);
+			added++;
+		} else {
+			toast("could not prepare an image (too large?)", "warn");
+		}
+	}
+	if (added) renderImgStrip();
+}
+// paste: grab image files from the clipboard
+inputEl.addEventListener("paste", (e) => {
+	const items = e.clipboardData && e.clipboardData.items;
+	if (!items) return;
+	const files = [];
+	for (let i = 0; i < items.length; i++) {
+		const f = items[i].getAsFile && items[i].getAsFile();
+		if (f) files.push(f);
+	}
+	if (files.length) {
+		e.preventDefault(); // don't paste the image as text/filename
+		attachImages(files);
+	}
+});
+// drag-drop onto the composer
+const composerEl = document.querySelector(".composer");
+if (composerEl) {
+	composerEl.addEventListener("dragover", (e) => {
+		e.preventDefault();
+	});
+	composerEl.addEventListener("drop", (e) => {
+		const dt = e.dataTransfer;
+		if (dt && dt.files && dt.files.length) {
+			e.preventDefault();
+			attachImages(dt.files);
+		}
+	});
+}
+
 async function send() {
 	const text = inputEl.value.trim();
-	if (!text) return;
+	if (!text && !pendingImages.length) return; // allow image-only sends
 	inputEl.value = "";
 	autosize();
 	hidePalette();
-	addUser(text);
+	const sendImages = pendingImages.length ? pendingImages.slice() : null;
+	addUser(text, sendImages);
 	let cmd;
 	if (text.startsWith("/")) {
 		// extension command / skill / template: send as prompt (rpc expands it)
@@ -4138,6 +4252,9 @@ async function send() {
 	} else {
 		cmd = { type: "prompt", message: text };
 	}
+	if (sendImages && !text.startsWith("/")) cmd.images = sendImages;
+	pendingImages = [];
+	renderImgStrip();
 	try {
 		await api(cmd);
 	} catch (e) {

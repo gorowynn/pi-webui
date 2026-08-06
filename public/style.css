@@ -3144,3 +3144,60 @@ body.sdd-on.sdd-open #sddbar {
 		transition: none;
 	}
 }
+
+/* ===== image input (plan 4.10) ===== */
+/* composer thumbnail strip: pending images with remove buttons */
+#imgstrip {
+	display: none;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding: 4px 0 2px;
+}
+.imgthumb {
+	position: relative;
+	width: 56px;
+	height: 56px;
+	border: 1px solid var(--line);
+	border-radius: calc(var(--r) - 2px);
+	overflow: hidden;
+}
+.imgthumb img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	display: block;
+}
+.imgthumb-x {
+	position: absolute;
+	top: 1px;
+	right: 1px;
+	width: 16px;
+	height: 16px;
+	border: none;
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--surface) 85%, transparent);
+	color: var(--fg);
+	font-size: 12px;
+	line-height: 14px;
+	padding: 0;
+	cursor: pointer;
+}
+.imgthumb-x:hover {
+	background: var(--danger, #f85149);
+	color: #fff;
+}
+/* images rendered inside a user message bubble */
+.msg-imgs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 8px;
+}
+.msg-img {
+	max-width: 240px;
+	max-height: 240px;
+	border-radius: calc(var(--r) - 2px);
+	border: 1px solid var(--line);
+	object-fit: contain;
+	display: block;
+}

@@ -67,6 +67,10 @@ const STATIC = {
 		file: "session-analysis.js",
 		type: "text/javascript; charset=utf-8",
 	},
+	"/composer-images.js": {
+		file: "composer-images.js",
+		type: "text/javascript; charset=utf-8",
+	},
 	"/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
 	// ponytail: PWA install surface — manifest, service worker, icons. Served
 	// like any static asset (no-cache so sw.js edits propagate on reload).
@@ -774,7 +778,7 @@ function readWorkspaceFile(rel) {
 
 // ponytail: cap POST bodies (~1MB) so a runaway client can't OOM the bridge.
 // Enforces both Content-Length up front and accumulated bytes on the wire.
-const MAX_BODY = 1_000_000;
+const MAX_BODY = 6_000_000; // raised for image input (plan 4.10): 4×~350 KB JPEG ≈ 1.9 MB base64 + text
 function readBody(req) {
 	const clen = parseInt(req.headers["content-length"] || "0", 10);
 	if (clen > MAX_BODY) throw new Error("body too large");
