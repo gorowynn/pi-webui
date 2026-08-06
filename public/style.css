@@ -1535,6 +1535,73 @@ textarea:focus {
 	}
 }
 
+/* command palette (Alt+K / Ctrl+K) (plan 3.4 / U§2.4) — palette-agnostic:
+   --surface / --line / --accent-soft, no gradient. */
+#cmdk {
+	position: fixed;
+	inset: 0;
+	z-index: 70;
+	display: none;
+	align-items: flex-start;
+	justify-content: center;
+	padding-top: 12vh;
+	background: rgba(0, 0, 0, 0.5);
+}
+.cmdk-card {
+	width: min(560px, 92vw);
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	box-shadow: var(--shadow);
+	overflow: hidden;
+}
+.cmdk-input {
+	width: 100%;
+	background: transparent;
+	border: none;
+	border-bottom: 1px solid var(--line);
+	color: var(--ink);
+	padding: 12px 14px;
+	font: inherit;
+	font-size: 14px;
+	outline: none;
+}
+.cmdk-list {
+	max-height: 50vh;
+	overflow-y: auto;
+	padding: 4px;
+}
+.cmdk-item {
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 7px 10px;
+	border-radius: var(--r);
+	cursor: pointer;
+	font-size: 13px;
+	align-items: baseline;
+}
+.cmdk-item.sel {
+	background: var(--accent-soft);
+}
+.cmdk-item .cmdk-label {
+	color: var(--ink);
+	white-space: nowrap;
+}
+.cmdk-item .cmdk-hint {
+	color: var(--muted);
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.cmdk-empty {
+	padding: 14px;
+	color: var(--muted);
+	font-size: 13px;
+	text-align: center;
+}
+
 #todopanel {
 	flex: 0 0 auto;
 	width: 100%;

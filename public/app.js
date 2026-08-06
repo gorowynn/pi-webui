@@ -4283,4 +4283,183 @@ document.addEventListener("click", (e) => {
 	if (!e.target.closest(".composer")) hidePalette();
 });
 
+// ---- command palette (Alt+K / Ctrl+K) (plan 3.4 / U§2.4) ----
+// A centered modal launcher over a UNIFIED registry: UI actions (registered
+// below) + pi's slash commands (the `commands` array from get_commands). The
+// inline "/" palette above is unchanged; this is the global keyboard launcher.
+// One registry; future sidebar widgets register their commands via
+// registerCommand() so they show up here automatically.
+const uiCommands = []; // {id, label, hint, run}
+function registerCommand(id, label, hint, run) {
+	uiCommands.push({ id, label, hint, run });
+}
+let cmdkEl = null,
+	cmdkInput = null,
+	cmdkList = null,
+	cmdkSel = 0,
+	cmdkItems = [];
+function buildCmdK() {
+	cmdkEl = document.createElement("div");
+	cmdkEl.id = "cmdk";
+	cmdkEl.setAttribute("role", "dialog");
+	cmdkEl.setAttribute("aria-modal", "true");
+	cmdkEl.setAttribute("aria-label", "command palette");
+	setSafeHtml(
+		cmdkEl,
+		'<div class="cmdk-card">' +
+			'<input class="cmdk-input" placeholder="type a command or /slash…" autocomplete="off" spellcheck="false">' +
+			'<div class="cmdk-list" role="listbox"></div>' +
+			"</div>",
+	);
+	document.body.appendChild(cmdkEl);
+	cmdkInput = cmdkEl.querySelector(".cmdk-input");
+	cmdkList = cmdkEl.querySelector(".cmdk-list");
+	cmdkInput.addEventListener("input", () => {
+		cmdkSel = 0;
+		refreshCmdK();
+	});
+	cmdkInput.addEventListener("keydown", onCmdKKey);
+	cmdkEl.addEventListener("mousedown", (e) => {
+		if (e.target === cmdkEl) closeCmdK();
+	});
+}
+function openCmdK() {
+	if (!cmdkEl) buildCmdK();
+	cmdkInput.value = "";
+	cmdkSel = 0;
+	refreshCmdK();
+	cmdkEl.style.display = "flex";
+	cmdkInput.focus();
+}
+function closeCmdK() {
+	if (cmdkEl) cmdkEl.style.display = "none";
+}
+function refreshCmdK() {
+	const q = cmdkInput.value.trim().toLowerCase();
+	const slash = commands.map((c) => ({
+		kind: "slash",
+		id: c.name,
+		label: "/" + c.name,
+		hint: c.description || c.source || "",
+	}));
+	const ui = uiCommands.map((c) => ({
+		kind: "ui",
+		id: c.id,
+		label: c.label,
+		hint: c.hint,
+		run: c.run,
+	}));
+	let all = ui.concat(slash);
+	if (q)
+		all = all.filter(
+			(c) =>
+				c.label.toLowerCase().includes(q) ||
+				(c.hint || "").toLowerCase().includes(q),
+		);
+	cmdkItems = all.slice(0, 12);
+	renderCmdK();
+}
+function renderCmdK() {
+	setSafeHtml(cmdkList, "");
+	if (!cmdkItems.length) {
+		const e = document.createElement("div");
+		e.className = "cmdk-empty";
+		e.textContent = "no matches";
+		cmdkList.appendChild(e);
+		return;
+	}
+	cmdkItems.forEach((c, i) => {
+		const d = document.createElement("div");
+		d.className = "cmdk-item" + (i === cmdkSel ? " sel" : "");
+		d.id = "cmdk-opt-" + i;
+		d.setAttribute("role", "option");
+		d.setAttribute("aria-selected", i === cmdkSel ? "true" : "false");
+		setSafeHtml(
+			d,
+			'<span class="cmdk-label">' +
+				esc(c.label) +
+				'</span><span class="cmdk-hint">' +
+				esc(c.hint || "") +
+				"</span>",
+		);
+		d.onclick = () => runCmdK(c);
+		d.onmouseenter = () => {
+			cmdkSel = i;
+			renderCmdK();
+		};
+		cmdkList.appendChild(d);
+	});
+	cmdkInput.setAttribute("aria-activedescendant", "cmdk-opt-" + cmdkSel);
+}
+function runCmdK(c) {
+	closeCmdK();
+	if (c.kind === "slash") {
+		inputEl.value = c.label + " ";
+		autosize();
+		inputEl.focus();
+	} else if (typeof c.run === "function") {
+		c.run();
+	}
+}
+function onCmdKKey(e) {
+	const n = Math.max(cmdkItems.length, 1);
+	if (e.key === "ArrowDown") {
+		e.preventDefault();
+		cmdkSel = (cmdkSel + 1) % n;
+		renderCmdK();
+	} else if (e.key === "ArrowUp") {
+		e.preventDefault();
+		cmdkSel = (cmdkSel - 1 + n) % n;
+		renderCmdK();
+	} else if (e.key === "Enter") {
+		e.preventDefault();
+		if (cmdkItems[cmdkSel]) runCmdK(cmdkItems[cmdkSel]);
+	} else if (e.key === "Escape") {
+		e.preventDefault();
+		closeCmdK();
+	}
+}
+// Alt+K or Ctrl+K opens the palette — but never over a pi latch modal.
+document.addEventListener("keydown", (e) => {
+	if (modal.style.display === "flex") return;
+	if ((e.altKey || e.ctrlKey) && !e.shiftKey && (e.key === "k" || e.key === "K")) {
+		e.preventDefault();
+		openCmdK();
+	}
+});
+
+// ---- register built-in UI commands ----
+registerCommand("new-session", "new session", "start a fresh session", () =>
+	api({ type: "new_session" }),
+);
+registerCommand("compact", "compact context", "summarize the conversation", () =>
+	api({ type: "compact" }),
+);
+registerCommand("stop", "stop generation", "abort the current turn", () =>
+	api({ type: "abort" }),
+);
+registerCommand("settings", "settings", "open the settings panel", openSettings);
+registerCommand(
+	"scroll-bottom",
+	"scroll to bottom",
+	"jump to the latest message",
+	scrollDown,
+);
+registerCommand("focus-input", "focus input", "put the cursor in the composer", () =>
+	inputEl.focus(),
+);
+registerCommand("theme-dark", "theme: dark", "switch to the dark theme", () => {
+	themeSel.value = "dark";
+	themeSel.onchange();
+});
+registerCommand(
+	"theme-paperlike",
+	"theme: paperlike",
+	"switch to the paperlike theme",
+	() => {
+		themeSel.value = "paperlike";
+		themeSel.onchange();
+	},
+);
+
 autosize();
