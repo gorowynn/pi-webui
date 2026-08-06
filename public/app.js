@@ -3840,6 +3840,30 @@ themeSel.onchange = () => {
 	localStorage.setItem("pi:theme", t);
 };
 
+// conversation detail modes (plan 3.2 / U§2.1): simple (messages only) / semi
+// (tool headers only) / detailed (current). data-view on #transcript + CSS
+// hides tools/outputs; persisted in localStorage. Cycled by the header #view-btn
+// and the Alt+K palette command.
+const viewBtn = $("view-btn");
+const VIEW_MODES = ["detailed", "semi", "simple"];
+let viewMode = localStorage.getItem("pi:view-mode");
+if (!VIEW_MODES.includes(viewMode)) viewMode = "detailed";
+function applyViewMode(m) {
+	if (!VIEW_MODES.includes(m)) m = "detailed";
+	viewMode = m;
+	localStorage.setItem("pi:view-mode", m);
+	transcript.setAttribute("data-view", m);
+	if (viewBtn)
+		viewBtn.textContent =
+			m === "detailed" ? "detailed" : m === "semi" ? "headers" : "simple";
+}
+if (viewBtn)
+	viewBtn.onclick = () => {
+		const i = VIEW_MODES.indexOf(viewMode);
+		applyViewMode(VIEW_MODES[(i + 1) % VIEW_MODES.length]);
+	};
+applyViewMode(viewMode);
+
 // ---- subagent tier-model selects ----
 // Defaults mirror subagent.ts TIERS exactly. The server holds the truth
 // (~/.pi/agent/subagent-tiers.json, re-read by the extension each call); we load
@@ -4460,6 +4484,9 @@ registerCommand(
 		themeSel.value = "paperlike";
 		themeSel.onchange();
 	},
+);
+registerCommand("view-cycle", "cycle detail mode", "simple / headers / detailed", () =>
+	viewBtn ? viewBtn.click() : null,
 );
 
 autosize();

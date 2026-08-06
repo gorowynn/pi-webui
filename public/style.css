@@ -1602,6 +1602,19 @@ textarea:focus {
 	text-align: center;
 }
 
+/* conversation detail modes (plan 3.2 / U§2.1) — #transcript[data-view]
+   simple = messages only (reading mode); semi = tool headers only (outputs
+   hidden); detailed = current. Pure CSS, no JS per-tool. */
+#transcript[data-view="simple"] .tool {
+	display: none;
+}
+#transcript[data-view="semi"] .tool > .out {
+	display: none;
+}
+#view-btn {
+	min-width: 64px;
+}
+
 #todopanel {
 	flex: 0 0 auto;
 	width: 100%;
