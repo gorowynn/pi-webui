@@ -51,7 +51,8 @@ function api(obj) {
 }
 // ponytail: pi sends ANSI-colored status strings (e.g. "LSP Inactive"); the
 // browser can't render them, so strip the escapes at the status boundary.
-const stripAnsi = (s) => String(s).replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
+const stripAnsi = (s) =>
+	String(s).replace(/(?:\u001b\[|\u009b)[0-9;]*[A-Za-z]/g, "");
 
 // md() + esc() now live in md.js (loaded via <script> BEFORE app.js). The old
 // parser cluster (esc / inlineMd / splitRow / mdProse / md) was extracted there
@@ -229,18 +230,41 @@ function nonEmptyContent(content) {
 // (vendor/highlight.min.js, loaded before app.js). Pure post-process over the
 // DOM renderAssistantContent just built — md.js already emits
 // <pre><code class="language-xxx">. Gated so a missing/removed asset degrades
-// silently to today's uncolored output. Ceiling: highlightElement is sync per
-// block; a pathological paste could jank, fine for normal code. Re-render
-// builds fresh nodes (finalizeBubble resets cursors, gotcha #13) so no
-// stale-highlight guarding is needed; the dataset check is belt-and-suspenders.
+// silently to uncolored output. Deferred: an IntersectionObserver highlights a
+// block only once it's within ~800px of the viewport (plan 1.1 / R§1.2), so a
+// long message with many blocks doesn't jank the frame highlighting them all at
+// once. One reused module-level observer (no per-render leak); highlighting is
+// sticky (the dataset flag keeps it colored after one pass). Re-render builds
+// fresh nodes (finalizeBubble resets cursors, gotcha #13) so no stale-highlight
+// guarding is needed; the :not([data-highlighted]) selector skips done nodes.
+let hlObserver = null;
 function highlightCode(root) {
 	if (!window.hljs || !root) return;
-	root.querySelectorAll("pre code").forEach((el) => {
-		if (el.dataset.highlighted) return;
-		try {
-			hljs.highlightElement(el);
-		} catch (e) {}
-	});
+	const blocks = root.querySelectorAll("pre code:not([data-highlighted])");
+	if (!blocks.length) return;
+	if (!("IntersectionObserver" in window)) {
+		blocks.forEach(hlEl);
+		return;
+	}
+	if (!hlObserver)
+		hlObserver = new IntersectionObserver(
+			(entries, obs) => {
+				for (const e of entries) {
+					if (e.isIntersecting) {
+						hlEl(e.target);
+						obs.unobserve(e.target);
+					}
+				}
+			},
+			{ rootMargin: "800px" },
+		);
+	blocks.forEach((b) => hlObserver.observe(b));
+}
+function hlEl(el) {
+	el.dataset.highlighted = "1";
+	try {
+		hljs.highlightElement(el);
+	} catch (e) {}
 }
 // ponytail: the AUTHORITATIVE render path for assistant text + thinking blocks,
 // shared by message_end (finalizeBubble) and reload (renderMessage). Text ALSO
