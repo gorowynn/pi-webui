@@ -474,8 +474,10 @@ pre code.hljs {
 	color: var(--danger);
 }
 /* grid-rows expand animation (plan 3.1 / U§2.3): .out-wrap is 0fr when closed,
-   1fr when .open — a smooth height transition with no JS. min-height:0 lets the
-   out shrink to 0; max-height+overflow keep it scrollable when open. */
+   1fr when .open — a smooth height transition with no JS. The grid ITEM
+   (.out-clip) MUST have overflow:hidden so its automatic minimum clamps to 0
+   (otherwise 0fr resolves to the content's min-content and the output leaks
+   when collapsed). .out inside keeps its own max-height+overflow for scroll. */
 .tool .out-wrap {
 	display: grid;
 	grid-template-rows: 0fr;
@@ -485,7 +487,8 @@ pre code.hljs {
 	grid-template-rows: 1fr;
 	border-top: 1px solid var(--line);
 }
-.tool .out-wrap > .out {
+.tool .out-clip {
+	overflow: hidden;
 	min-height: 0;
 }
 .tool .out {

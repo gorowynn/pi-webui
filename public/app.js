@@ -453,7 +453,7 @@ function toolBlock(id, name, args, running) {
 		// end). .out-wrap is the grid-rows animation target (0fr→1fr on .open).
 		setSafeHtml(
 			el,
-			`<div class="head" role="button" tabindex="0" aria-expanded="${running ? "true" : "false"}"><span class="trow"><span class="caret">▸</span><span class="name">${esc(name || "tool")}</span>${cmdHtml}</span><span class="dur"></span></div><div class="out-wrap"><div class="out"></div></div>`,
+			`<div class="head" role="button" tabindex="0" aria-expanded="${running ? "true" : "false"}"><span class="trow"><span class="caret">▸</span><span class="name">${esc(name || "tool")}</span>${cmdHtml}</span><span class="dur"></span></div><div class="out-wrap"><div class="out-clip"><div class="out"></div></div></div>`,
 		);
 		const head = el.querySelector(".head");
 		const toggle = () => openTool(wrap, !el.classList.contains("open"));
