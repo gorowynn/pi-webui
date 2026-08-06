@@ -12,6 +12,7 @@ const { JsonLineDecoder, encodeJsonLine } = require("./jsonl.js"); // strict JSO
 const { createLiveBuffer } = require("./livebuf.js"); // current-turn buffer for reconnect replay (plan F§5.2)
 const { activeSessionMessages } = require("./session-entries.js"); // compaction-aware history (plan F§5.3)
 const { listRecentSessions } = require("./recent-sessions.js"); // head/tail session reader (plan F§4.1)
+const { getGitSnapshot, getGitFileDiff } = require("./git.js"); // read-only git porcelain (plan 4.5)
 const { discoverWorkspaces, isKnownWorkspacePath } = require("./workspaces.js");
 const { opencodeGoWindows } = require("./public/usage-provider.js"); // dashboard HTML parser (shared with the browser, like md.js)
 
@@ -1277,6 +1278,32 @@ const server = http.createServer(async (req, res) => {
 		// derived from PI_CWD — no client path is accepted, so nothing escapes it.
 		res.writeHead(200, { "Content-Type": "application/json" });
 		return res.end(JSON.stringify({ ok: true, sessions: listSessions() }));
+	}
+
+	// read-only Git snapshot + per-file diff (plan 4.5). Scoped to realpath(PI_CWD);
+	// no client cwd is accepted. The diff path must be a known changed file of the
+	// current snapshot (validated inside getGitFileDiff), so nothing escapes the repo.
+	if (req.method === "GET" && url.pathname === "/api/git") {
+		try {
+			const snapshot = await getGitSnapshot(PI_CWD);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true, snapshot: snapshot }));
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+	if (req.method === "GET" && url.pathname === "/api/git/diff") {
+		try {
+			const p = url.searchParams.get("path") || "";
+			const commit = url.searchParams.get("commit") || undefined;
+			const result = await getGitFileDiff(PI_CWD, p, commit);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true, diff: result.diff, path: result.path }));
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
 	}
 
 	if (req.method === "GET" && url.pathname === "/api/plan-state") {

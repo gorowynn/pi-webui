@@ -4968,6 +4968,162 @@ function showAnalysisModal() {
 	});
 }
 
+// ---- git sidebar, read-only (plan 4.5) ----
+// An on-demand modal (Alt+K → 'git status') reviewing the repo without leaving
+// the UI: branch, ahead count, changed files (+/- counts, status badges), and
+// unpushed commits with their files. Click a file → unified diff view (colored
+// +/− lines) with a back button. §6.3: ~60% of git-sidebar value, no mutation risk.
+async function showGitModal() {
+	showModal('<div class="git"><h3>Git</h3><p class="um-hint">loading…</p></div>', true);
+	card.classList.add("git-card");
+	let data;
+	try {
+		data = await (await fetch("/api/git")).json();
+	} catch (e) {
+		data = { ok: false, error: e.message };
+	}
+	if (!data.ok) {
+		setSafeHtml(
+			card,
+			'<div class="git"><h3>Git</h3><p class="um-hint">' +
+				esc(data.error || "failed to load") +
+				"</p></div>",
+		);
+		return;
+	}
+	renderGitList(data.snapshot);
+}
+
+function renderGitList(s) {
+	if (!s.repository) {
+		setSafeHtml(
+			card,
+			'<div class="git"><h3>Git</h3><p class="um-hint">not a git repository</p></div>',
+		);
+		return;
+	}
+	const parts = [];
+	parts.push('<div class="git">');
+	parts.push('<div class="git-head">');
+	parts.push('<span class="git-branch">⎇ ' + esc(s.branch) + "</span>");
+	if (s.ahead > 0) parts.push('<span class="git-ahead">▲ ' + s.ahead + " unpushed</span>");
+	parts.push('<span class="git-count">' + s.files.length + " changed</span>");
+	parts.push("</div>");
+	if (s.files.length) {
+		parts.push('<div class="git-sec-h">changes</div>');
+		parts.push('<div class="git-files">');
+		s.files.forEach((f) => parts.push(gitFileBtn(f)));
+		parts.push("</div>");
+	} else {
+		parts.push('<p class="um-hint">clean working tree</p>');
+	}
+	if (s.commits.length) {
+		parts.push('<div class="git-sec-h">unpushed commits (' + s.commits.length + ")</div>");
+		parts.push('<div class="git-files">');
+		s.commits.forEach((c) => {
+			parts.push(
+				'<div class="git-commit"><span class="git-csubj">' +
+					esc(c.subject) +
+					'</span> <span class="git-cfiles">' +
+					c.files.length +
+					" files</span></div>",
+			);
+			c.files.forEach((f) => parts.push(gitFileBtn(f, c.hash)));
+		});
+		parts.push("</div>");
+	}
+	parts.push("</div>");
+	setSafeHtml(card, parts.join(""));
+	card.querySelectorAll(".git-file[data-path]").forEach((btn) => {
+		btn.addEventListener("click", () =>
+			showGitDiff(btn.getAttribute("data-path"), btn.getAttribute("data-commit") || null),
+		);
+	});
+}
+
+function gitFileBtn(f, commit) {
+	const initial = f.status.charAt(0).toUpperCase();
+	const delta =
+		f.additions != null || f.deletions != null
+			? '<span class="git-delta">+' + (f.additions || 0) + " -" + (f.deletions || 0) + "</span>"
+			: "";
+	return (
+		'<button type="button" class="git-file" data-path="' +
+		esc(f.path) +
+		'"' +
+		(commit ? ' data-commit="' + esc(commit) + '"' : "") +
+		"><span class=\"git-stat " +
+		esc(f.status) +
+		'">' +
+		esc(initial) +
+		'</span><span class="git-fname">' +
+		esc(f.path) +
+		"</span>" +
+		delta +
+		"</button>"
+	);
+}
+
+async function showGitDiff(p, commit) {
+	const back =
+		'<button type="button" class="git-back">← back</button>';
+	setSafeHtml(
+		card,
+		'<div class="git">' +
+			back +
+			'<div class="git-sec-h git-diffpath">' +
+			esc(p) +
+			'</div><p class="um-hint">loading diff…</p></div>',
+	);
+	const backBtn = card.querySelector(".git-back");
+	if (backBtn) backBtn.addEventListener("click", showGitModal);
+	let data;
+	try {
+		const q = "path=" + encodeURIComponent(p) + (commit ? "&commit=" + encodeURIComponent(commit) : "");
+		data = await (await fetch("/api/git/diff?" + q)).json();
+	} catch (e) {
+		data = { ok: false, error: e.message };
+	}
+	if (!data.ok) {
+		setSafeHtml(
+			card,
+			'<div class="git">' +
+				back +
+				'<div class="git-sec-h git-diffpath">' +
+				esc(p) +
+				'</div><p class="um-hint">' +
+				esc(data.error || "failed") +
+				"</p></div>",
+		);
+		const b2 = card.querySelector(".git-back");
+		if (b2) b2.addEventListener("click", showGitModal);
+		return;
+	}
+	// render the unified diff with +/− line coloring (content escaped per line)
+	const lines = String(data.diff || "").split("\n");
+	const body = lines
+		.map((l) => {
+			let cls = "";
+			if (l.charAt(0) === "+" && l.indexOf("+++") !== 0) cls = "diff-add";
+			else if (l.charAt(0) === "-" && l.indexOf("---") !== 0) cls = "diff-del";
+			else if (l.charAt(0) === "@") cls = "diff-hunk";
+			return '<span class="' + cls + '">' + esc(l || " ") + "</span>";
+		})
+		.join("\n");
+	setSafeHtml(
+		card,
+		'<div class="git">' +
+			back +
+			'<div class="git-sec-h git-diffpath">' +
+			esc(p) +
+			'</div><pre class="git-diff">' +
+			body +
+			"</pre></div>",
+	);
+	const b3 = card.querySelector(".git-back");
+	if (b3) b3.addEventListener("click", showGitModal);
+}
+
 // ---- register built-in UI commands ----
 registerCommand("new-session", "new session", "start a fresh session", () =>
 	api({ type: "new_session" }),
@@ -4979,6 +5135,7 @@ registerCommand("stop", "stop generation", "abort the current turn", () =>
 	api({ type: "abort" }),
 );
 registerCommand("settings", "settings", "open the settings panel", openSettings);
+registerCommand("git", "git status", "review changes & unpushed commits", showGitModal);
 registerCommand(
 	"rename-session",
 	"rename session",
