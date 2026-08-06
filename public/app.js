@@ -50,6 +50,21 @@ function api(obj) {
 	p.catch(() => {});
 	return p;
 }
+// Awaitable RPC (plan 0.2 server side): POST /api/rpc resolves with pi's
+// {type:"response"} payload. Used by actions that need to confirm success before
+// proceeding (e.g. session rename, plan 4.9). 30s server-side timeout.
+async function rpcAwait(obj) {
+	try {
+		const r = await fetch("/api/rpc", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(obj),
+		});
+		return await r.json();
+	} catch (e) {
+		return { ok: false, error: e.message };
+	}
+}
 // ponytail: pi sends ANSI-colored status strings (e.g. "LSP Inactive"); the
 // browser can't render them, so strip the escapes at the status boundary.
 const stripAnsi = (s) =>
@@ -4182,6 +4197,45 @@ function sessionSizeLabel(s) {
 	if (s && typeof s.size === "number") return fmtBytes(s.size);
 	return "—";
 }
+// Rename the CURRENT session (plan 4.9) via the running pi's set_session_name.
+// pi writes {type:"session_info",name} to the JSONL, which the recent-sessions
+// reader (plan 4.1) picks up — so the name persists and shows in every list.
+// Renaming an arbitrary non-active session would need a disposable pi (pi-livecraft's
+// approach); the single-pi webui model renames the session you're in (resume first
+// for others). 1–120 chars, no line breaks.
+async function renameCurrentSession() {
+	if (!curSessionFile) {
+		toast("no active session to rename", "warn");
+		return;
+	}
+	let curName = "";
+	try {
+		const d = await (await fetch("/api/sessions")).json();
+		const cur = (d.sessions || []).find((s) => pathEq(s.path, curSessionFile));
+		if (cur) curName = cur.name || cur.preview || "";
+	} catch {}
+	const input = window.prompt("Rename this session", curName);
+	if (input == null) return; // cancelled
+	const name = input.trim();
+	if (!name) {
+		toast("name cannot be empty", "warn");
+		return;
+	}
+	if (name.length > 120) {
+		toast("name too long (max 120 chars)", "warn");
+		return;
+	}
+	const r = await rpcAwait({ type: "set_session_name", name });
+	if (r && r.ok) {
+		toast("session renamed", "ok");
+		refreshSessionsSidebar();
+		// if the sessions modal is open, re-render with the new name
+		if (modal.style.display === "flex" && card.querySelector(".sessions"))
+			showSessions();
+	} else {
+		toast("rename failed: " + ((r && r.error) || "unknown"), "err");
+	}
+}
 async function showSessions() {
 	showModal(`<h3>Sessions</h3><p class="um-hint">loading…</p>`, true);
 	let data;
@@ -4808,6 +4862,12 @@ registerCommand("stop", "stop generation", "abort the current turn", () =>
 	api({ type: "abort" }),
 );
 registerCommand("settings", "settings", "open the settings panel", openSettings);
+registerCommand(
+	"rename-session",
+	"rename session",
+	"name the current session",
+	renameCurrentSession,
+);
 registerCommand("usage", "session usage", "cost/tool/cache breakdown for this session", showAnalysisModal);
 registerCommand(
 	"scroll-bottom",
