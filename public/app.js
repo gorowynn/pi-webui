@@ -245,8 +245,20 @@ function highlightCode(root) {
 	if (!window.hljs || !root) return;
 	const blocks = root.querySelectorAll("pre code:not([data-highlighted])");
 	if (!blocks.length) return;
+	// ponytail: highlight IN-VIEW blocks immediately (synchronous) so the active
+	// message's code colors without waiting on the async observer (which could
+	// leave a just-rendered reply looking un-rendered until a reload). Only
+	// OFFSCREEN blocks (a long transcript) defer to the observer for perf.
+	const vh = window.innerHeight || 0;
+	const defer = [];
+	blocks.forEach((b) => {
+		const r = b.getBoundingClientRect();
+		if (r.top <= vh + 800 && r.bottom >= -800) hlEl(b);
+		else defer.push(b);
+	});
+	if (!defer.length) return;
 	if (!("IntersectionObserver" in window)) {
-		blocks.forEach(hlEl);
+		defer.forEach(hlEl);
 		return;
 	}
 	if (!hlObserver)
@@ -261,7 +273,7 @@ function highlightCode(root) {
 			},
 			{ rootMargin: "800px" },
 		);
-	blocks.forEach((b) => hlObserver.observe(b));
+	defer.forEach((b) => hlObserver.observe(b));
 }
 function hlEl(el) {
 	el.dataset.highlighted = "1";
