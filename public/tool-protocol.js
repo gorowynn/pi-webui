@@ -14,7 +14,8 @@
  * tool_execution_start, never inline), so the smuggle channels are untouched.
  *
  * Require-able in Node (module.exports) for tests, like md.js. Sets
- * window.toolProtocol in the browser. Plan 2.7 / R§2.9.
+ * window.toolProtocol in the browser. Plan 2.7 / R§2.9 (toolContentText) + 4.2
+ * (toolDataLength).
  */
 (function () {
 	"use strict";
@@ -149,11 +150,22 @@
 		};
 	}
 
+	// Length of a tool call's arguments (serialized) — a size proxy for analysis.
+	function toolDataLength(value) {
+		try {
+			var s = JSON.stringify(value);
+			return s != null ? s.length : String(value).length;
+		} catch (e) {
+			return String(value).length;
+		}
+	}
+
 	var api = {
 		toolCallsInMessage: toolCallsInMessage,
 		toolResultInMessage: toolResultInMessage,
 		toolExecutionUpdateInEvent: toolExecutionUpdateInEvent,
 		toolContentText: toolContentText,
+		toolDataLength: toolDataLength,
 		toolCallInUpdate: toolCallInUpdate,
 	};
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
