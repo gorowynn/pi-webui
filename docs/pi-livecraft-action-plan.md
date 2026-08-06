@@ -166,19 +166,27 @@ paths (reuse 0.4).
 
 ---
 
-### Phase 5 — Resilience · ~2.5d
+### Phase 5 — Resilience · ~2.5d · **status: ✅ done**
 Hardening the live stream. Lower visible payoff but fixes real reconnect pain.
 
-| ID | Item | Ref | Effort | Dep |
-|----|------|-----|--------|-----|
-| 5.1 | Live-event buffer (current-turn only) + monotonic `sequence`; snapshot includes `liveEvents` | F§5.2 | 1.5d | 0.2 |
-| 5.2 | Compaction-aware message reconstruction (walk `get_entries` parent-chain from `leafId`) | F§5.3 | 1.0d | 5.1 |
+| ID | Item | Ref | Effort | Dep | ✅ |
+|----|------|-----|--------|-----|----|
+| 5.1 | Live-event buffer (current-turn only) + monotonic `sequence`; snapshot includes `liveEvents` | F§5.2 | 1.5d | 0.2 | ✅ |
+| 5.2 | Compaction-aware message reconstruction (walk `get_entries` parent-chain from `leafId`) | F§5.3 | 1.0d | 5.1 | ✅ |
 
 **Exit criteria:** a reconnecting tab rebuilds in-flight tool cards without a full reload; a
 compacted session doesn't look truncated (compaction entries render as synthetic messages).
 
 **Risk:** 5.2 switches history rendering from flat `get_messages` to `get_entries` parent-chain
-— bigger change to `renderMessage`. Do last.
+— bigger change to `renderMessage`. Done last.
+
+**Shipped:** `livebuf.js` (current-turn buffer, 10 tests) + `session-entries.js`
+(parent-chain walk, 10 tests); `/api/snapshot` now returns `liveEvents` and derives `messages`
+from `get_entries` (superset of `get_messages` — adds compaction markers, no regression for
+non-compacted sessions). Client replays `liveEvents` through `handle()` after `applyMessages`
+(finalizing dead turns on an idle pi) and renders `role:"custom"` compaction entries as a
+muted collapsible `<details>` callout. Validated end-to-end against a real 882-entry compacted
+session (921 messages, 3 markers correctly placed between turns).
 
 ---
 
@@ -235,8 +243,8 @@ Copy this into your issue tracker. `Phase` · `Ref` (analysis doc) · `Eff` (day
 | 4.8 | Improve-prompt dropdown | 4 | U§5.5 | 0.5 | 4.7 | ☐ |
 | 4.9 | Session rename + dir picker | 4 | F§5.8 | 0.5 | 0.2 | ☐ |
 | 4.10 | Image input | 4 | R§3.1 | 1.0 | 1.5 | ☐ |
-| 5.1 | Live-event buffer + replay | 5 | F§5.2 | 1.5 | 0.2 | ☐ |
-| 5.2 | Compaction-aware messages | 5 | F§5.3 | 1.0 | 5.1 | ☐ |
+| 5.1 | Live-event buffer + replay | 5 | F§5.2 | 1.5 | 0.2 | ✅ |
+| 5.2 | Compaction-aware messages | 5 | F§5.3 | 1.0 | 5.1 | ✅ |
 | 6.1 | Accent user bubble 🟠 | 6 | U§3.1 | 0.1 | — | ☐ |
 | 6.2 | Accent type + chips 🟠 | 6 | U§3.2, U§3.4 | 0.2 | 0.1 | ☐ |
 | 6.3 | Softer radii 🟠 | 6 | U§3.3 | 0.03 | — | ☐ |

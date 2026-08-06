@@ -45,12 +45,15 @@ runtime. Edit `public/app.js`/`public/style.css`/`public/index.html` + refresh =
 
 | File | Role |
 |------|------|
-| `server.js` | Bridge. CommonJS, ~no deps. Serves assets, frames JSONL (split on `\n` only), spawns/respawns `pi --mode rpc` (live `let PI_CWD`; `POST /api/workspace` tree-kills + respawns in a new project and broadcasts `workspace_changed` to all tabs), CSRF + DNS-rebinding gate, `safePath`, 1MB body cap. `PI_WEBUI_NO_SWITCH` gates switching. |
+| `server.js` | Bridge. CommonJS, ~no deps. Serves assets, frames JSONL (split on `\n` only), spawns/respawns `pi --mode rpc` (live `let PI_CWD`; `POST /api/workspace` tree-kills + respawns in a new project and broadcasts `workspace_changed` to all tabs), CSRF + DNS-rebinding gate, `safePath`, 1MB body cap. `PI_WEBUI_NO_SWITCH` gates switching. `/api/snapshot` returns `{state, messages, commands, models, stats, liveEvents}` — messages derived from `get_entries` (parent-chain, compaction-aware), liveEvents = current-turn buffer. |
 | `public/index.html` | Markup only. Load order: `vendor/markdown-it.min.js` → `md.js` → `vendor/highlight.min.js` → `app.js`. |
 | `public/style.css` | All styling. **dark** theme (black + anthracite, GitHub-dark neutrals/blue accent) by default + switchable `paperlike` (`[data-theme]`) — see [`docs/design.md`](docs/design.md). |
 | `public/md.js` | Thin shim over vendored markdown-it 14.x: `md(markdown)` (`html:false`/`breaks:true`/`linkify:true`, links `target=_blank`) + `esc()` (project-wide HTML-escaper source of truth, null-safe→`""`). Loads AFTER `markdown-it.min.js`; `require`-able in Node (self-test: `node -e "console.log(require('./public/md.js').md('**x**'))"`). |
 | `public/app.js` | Entire frontend (vanilla JS): SSE, rendering, modals, diffs, commands palette, left workspace/session sidebar (`#wsbar`). Uses `md()`/`esc()` globals from md.js. |
 | `workspaces.js` | Pure workspace discovery + switch validation (CommonJS, fs-only). `discoverWorkspaces` scans `~/.pi/agent/sessions/--<cwd>--/` and recovers each root from the newest `.jsonl`'s `{type:"session"}.cwd` (NOT the encoded folder name); `isKnownWorkspacePath` is the `POST /api/workspace` security gate (realpath must match a discovered workspace). Unit-tested (`test/workspaces.test.js`). |
+| `jsonl.js` | Strict JSONL codec (plan F§4.5): `encodeJsonLine(obj)` + `JsonLineDecoder` (split on `\n`, strip `\r`, buffer incomplete UTF-8 via StringDecoder, per-record cap). Zero-dep CommonJS. |
+| `livebuf.js` | Current-turn event buffer for reconnect replay (plan 5.1): `createLiveBuffer().push(obj)` assigns a monotonic `sequence` (attached to the broadcast wrapper) + buffers turn-content events (agent_start seeds, agent_end clears, only message_*/tool_execution_*). `snapshot()` for `/api/snapshot`'s `liveEvents`; `clear()` on workspace switch. Survives a pi CRASH (lives in Node, not the child). Zero-dep, 10 unit tests. |
+| `session-entries.js` | Compaction-aware history reconstruction (plan 5.2): `activeSessionMessages(entries, leafId)` walks the entry parent-chain from leafId→root, reverses, maps message/compaction/custom_message entries, filters visible. Compaction entries → synthetic `role:"custom"` markers. Used by `/api/snapshot` instead of flat `get_messages` (a superset — no regression). Zero-dep, 10 unit tests. |
 | `bin.js` | `pi-webui` global launcher. Spawns `server.js` **detached** (own process group → closing the console won't kill it), polls a temp log to report early death, opens the browser (`PI_WEBUI_NO_OPEN` skips), then exits. |
 | `test/` | `node:assert/strict` unit tests, no framework (`node test/<x>.test.js`). |
 | `public/vendor/` | Vendored runtimes, served via `server.js` `STATIC` whitelist (no npm/build): **markdown-it** v14.1.0 UMD (`window.markdownit`), **highlight.js** v11.11.1 common + `highlight.css` github-dark. `app.js` `highlightCode()` post-processes `pre code`. Both degrade silently if missing (md.js→escaped text; hljs→uncolored). |
@@ -154,13 +157,29 @@ entry — these are load-bearing invariants. Numbers match `GOTCHAS.md #N`.
 - **Awaitable RPC is additive to fire-and-forget.** `POST /api/cmd` + the SSE
   `response` stream (what the smuggle channels depend on) are unchanged. Added
   `rpcRequest()` + `POST /api/rpc` (awaits pi's `{type:"response"}` keyed by id,
-  30s timeout) and `GET /api/snapshot` (the 5 bootstrap RPCs fanned out in
-  parallel — one round-trip). The JSONL reader broadcasts every payload to SSE
-  **and then** resolves any pending awaitable (`resolveRpc`) — so smuggle
-  ordering (tool_execution_start before its sibling response) is structurally
-  preserved. `rejectAllRpc` on pi exit fails pending fast (plan 0.2 / F§5.1).
-  Also: `jsonl.js` codec (F§4.5), centralized `killPiTree` (F§4.7),
+  30s timeout) and `GET /api/snapshot` (the bootstrap RPCs fanned out in
+  parallel — one round-trip; returns `{state, messages, commands, models, stats,
+  liveEvents}`). The JSONL reader broadcasts every payload to SSE **and then**
+  resolves any pending awaitable (`resolveRpc`) — so smuggle ordering
+  (tool_execution_start before its sibling response) is structurally preserved.
+  `rejectAllRpc` on pi exit fails pending fast (plan 0.2 / F§5.1). Also:
+  `jsonl.js` codec (F§4.5), centralized `killPiTree` (F§4.7),
   `WorkspaceFileError`/`readWorkspaceFile` off `safePath` (F§4.8).
+- **Live-event buffer + compaction-aware history (plan 5).** `livebuf.js`
+  (`createLiveBuffer()`) keeps the CURRENT agent turn's events (agent_start→…,
+  cleared on agent_end) tagged with a monotonic `sequence` attached to every
+  broadcast wrapper; `/api/snapshot` includes them as `liveEvents` so a
+  reconnecting tab replays them through `handle()` (after `applyMessages`
+  clears) and rebuilds in-flight tool cards instead of losing them. Survives a pi
+  CRASH (buffer lives in Node); cleared on workspace switch (`lb.clear()` in both
+  deliberateRestart paths). `session-entries.js` (`activeSessionMessages`):
+  `/api/snapshot` derives `messages` from `get_entries` (parent-chain walk from
+  `leafId`), not flat `get_messages` — compaction entries render as a synthetic
+  `role:"custom"` marker so a compacted session never looks truncated. A
+  SUPERSET of `get_messages` (no regression for non-compacted sessions). Client
+  finalizes dead turns (idle pi + partial buffer → synthesized `agent_end` +
+  run-state tool cards neutralized) and renders compaction markers as a muted
+  collapsible `<details>`.
 
 ## Manual smoke tests (quick sanity)
 
@@ -172,4 +191,12 @@ entry — these are load-bearing invariants. Numbers match `GOTCHAS.md #N`.
 - **Health** — `GET /api/health`; SSE at `GET /api/events`; commands via
   `POST /api/cmd`; awaitable RPC at `POST /api/rpc`; one-shot bootstrap at
   `GET /api/snapshot` (`node test/rpc-sse.test.js` covers the additivity).
-  `node test/jsonl.test.js` covers the JSONL codec.
+  `node test/jsonl.test.js` covers the JSONL codec; `test/livebuf.test.js` the
+  reconnect buffer; `test/session-entries.test.js` the compaction walk.
+- **Live reconnect replay (5.1)** — mid-turn, kill the pi child (not Node): the
+  tab rebuilds the in-flight tool card from `liveEvents` (no full reload). A pure
+  SSE drop (tab sleep) with pi still running continues the turn seamlessly.
+- **Compaction (5.2)** — resume a compacted session: the transcript shows muted
+  collapsible "Context compacted" markers between turns (not a silent gap); the
+  pre-compact messages pi dropped from `get_messages` are gone but the marker
+  records the boundary.
