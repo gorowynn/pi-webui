@@ -223,7 +223,9 @@ function renderText(force) {
 function nonEmptyContent(content) {
 	return (content || []).filter(
 		(b) =>
-			(b.type === "text" && b.text) || (b.type === "thinking" && b.thinking),
+			(b.type === "text" && b.text) ||
+			(b.type === "thinking" && b.thinking) ||
+			(b.type === "image" && b.data),
 	);
 }
 // ponytail: syntax-highlight code blocks via the vendored highlight.js
@@ -289,6 +291,16 @@ function renderAssistantContent(content) {
 			cur.thinkCount = null;
 			cur.thinkEl = null;
 			cur.thinkBuf = "";
+		} else if (b.type === "image" && b.data) {
+			// ponytail: render an image content part as a data-URL <img> (plan 1.5 /
+			// R§3.2). mimeType allowlist is enforced at the sender (image input, plan
+			// 4.10); here we just render whatever the model/pi emitted. <img> from a
+			// data URL has no script surface.
+			const img = document.createElement("img");
+			img.className = "message-image";
+			img.alt = "";
+			img.src = `data:${b.mimeType || "image/png"};base64,${b.data}`;
+			cur.bubble.appendChild(img);
 		}
 	}
 	highlightCode(cur.bubble);

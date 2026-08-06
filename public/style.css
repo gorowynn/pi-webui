@@ -289,6 +289,17 @@ code {
 	padding: 1px 5px;
 	border-radius: var(--r);
 }
+/* ponytail: image content part (plan 1.5 / R§3.2) — bounded, contained, so a
+   pasted screenshot doesn't blow out the bubble width. Rendered from a data URL
+   so there's no script surface. */
+.message-image {
+	display: block;
+	max-width: min(100%, 480px);
+	max-height: 420px;
+	object-fit: contain;
+	border-radius: var(--r);
+	margin: 4px 0 8px;
+}
 /* syntax highlighting: vendored highlight.js adds .hljs to <pre><code> and ships
    its own background/padding in vendor/highlight.css. Our <pre> already owns the
    background/border/padding (above), so neutralize hljs's box and let it
