@@ -4411,6 +4411,40 @@ function resumeSession(sessionPath, current) {
 sendBtn.onclick = send;
 stopBtn.onclick = () => api({ type: "abort" });
 compactBtn.onclick = () => api({ type: "compact" });
+// Improve prompt (plan 4.8): rewrite the current draft via a disposable isolated pi
+// (cheapest model, --no-tools). Takes a few seconds; the result replaces the draft.
+const improveSel = $("improve");
+if (improveSel)
+	improveSel.onchange = async () => {
+		const direction = improveSel.value;
+		improveSel.value = ""; // reset to placeholder immediately
+		if (!direction) return;
+		const draft = inputEl.value.trim();
+		if (!draft) {
+			toast("write a draft to improve first", "warn");
+			return;
+		}
+		toast("improving draft…");
+		try {
+			const r = await (
+				await fetch("/api/improve-prompt", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ text: draft, direction: direction }),
+				})
+			).json();
+			if (r.ok && r.text) {
+				inputEl.value = r.text;
+				autosize();
+				inputEl.focus();
+				toast("draft improved", "ok");
+			} else {
+				toast("improve failed: " + (r.error || "unknown"), "err");
+			}
+		} catch (e) {
+			toast("improve failed: " + e.message, "err");
+		}
+	};
 // ponytail: in-DOM confirm — JCEF (the IDE panel) no-ops window.confirm(), and
 // the webui uses in-DOM modals everywhere else; this was the lone native dialog.
 function confirmModal(msg, onYes) {

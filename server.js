@@ -13,6 +13,7 @@ const { createLiveBuffer } = require("./livebuf.js"); // current-turn buffer for
 const { activeSessionMessages } = require("./session-entries.js"); // compaction-aware history (plan F§5.3)
 const { listRecentSessions } = require("./recent-sessions.js"); // head/tail session reader (plan F§4.1)
 const { getGitSnapshot, getGitFileDiff, commitChanges, pushCommits, resetGitCommit, revertGitCommit, discardFileChanges, discardChanges } = require("./git.js"); // git porcelain + mutations (plan 4.5/4.6)
+const { improvePrompt } = require("./isolated-prompt.js"); // disposable isolated pi prompt (plan 4.7/4.8)
 const { discoverWorkspaces, isKnownWorkspacePath } = require("./workspaces.js");
 const { opencodeGoWindows } = require("./public/usage-provider.js"); // dashboard HTML parser (shared with the browser, like md.js)
 
@@ -1346,6 +1347,23 @@ const server = http.createServer(async (req, res) => {
 			else await discardChanges(PI_CWD);
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: true }));
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+	// Improve prompt (plan 4.8): rewrite the composer draft via a disposable isolated
+	// pi process (cheapest model, --no-tools, separate profile dir). Long-running (the
+	// isolated pi runs for a few seconds); isolated-prompt.js bounds it at 120s.
+	if (req.method === "POST" && url.pathname === "/api/improve-prompt") {
+		try {
+			const body = JSON.parse((await readBody(req)) || "{}");
+			const draft = String(body.text || "");
+			const direction = String(body.direction || "");
+			if (!draft.trim()) throw new Error("Nothing to improve.");
+			const result = await improvePrompt(PI_CWD, draft, direction);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true, text: result.text }));
 		} catch (e) {
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: false, error: e.message }));
