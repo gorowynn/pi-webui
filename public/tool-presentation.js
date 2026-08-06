@@ -394,6 +394,77 @@
 		renderTextPreview(host, text);
 	}
 
+	// ---- height-preserving offscreen placeholder (R§2.7 virtualization) ----
+	// When a typed tool-output preview (code/csv/table) scrolls far out of view,
+	// swap its rendered DOM for a fixed-height <div> placeholder so a long
+	// transcript doesn't keep dozens of highlighted-code / table subtrees alive.
+	// Re-entering the viewport re-renders. Height is measured at collapse time
+	// (offsetHeight) — sufficient and simpler than a ResizeObserver, which would
+	// only matter if we needed to track size WHILE rendered. Only the typed-
+	// preview path is virtualized; edit/write diffs + the subagent live view have
+	// their own DOM and stay as-is.
+	var previewObserver = null;
+	var previewState = new WeakMap(); // managed el -> { ctx, rendered, height }
+	function renderIntoManaged(managed, ctx) {
+		managed.replaceChildren();
+		renderToolOutput(managed, ctx);
+	}
+	function collapseManaged(managed) {
+		var s = previewState.get(managed);
+		if (!s || !s.rendered) return;
+		s.height = managed.offsetHeight; // measure before clearing
+		managed.replaceChildren();
+		var ph = document.createElement("div");
+		ph.className = "tp-ph";
+		ph.style.height = s.height + "px";
+		managed.appendChild(ph);
+		s.rendered = false;
+	}
+	function ensurePreviewObserver() {
+		if (previewObserver) return previewObserver;
+		if (!("IntersectionObserver" in window)) return null;
+		previewObserver = new IntersectionObserver(
+			function (entries) {
+				for (var i = 0; i < entries.length; i++) {
+					var m = entries[i].target;
+					var s = previewState.get(m);
+					if (!s) continue;
+					// cleanup detached nodes (transcript cleared / session switch)
+					if (!m.isConnected) {
+						previewObserver.unobserve(m);
+						previewState.delete(m);
+						continue;
+					}
+					if (entries[i].isIntersecting) {
+						if (!s.rendered) {
+							renderIntoManaged(m, s.ctx);
+							s.rendered = true;
+						}
+					} else if (s.rendered) {
+						collapseManaged(m);
+					}
+				}
+			},
+			// generous margin: only virtualize when well offscreen (>~1500px), so
+			// actively-visible + nearby content stays rendered for smooth scrolling.
+			{ rootMargin: "1500px 0px 1500px 0px" },
+		);
+		return previewObserver;
+	}
+	// mountToolPreview(host, ctx): the virtualizing entry point. Renders the
+	// typed preview into a managed wrapper, then lets the shared observer
+	// collapse/re-render it as it leaves/re-enters the viewport. Callers that
+	// used renderToolOutput directly now call this (plan 2.8).
+	function mountToolPreview(host, ctx) {
+		var managed = document.createElement("div");
+		managed.className = "tp-managed";
+		host.appendChild(managed);
+		renderIntoManaged(managed, ctx);
+		previewState.set(managed, { ctx: ctx, rendered: true, height: 0 });
+		var obs = ensurePreviewObserver();
+		if (obs) obs.observe(managed);
+	}
+
 	var api = {
 		extOf: extOf,
 		languageFromPath: languageFromPath,
@@ -407,6 +478,7 @@
 		renderHtmlPreview: renderHtmlPreview,
 		stripScripts: stripScripts,
 		renderToolOutput: renderToolOutput,
+		mountToolPreview: mountToolPreview,
 	};
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	if (typeof window !== "undefined") window.toolPresent = api;

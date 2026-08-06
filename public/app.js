@@ -2905,7 +2905,7 @@ function renderMessage(msg) {
 		w.el.classList.remove("run");
 		w.el.classList.add(msg.isError ? "err" : "done");
 		w.out.replaceChildren();
-		toolPresent.renderToolOutput(w.out, {
+		toolPresent.mountToolPreview(w.out, {
 			name: msg.toolName,
 			args: rargs,
 			text: t,
@@ -3242,7 +3242,7 @@ function handle(payload) {
 						// bounded text preview (2.6). edit/write (diff) + subagent
 						// (live view) are handled in their own branches above.
 						w.out.replaceChildren();
-						toolPresent.renderToolOutput(w.out, {
+						toolPresent.mountToolPreview(w.out, {
 							name: payload.toolName,
 							args: w.args,
 							text: t,

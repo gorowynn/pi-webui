@@ -575,6 +575,11 @@ pre code.hljs {
 	border-radius: var(--r);
 	background: #fff; /* rendered HTML is usually light-themed */
 }
+/* offscreen placeholder (R§2.7 virtualization) — height set inline; just a
+   spacer so scroll position holds while the real content is unmounted. */
+.tool .out .tp-ph {
+	margin: 0;
+}
 
 .activity {
 	flex: 0 0 auto;
