@@ -100,7 +100,7 @@ Tiny, high-visibility. Build momentum after the invisible foundation.
 
 ---
 
-### Phase 2 — Tool-output rendering · ~4d
+### Phase 2 — Tool-output rendering · ~4d · **status: ✅ done**
 The biggest perceived gap, shipped as one cohesive workstream. Depends on 0.1 (soft cards) and
 1.1 (deferred highlight).
 
@@ -212,14 +212,14 @@ Copy this into your issue tracker. `Phase` · `Ref` (analysis doc) · `Eff` (day
 | 1.3 | Scroll-to-bottom pill | 1 | U§2.7 | 0.1 | — | ✅ |
 | 1.4 | ANSI C1 strip | 1 | R§3.3 | 0.01 | — | ✅ |
 | 1.5 | Image display | 1 | R§3.2 | 0.1 | — | ✅ |
-| 2.1 | Tool-presentation registry | 2 | F§4.4, R§2.1 | 0.5 | 0.1 | ☐ |
-| 2.2 | Bounded text preview | 2 | R§2.6 | 0.25 | 2.1 | ☐ |
-| 2.3 | Line-numbered code | 2 | R§2.2 | 0.5 | 1.1, 2.1 | ☐ |
-| 2.4 | CSV table | 2 | R§2.3 | 0.5 | 2.1 | ☐ |
-| 2.5 | SVG preview | 2 | R§2.5 | 0.02 | 2.1 | ☐ |
-| 2.6 | Sandboxed HTML preview | 2 | R§2.4 | 0.5 | 2.1 | ☐ |
-| 2.7 | Tool protocol layer | 2 | R§2.9 | 1.0 | 2.1 | ☐ |
-| 2.8 | Offscreen placeholder | 2 | R§2.7 | 0.5 | 2.3, 2.4 | ☐ |
+| 2.1 | Tool-presentation registry | 2 | F§4.4, R§2.1 | 0.5 | 0.1 | ✅ |
+| 2.2 | Bounded text preview | 2 | R§2.6 | 0.25 | 2.1 | ✅ |
+| 2.3 | Line-numbered code | 2 | R§2.2 | 0.5 | 1.1, 2.1 | ✅ |
+| 2.4 | CSV table | 2 | R§2.3 | 0.5 | 2.1 | ✅ |
+| 2.5 | SVG preview | 2 | R§2.5 | 0.02 | 2.1 | ✅ |
+| 2.6 | Sandboxed HTML preview | 2 | R§2.4 | 0.5 | 2.1 | ✅ |
+| 2.7 | Tool protocol layer | 2 | R§2.9 | 1.0 | 2.1 | ✅ |
+| 2.8 | Offscreen placeholder | 2 | R§2.7 | 0.5 | 2.3, 2.4 | ✅ |
 | 3.1 | Tool-call cards (expand/collapse) | 3 | U§2.3 | 1.5 | 2.1 | ☐ |
 | 3.2 | Detail modes | 3 | U§2.1 | 0.5 | 3.1 | ☐ |
 | 3.3 | Sticky-error toasts | 3 | U§2.5 | 0.5 | — | ☐ |
