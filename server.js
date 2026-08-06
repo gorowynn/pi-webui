@@ -10,6 +10,7 @@ const { spawn, execSync } = require("child_process");
 const os = require("os");
 const { StringDecoder } = require("string_decoder");
 const { discoverWorkspaces, isKnownWorkspacePath } = require("./workspaces.js");
+const { opencodeGoWindows } = require("./public/usage-provider.js"); // dashboard HTML parser (shared with the browser, like md.js)
 
 const PORT = parseInt(process.env.PORT || "4317", 10);
 const PI_BIN = process.env.PI_BIN || "pi";
@@ -400,6 +401,72 @@ function codexUsage(token) {
 		req.on("error", reject);
 		req.setTimeout(8000, () =>
 			req.destroy(new Error("ChatGPT usage timeout")),
+		);
+		req.end();
+	});
+}
+
+// ponytail: OpenCode Go has NO public usage endpoint (unlike z.ai/Codex) — the
+// quota windows live in the dashboard page, which needs the browser-session
+// cookie, not the API key pi stores. Credential resolution mirrors
+// opencode-bar: OPENCODE_GO_WORKSPACE_ID + OPENCODE_GO_AUTH_COOKIE env, then
+// the ~/.config/{opencode-bar,opencode-quota}/opencode-go.json config file
+// ({workspaceId, authCookie}), then the UI-paste headers (so a user can supply
+// creds without a server restart — same fallback slot as the z.ai key paste).
+function opencodeGoCreds() {
+	const envW = process.env.OPENCODE_GO_WORKSPACE_ID;
+	const envC = process.env.OPENCODE_GO_AUTH_COOKIE;
+	if (envW && envC) return { workspaceID: envW, authCookie: envC };
+	for (const rel of [
+		".config/opencode-bar/opencode-go.json",
+		".config/opencode-quota/opencode-go.json",
+	]) {
+		try {
+			const o = JSON.parse(
+				fs.readFileSync(path.join(os.homedir(), rel), "utf8"),
+			);
+			const w = o.workspaceId || o.workspaceID || o.workspace_id;
+			const c = o.authCookie || o.auth_cookie || o.cookie;
+			if (typeof w === "string" && w && typeof c === "string" && c)
+				return { workspaceID: w, authCookie: c };
+		} catch {}
+	}
+	return null;
+}
+// ponytail: proxy the Go dashboard (opencode.ai/workspace/<id>/go). The cookie
+// header is `auth=<value>` unless the pasted value already includes `auth=`.
+// Browser-ish UA like opencode-bar: the page may serve different markup to
+// curl. 8s cap like the other provider proxies.
+function opencodeGoUsage(creds) {
+	return new Promise((resolve, reject) => {
+		const req = https.request(
+			{
+				hostname: "opencode.ai",
+				path:
+					"/workspace/" +
+					encodeURIComponent(creds.workspaceID) +
+					"/go",
+				method: "GET",
+				headers: {
+					Cookie: /auth=/.test(creds.authCookie)
+						? creds.authCookie
+						: "auth=" + creds.authCookie,
+					Accept: "text/html,application/xhtml+xml",
+					"User-Agent":
+						"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+				},
+			},
+			(resp) => {
+				let body = "";
+				resp.on("data", (c) => (body += c));
+				resp.on("end", () =>
+					resolve({ status: resp.statusCode, body }),
+				);
+			},
+		);
+		req.on("error", reject);
+		req.setTimeout(8000, () =>
+			req.destroy(new Error("opencode.ai timeout")),
 		);
 		req.end();
 	});
@@ -841,6 +908,55 @@ const server = http.createServer(async (req, res) => {
 					data,
 					error,
 					raw: data ? null : body.slice(0, 2000),
+				}),
+			);
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+
+	if (req.method === "GET" && url.pathname === "/api/opencode-usage") {
+		// OpenCode Go quota proxy. GET so it's read-only; localhost-bound like
+		// the rest. The dashboard HTML (not an API) carries the three usage
+		// windows; parse it server-side so the raw page never reaches the
+		// browser. Creds: env -> config file -> X-OpenCode-Go-* headers (paste).
+		const hW = req.headers["x-opencode-go-workspace"];
+		const hC = req.headers["x-opencode-go-cookie"];
+		const creds =
+			opencodeGoCreds() ||
+			(typeof hW === "string" && typeof hC === "string" && hW && hC
+				? { workspaceID: hW, authCookie: hC }
+				: null);
+		if (!creds) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({
+					ok: false,
+					error: "no workspace credentials",
+					hint: "set OPENCODE_GO_WORKSPACE_ID + OPENCODE_GO_AUTH_COOKIE, ~/.config/opencode-bar/opencode-go.json, or paste them in the usage dialog",
+				}),
+			);
+		}
+		try {
+			const { status, body } = await opencodeGoUsage(creds);
+			const windows = opencodeGoWindows(body);
+			const error =
+				status === 401 || status === 403
+					? "dashboard auth failed (cookie expired?)"
+					: status >= 300
+						? "usage request failed"
+						: Object.keys(windows).length
+							? null
+							: "no quota fields found in the dashboard page";
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({
+					ok: status >= 200 && status < 300 && !error,
+					status,
+					data: windows,
+					error,
+					raw: error ? body.slice(0, 2000) : null,
 				}),
 			);
 		} catch (e) {

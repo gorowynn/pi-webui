@@ -1147,6 +1147,19 @@ modal.addEventListener("click", (e) => {
 // fallback.
 const ZAI_KEY = "pi:zai-key";
 const getZaiKey = () => localStorage.getItem(ZAI_KEY) || "";
+// OpenCode Go has no public usage API: quota comes from the dashboard page, so
+// creds are the workspace id + browser-session cookie (like opencode-bar), not
+// the API key. Sent as headers to the server, which falls back to env vars /
+// ~/.config/opencode-bar/opencode-go.json when the browser has nothing stored.
+const GO_CREDS = "pi:opencode-go-creds";
+const getGoCreds = () => {
+	try {
+		const g = JSON.parse(localStorage.getItem(GO_CREDS) || "{}");
+		return g.w && g.c ? g : null;
+	} catch {
+		return null;
+	}
+};
 // ponytail: z.ai /quota/limit returns data.limits[] — each entry is either a
 // count pair (usage = total, currentValue = used) or percentage-only, with an
 // optional per-model usageDetails breakdown and a top-level level (plan). The
@@ -1241,6 +1254,32 @@ function codexLimits(data) {
 		})
 		.filter(Boolean);
 }
+// OpenCode Go subscription windows arrive server-side-parsed from the dashboard
+// HTML: rollingUsage (5h) / weeklyUsage / monthlyUsage, each
+// {usagePercent, resetInSec} (seconds until reset). Percent-only bars, like
+// Codex. The label IS the window, so no windowMs/window text is needed.
+function opencodeGoLimits(data) {
+	if (!data || typeof data !== "object") return [];
+	return [
+		["rollingUsage", "5h"],
+		["weeklyUsage", "7d"],
+		["monthlyUsage", "30d"],
+	]
+		.map(([key, label]) => {
+			const w = data[key];
+			if (!w || typeof w.usagePercent !== "number") return null;
+			const resetMs =
+				typeof w.resetInSec === "number"
+					? Date.now() + w.resetInSec * 1000
+					: NaN;
+			return {
+				label,
+				pct: w.usagePercent,
+				reset: Number.isFinite(resetMs) ? new Date(resetMs) : null,
+			};
+		})
+		.filter(Boolean);
+}
 function pctOf(b) {
 	if (typeof b.pct === "number") return Math.max(0, Math.min(100, b.pct));
 	return b.total > 0 ? Math.min(100, (b.used / b.total) * 100) : 0;
@@ -1252,20 +1291,33 @@ function quotaValue(b) {
 	return `${left.toFixed(1)}% left`;
 }
 function quotaEndpoint(provider) {
-	return usageViewKind(provider) === "codex-quota"
-		? "/api/codex-usage"
-		: "/api/zai-usage";
+	const k = usageViewKind(provider);
+	if (k === "codex-quota") return "/api/codex-usage";
+	if (k === "opencode-go-quota") return "/api/opencode-usage";
+	return "/api/zai-usage";
 }
 function quotaLimits(provider, data) {
-	return usageViewKind(provider) === "codex-quota"
-		? codexLimits(data)
-		: zaiLimits(data);
+	const k = usageViewKind(provider);
+	if (k === "codex-quota") return codexLimits(data);
+	if (k === "opencode-go-quota") return opencodeGoLimits(data);
+	return zaiLimits(data);
 }
 async function fetchQuotaUsage(provider) {
-	const opt =
-		usageViewKind(provider) === "zai-quota"
-			? { headers: { "X-ZAI-Key": getZaiKey() } }
-			: undefined;
+	const k = usageViewKind(provider);
+	let opt;
+	if (k === "zai-quota") opt = { headers: { "X-ZAI-Key": getZaiKey() } };
+	else if (k === "opencode-go-quota") {
+		let go = { w: "", c: "" };
+		try {
+			go = JSON.parse(localStorage.getItem(GO_CREDS) || "{}");
+		} catch {}
+		opt = {
+			headers: {
+				"X-OpenCode-Go-Workspace": go.w || "",
+				"X-OpenCode-Go-Cookie": go.c || "",
+			},
+		};
+	}
 	return fetch(quotaEndpoint(provider), opt).then((r) => r.json());
 }
 function zaiBarHtml(b) {
@@ -1314,11 +1366,12 @@ function inPeakHours() {
 	const h = new Date().getUTCHours();
 	return h >= 6 && h < 10;
 }
-// Compact cards keep both Codex windows visible in the narrow header. Each
-// quota bar owns the reset text directly beneath it, so their values can't mix.
+// Compact cards keep all three windows visible in the narrow header (Codex has
+// two, OpenCode Go has three). Each quota bar owns the reset text directly
+// beneath it, so their values can't mix.
 function renderUsageInline(bars) {
 	return bars
-		.slice(0, 2)
+		.slice(0, 3)
 		.map((bar) => {
 			const pct = pctOf(bar);
 			const cls = pct >= 90 ? "hi" : pct >= 70 ? "mid" : "lo";
@@ -1343,7 +1396,37 @@ function usageKeyForm() {
 		`<div class="row"><button>Save &amp; load</button></div></form>`
 	);
 }
+function opencodeGoCredsForm() {
+	return (
+		`<p class="um-hint">OpenCode Go has no public usage API — the quota windows ` +
+		`live in the dashboard, so it needs your dashboard login, not the API key. ` +
+		`Stored only in this browser; the server also reads ` +
+		`<code>OPENCODE_GO_WORKSPACE_ID</code> + ` +
+		`<code>OPENCODE_GO_AUTH_COOKIE</code> env or ` +
+		`<code>~/.config/opencode-bar/opencode-go.json</code>.</p>` +
+		`<details class="um-raw"><summary>how to get these</summary>` +
+		`<ol class="um-hint">` +
+		`<li>Log in at <code>opencode.ai</code> (the console).</li>` +
+		`<li>Open the <b>Go</b> dashboard — either from the sidebar or by navigating ` +
+		`to <code>opencode.ai/workspace/…/go</code>.</li>` +
+		`<li>In the address bar, copy the <code>wrk_…</code> part of the URL — ` +
+		`that's the workspace ID. Paste it into the first field.</li>` +
+		`<li>Press <code>F12</code> → <b>Application</b> tab → <b>Cookies</b> → ` +
+		`<code>https://opencode.ai</code> (in Chrome/Edge; <code>Storage</code> → ` +
+		`<b>Cookies</b> in Firefox).</li>` +
+		`<li>Find the <b><code>auth</code></b> cookie and copy its value (the long ` +
+		`token — or the whole <code>auth=…</code> string, both work). Paste it into ` +
+		`the second field.</li>` +
+		`<li>Save — the bar then shows the 5h / 7d / 30d quota windows. If you ` +
+		`have several workspaces, pick the one whose dashboard URL ends in /go.</li>` +
+		`</ol></details>` +
+		`<form id="um-go-form"><input id="um-go-w" class="um-key" placeholder="workspace id (wrk_…)" autocomplete="off" />` +
+		`<input type="password" id="um-go-c" class="um-key" placeholder="opencode.ai auth cookie" autocomplete="off" />` +
+		`<div class="row"><button>Save &amp; load</button></div></form>`
+	);
+}
 function usageProviderLabel(provider) {
+	if (/opencode/i.test(provider || "")) return "OpenCode Go";
 	return /codex/i.test(provider || "") ? "ChatGPT/Codex" : provider || "model";
 }
 let sessionUsage = null;
@@ -1374,13 +1457,13 @@ async function renderUsage(provider) {
 		return renderSessionUsage(provider);
 	const u = await fetchQuotaUsage(provider);
 	if (provider !== currentProvider) return null;
-	if (
-		!u.ok &&
-		usageViewKind(provider) === "zai-quota" &&
-		u.error === "no API key" &&
-		!getZaiKey()
-	)
-		return usageKeyForm();
+	if (!u.ok && usageViewKind(provider) === "zai-quota") {
+		if (u.error === "no API key" && !getZaiKey()) return usageKeyForm();
+	}
+	if (!u.ok && usageViewKind(provider) === "opencode-go-quota") {
+		if (u.error === "no workspace credentials" && !getGoCreds())
+			return opencodeGoCredsForm();
+	}
 	if (!u.ok)
 		return (
 			`<p class="um-err">\u26a0 ${esc(u.error || "request failed")}` +
@@ -1429,6 +1512,20 @@ async function showUsage() {
 			refreshUsageBar();
 			showUsage();
 		};
+	const goForm = card.querySelector("#um-go-form");
+	if (goForm)
+		goForm.onsubmit = (e) => {
+			e.preventDefault();
+			localStorage.setItem(
+				GO_CREDS,
+				JSON.stringify({
+					w: $("um-go-w").value.trim(),
+					c: $("um-go-c").value.trim(),
+				}),
+			);
+			refreshUsageBar();
+			showUsage();
+		};
 }
 
 // ---- usage bar: matches the active model provider ----
@@ -1458,6 +1555,23 @@ async function refreshUsageBar() {
 	}
 	if (provider !== currentProvider) return;
 	if (!u.ok) {
+		// ponytail: a missing-key/missing-creds failure is actionable — show a
+		// placeholder bar (click → setup form) instead of hiding silently. Other
+		// errors (network, stale cookie) stay hidden; they'd just re-fail every
+		// 60s poll.
+		const missing =
+			(usageViewKind(provider) === "zai-quota" && u.error === "no API key") ||
+			(usageViewKind(provider) === "opencode-go-quota" &&
+				u.error === "no workspace credentials");
+		if (missing) {
+			setSafeHtml(
+				usageBar,
+				`<div class="ub-row"><span class="ub-lbl">${esc(usageProviderLabel(provider))}</span><span class="ub-val">no quota creds</span></div>`,
+			);
+			usageBar.style.display = "flex";
+			usageBar.title = `${usageProviderLabel(provider)} — click to set up quota tracking`;
+			return;
+		}
 		usageBar.style.display = "none";
 		return;
 	}
@@ -1468,7 +1582,12 @@ async function refreshUsageBar() {
 	}
 	setSafeHtml(usageBar, renderUsageInline(bars));
 	usageBar.style.display = "flex";
-	usageBar.classList.toggle("peak", inPeakHours());
+	// ponytail: the peak-hours badge is z.ai tokencost-specific — don't show it
+	// for Codex or OpenCode Go quota bars.
+	usageBar.classList.toggle(
+		"peak",
+		usageViewKind(provider) === "zai-quota" && inPeakHours(),
+	);
 	usageBar.title = `${usageProviderLabel(provider)} quota — click for details`;
 }
 usageBar.onclick = showUsage;

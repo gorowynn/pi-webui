@@ -6,6 +6,36 @@
 
 ## Changelog
 
+### 2026-08-05 — feat(usage): OpenCode Go subscription quota tracking in the usage bar
+
+- **Why:** the usage bar already covers z.ai (quota) and Codex (quota); OpenCode
+  Go is a third quota-based provider pi can log into (`opencode-go` in pi's
+  auth.json). Unlike z.ai/Codex it has **no public usage API** — verified against
+  upstream anomalyco/opencode source (zen routes are inference-only, response
+  headers scrubbed) and opencode-bar, which reads the quota windows out of the
+  dashboard page.
+- **Server (`server.js`):** new `GET /api/opencode-usage` proxy for
+  `https://opencode.ai/workspace/<id>/go` (dashboard HTML, `Cookie: auth=<…>`,
+  browser UA, 8s cap). The API key pi stores can't fetch quota (only validates
+  against `/zen/go/v1/models`), so creds are the browser-session cookie:
+  `OPENCODE_GO_WORKSPACE_ID` + `OPENCODE_GO_AUTH_COOKIE` env →
+  `~/.config/{opencode-bar,opencode-quota}/opencode-go.json`
+  (`{workspaceId, authCookie}`) → `X-OpenCode-Go-*` paste headers (same fallback
+  slot as the z.ai key paste). 401/403 → "cookie expired".
+- **Parser (`public/usage-provider.js`):** `opencodeGoWindows(html)` — port of
+  opencode-bar's dashboard parser (entity/escape normalization, then regex the
+  flat `{status,resetInSec,usagePercent}` object after `rollingUsage` /
+  `weeklyUsage` / `monthlyUsage`), handles both `__next_f.push` JSON-stringified
+  and SolidStart `$R[n]={…}` serialization. Shared browser/Node like md.js;
+  server.js `require`s it so raw HTML never crosses the wire.
+- **Client (`public/app.js`):** `opencode-go` → `opencode-go-quota` kind; three
+  percent bars (5h / 7d / 30d) in the header + usage modal via
+  `opencodeGoLimits()`; a workspace-id + auth-cookie form in the modal when no
+  creds are configured (localStorage `pi:opencode-go-creds`, sent as headers);
+  peak-hours badge gated to z.ai only (it was leaking onto Codex bars too).
+- **Tests:** `test/usage-provider.test.js` extended with opencode-bar's fixture
+  shapes (escaped JSON, SolidStart refs, partial windows, no-data).
+
 ### 2026-07-22 — docs(design): restructure `docs/design.md` into the DESIGN.md format (google-labs-code/design.md)
 
 - **Why:** adopt a standard, machine-readable design-spec format so the visual
