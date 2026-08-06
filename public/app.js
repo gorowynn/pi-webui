@@ -3594,6 +3594,12 @@ updateIdeBadge(window.piWebuiIdeInfo || null);
 // factored out so both paths share them (the SSE branches stay as back-compat
 // for any future fire-and-forget init id, and sb-stats still serves periodic
 // refreshStats polling).
+// Last snapshot state, kept for the on-demand session-analysis modal (plan 4.3):
+// the messages array (with per-message usage), aggregate stats, and whether a
+// turn is live. Refreshed by every apply* call so the modal reflects the latest.
+let lastMessages = [],
+	lastStats = null,
+	lastRunning = false;
 function applyState(data) {
 	if (!data) return;
 	if (data.thinkingLevel != null) setThinkSel(data.thinkingLevel);
@@ -3602,6 +3608,7 @@ function applyState(data) {
 		// Previously only the true branch set the flag, so a reconnect after a
 		// mid-turn crash left a stale "streaming" indicator pinned forever.
 		setStreaming(!!data.isStreaming);
+		lastRunning = !!data.isStreaming;
 		if (data.isStreaming) setActivity("working…", true);
 	}
 	if (data.isCompacting) {
@@ -3619,10 +3626,15 @@ function applyState(data) {
 }
 function applyMessages(messages) {
 	if (!Array.isArray(messages)) return;
+	lastMessages = messages;
 	setSafeHtml(transcript, "");
 	toolBlocks.clear();
 	replayArgs = {}; // rebuild the toolCall-id → args map for this replay
-	messages.forEach(renderMessage);
+	messages.forEach((msg, idx) => {
+		renderMessage(msg);
+		const el = transcript.lastChild;
+		if (el && el.setAttribute) el.setAttribute("data-mi", String(idx));
+	});
 	scrollDown();
 }
 function applyCommands(cmds) {
@@ -3633,6 +3645,7 @@ function applyModels(models) {
 }
 function applyStats(data) {
 	if (!data) return;
+	lastStats = data;
 	const t = data.tokens || {};
 	if (usageViewKind(currentProvider) === "session") {
 		sessionUsage = t;
@@ -4618,6 +4631,172 @@ document.addEventListener("keydown", (e) => {
 	}
 });
 
+// ---- session-analysis modal (plan 4.3) ----
+// An on-demand cost/tools dashboard: HTML/CSS bars + ranked lists, click→scroll.
+// §6.2 recommends a Usage panel over graphs first; this is that panel as a free
+// modal. Runs analyzeSession (plan 4.2) on the last snapshot's messages+stats.
+function scrollToMessage(mi) {
+	const el = transcript.querySelector('[data-mi="' + mi + '"]');
+	if (!el) return;
+	el.scrollIntoView({ block: "center", behavior: "smooth" });
+	el.classList.add("mi-flash");
+	setTimeout(() => el.classList.remove("mi-flash"), 1400);
+}
+function anPct(part, whole) {
+	return whole > 0 ? Math.round((part / whole) * 100) : 0;
+}
+function showAnalysisModal() {
+	const SA = window.sessionAnalysis;
+	if (!SA || !SA.analyzeSession) return;
+	const a = SA.analyzeSession(lastMessages, lastStats, lastRunning);
+	const turns = a.turns;
+	// bar metric: cost if any attributed, else output tokens (still useful signal)
+	const useCost = a.attributedCost > 0;
+	const metric = useCost
+		? (t) => t.cost
+		: (t) => t.usage.output;
+	const shown = turns.slice(-Math.min(80, turns.length));
+	const maxV = shown.reduce((m, t) => Math.max(m, metric(t)), 0);
+	const bars = shown
+		.map((t) => {
+			const v = metric(t);
+			const h = maxV > 0 ? Math.max(3, Math.round((v / maxV) * 100)) : 3;
+			const lbl =
+				"turn " + t.number + (useCost ? " · " + SA.formatTurnCost(v) : " · " + v + " out tok");
+			return (
+				'<button type="button" class="an-bar' +
+				(useCost && v === maxV && maxV > 0 ? " peak" : "") +
+				'" data-mi="' +
+				t.messageIndex +
+				'" title="' +
+				esc(lbl) +
+				'" style="height:' +
+				h +
+				'%"></button>'
+			);
+		})
+		.join("");
+	const cacheHit = anPct(a.tokens.cacheRead, a.tokens.cacheMiss + a.tokens.cacheRead);
+	const costliest = turns
+		.slice()
+		.sort((x, y) => y.cost - x.cost)
+		.slice(0, 5)
+		.filter((t) => t.cost > 0);
+	const failed = a.toolCalls.filter((c) => c.isError);
+	const topTools = a.tools.slice(0, 6);
+	const stat = (val, lbl) =>
+		'<div class="an-stat"><span class="an-val">' +
+		esc(val) +
+		'</span><span class="an-lbl">' +
+		esc(lbl) +
+		"</span></div>";
+	const tok = (lbl, v) =>
+		"<div class=\"an-tok\"><span class=\"an-tok-v\">" +
+		esc(SA.formatTokens(v)) +
+		'</span><span class="an-tok-l">' +
+		esc(lbl) +
+		"</span></div>";
+	// ranked list item that jumps to a message
+	const jump = (mi, main, sub) =>
+		'<button type="button" class="an-item" data-mi="' +
+		mi +
+		'"><span class="an-item-main">' +
+		esc(main) +
+		'</span><span class="an-item-sub">' +
+		esc(sub || "") +
+		"</span></button>";
+	const parts = [];
+	parts.push('<div class="analysis">');
+	// stat row
+	parts.push('<div class="an-head">');
+	parts.push(stat(a.costAvailable ? SA.formatTurnCost(a.totalCost) : "—", "total"));
+	parts.push(stat(String(a.turnCount), "turns"));
+	parts.push(stat(a.turnCount ? SA.formatTurnCost(a.averageTurnCost) : "—", "avg/turn"));
+	parts.push(stat(a.turnCount ? SA.formatTurnCost(a.medianTurnCost) : "—", "median"));
+	parts.push(stat(a.contextPercent != null ? Math.round(a.contextPercent) + "%" : "—", "context"));
+	parts.push(stat(a.tokensAvailable ? cacheHit + "%" : "—", "cache hit"));
+	parts.push("</div>");
+	// per-turn bars
+	if (turns.length) {
+		parts.push('<div class="an-section">');
+		parts.push(
+			'<div class="an-sec-h">' +
+				esc(useCost ? "cost per turn" : "output tokens per turn") +
+				' <span class="an-sec-sub">(last ' +
+				shown.length +
+				(turns.length > shown.length ? " of " + turns.length : "") +
+				" · click to jump)</span></div>",
+		);
+		parts.push('<div class="an-bars">' + bars + "</div>");
+		parts.push("</div>");
+	}
+	// token breakdown
+	if (a.tokensAvailable) {
+		parts.push('<div class="an-section">');
+		parts.push('<div class="an-sec-h">tokens</div>');
+		parts.push('<div class="an-toks">');
+		parts.push(tok("cache-miss", a.tokens.cacheMiss));
+		parts.push(tok("cache-read", a.tokens.cacheRead));
+		parts.push(tok("cache-write", a.tokens.cacheWrite));
+		parts.push(tok("output", a.tokens.output));
+		parts.push("</div></div>");
+	}
+	// ranked lists
+	parts.push('<div class="an-cols">');
+	if (topTools.length) {
+		parts.push('<div class="an-section"><div class="an-sec-h">tools</div>');
+		parts.push(
+			topTools
+				.map((t) =>
+					jump(
+						-1,
+						t.name + " ×" + t.count,
+						t.failed ? t.failed + " failed" : SA.formatTokens(t.outputLength) + " out",
+					),
+				)
+				.join(""),
+		);
+		parts.push("</div>");
+	}
+	if (costliest.length) {
+		parts.push('<div class="an-section"><div class="an-sec-h">costliest turns</div>');
+		parts.push(
+			costliest
+				.map((t) => jump(t.messageIndex, "turn " + t.number, SA.formatTurnCost(t.cost)))
+				.join(""),
+		);
+		parts.push("</div>");
+	}
+	if (failed.length) {
+		parts.push('<div class="an-section"><div class="an-sec-h">failed calls (' + failed.length + ")</div>");
+		parts.push(
+			failed
+				.slice(0, 12)
+				.map((c) =>
+					jump(
+						c.turnMessageIndex != null ? c.turnMessageIndex : -1,
+						c.name,
+						c.turnMessageIndex != null ? "turn near call" : "",
+					),
+				)
+				.join(""),
+		);
+		parts.push("</div>");
+	}
+	parts.push("</div></div>");
+	showModal(parts.join(""), true);
+	card.classList.add("an-card");
+	// wire click→scroll on every [data-mi] inside the card (skip -1 placeholders)
+	const clickable = card.querySelectorAll('[data-mi]:not([data-mi="-1"])');
+	clickable.forEach((el) => {
+		el.addEventListener("click", () => {
+			const mi = el.getAttribute("data-mi");
+			hideModal();
+			setTimeout(() => scrollToMessage(mi), 60);
+		});
+	});
+}
+
 // ---- register built-in UI commands ----
 registerCommand("new-session", "new session", "start a fresh session", () =>
 	api({ type: "new_session" }),
@@ -4629,6 +4808,7 @@ registerCommand("stop", "stop generation", "abort the current turn", () =>
 	api({ type: "abort" }),
 );
 registerCommand("settings", "settings", "open the settings panel", openSettings);
+registerCommand("usage", "session usage", "cost/tool/cache breakdown for this session", showAnalysisModal);
 registerCommand(
 	"scroll-bottom",
 	"scroll to bottom",

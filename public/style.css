@@ -2980,3 +2980,167 @@ body.sdd-on.sdd-open #sddbar {
    in the app's global mono (GitHub-dark style). paperlike overrides via
    [data-theme="paperlike"].
 */
+
+/* ===== session-analysis modal (plan 4.3) ===== */
+/* A wider free modal (between the 640px default and the 1500px .wide diff
+   preview) so the bars + two-column ranked lists breathe. */
+#modal-wrap:has(.card.an-card) {
+	width: min(760px, 94vw);
+}
+.analysis {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+/* headline stat row */
+.an-head {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+.an-stat {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	flex: 1 1 90px;
+	min-width: 80px;
+	padding: 8px 6px;
+	background: var(--surface-inset);
+	border: 1px solid var(--line);
+	border-radius: calc(var(--r) - 2px);
+}
+.an-val {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 15px;
+	font-weight: 600;
+	color: var(--fg);
+}
+.an-lbl {
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--muted);
+	margin-top: 2px;
+}
+.an-section {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+.an-sec-h {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--fg);
+}
+.an-sec-sub {
+	font-weight: 400;
+	color: var(--muted);
+}
+/* cost-per-turn bars: a flex row of vertical <button>s, baseline-aligned */
+.an-bars {
+	display: flex;
+	align-items: flex-end;
+	gap: 1px;
+	min-height: 64px;
+	padding: 4px 0;
+}
+.an-bar {
+	flex: 1 1 0;
+	min-width: 2px;
+	max-width: 14px;
+	border: none;
+	border-radius: 2px 2px 0 0;
+	background: color-mix(in srgb, var(--accent) 55%, var(--line));
+	padding: 0;
+	cursor: pointer;
+	transition: background 0.12s;
+}
+.an-bar:hover {
+	background: var(--accent);
+}
+.an-bar.peak {
+	background: var(--accent);
+}
+/* token breakdown */
+.an-toks {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+.an-tok {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 120px;
+	padding: 6px 8px;
+	background: var(--surface-inset);
+	border: 1px solid var(--line);
+	border-radius: calc(var(--r) - 2px);
+}
+.an-tok-v {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--fg);
+}
+.an-tok-l {
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--muted);
+}
+/* two-column ranked lists */
+.an-cols {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 14px;
+}
+@media (max-width: 620px) {
+	.an-cols {
+		grid-template-columns: 1fr;
+	}
+}
+.an-item {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+	width: 100%;
+	border: none;
+	background: none;
+	padding: 5px 4px;
+	border-bottom: 1px solid var(--line);
+	cursor: pointer;
+	text-align: left;
+	font-size: 12px;
+	color: var(--fg);
+}
+.an-item:hover {
+	background: var(--surface-inset);
+}
+.an-item-main {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.an-item-sub {
+	color: var(--muted);
+	font-size: 11px;
+	white-space: nowrap;
+}
+/* click→scroll flash highlight on a transcript message */
+.mi-flash {
+	animation: mi-flash 1.4s ease;
+}
+@keyframes mi-flash {
+	0% {
+		background: color-mix(in srgb, var(--accent) 35%, transparent);
+	}
+	100% {
+		background: transparent;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.mi-flash {
+		animation: none;
+	}
+	.an-bar {
+		transition: none;
+	}
+}
