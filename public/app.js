@@ -445,7 +445,9 @@ function highlightCode(root) {
 	defer.forEach((b) => hlObserver.observe(b));
 }
 function hlEl(el) {
-	el.dataset.highlighted = "1";
+	// hljs sets data-highlighted itself after highlighting — the guard at the
+	// top of highlightElement() SKIPS + warns if the flag is pre-set, so never
+	// set it here (that silently unhighlighted every block).
 	try {
 		hljs.highlightElement(el);
 	} catch (e) {}
@@ -2368,6 +2370,7 @@ function askQuestion(args) {
 	let step = 0; // current question index (one-at-a-time multistep)
 	const total = qs.length;
 	showModal("", false, true);
+	card.classList.add("wide");
 	toast("Your input is needed", "warn");
 
 	// advance to the next question, or commit once the last is answered
@@ -3101,7 +3104,7 @@ function installCtxStepper(card, enabled, rebuild) {
 // The webui permission modal, factored out so the IDE-diff path can fall back
 // to it. For edit/write it renders an EDITABLE side-by-side so the user can
 // tweak pi's proposal before approving; other tools get the read-only preview.
-async function openSelectModal(req, notify = false) {
+async function openSelectModal(req) {
 	const { id } = req;
 	const rawOpts = Array.isArray(req.options) ? req.options : [];
 	const allowed =
@@ -3131,8 +3134,9 @@ async function openSelectModal(req, notify = false) {
 		false,
 		true,
 	);
-	if (notify)
-		toast(isPermission ? "Approval required" : "Your input is needed", "warn");
+	// every approval gets the opaque full-column surface (not the translucent
+	// compact card) — the diff preview below only widens it further.
+	card.classList.add("wide");
 	const isEditWrite =
 		(pendingApproval && pendingApproval.toolName) === "edit" ||
 		(pendingApproval && pendingApproval.toolName) === "write" ||
@@ -3172,10 +3176,7 @@ async function openSelectModal(req, notify = false) {
 		buildDiff();
 	} else {
 		const stack = renderEditDiffPreviews(card);
-		if (stack) {
-			card.classList.add("wide");
-			card.querySelector(".opts").before(stack);
-		}
+		if (stack) card.querySelector(".opts").before(stack);
 	}
 	const list = card.querySelector(".opts");
 	opts.forEach((o) => {
@@ -3314,7 +3315,7 @@ function uiRequest(req) {
 			void diffInIde(req);
 			return;
 		}
-		openSelectModal(req, true);
+		openSelectModal(req);
 	} else if (method === "confirm") {
 		pendingApproval = {
 			requestId: id,
@@ -3332,9 +3333,8 @@ function uiRequest(req) {
 			false,
 			true,
 		);
-		toast("Approval required", "warn");
-		const stack = renderEditDiffPreviews(card);
-		if (stack) card.classList.add("wide");
+		card.classList.add("wide");
+		renderEditDiffPreviews(card);
 		const row = document.createElement("div");
 		row.className = "row";
 		const no = document.createElement("button");
@@ -3364,6 +3364,7 @@ function uiRequest(req) {
 			provenance: lastSafeguardCtx,
 		};
 		showModal(`<h3>${esc(req.title || "Input")}</h3>`, false, true);
+		card.classList.add("wide");
 		toast("Your input is needed", "warn");
 		const inp = document.createElement("input");
 		inp.type = "text";
@@ -3394,6 +3395,7 @@ function uiRequest(req) {
 			provenance: lastSafeguardCtx,
 		};
 		showModal(`<h3>${esc(req.title || "Edit")}</h3>`, false, true);
+		card.classList.add("wide");
 		toast("Your input is needed", "warn");
 		const ta = document.createElement("textarea");
 		ta.rows = 12;

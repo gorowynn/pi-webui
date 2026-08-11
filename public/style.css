@@ -1751,10 +1751,11 @@ body.w-narrow.ctx-hot #compact {
 	max-width: 100%; /* never overflow a shrunken chat-area modal (w-wide rails) */
 	padding-bottom: env(safe-area-inset-bottom); /* spec FR-9 */
 }
-/* ponytail: blocking tool interactions use .card.wide and are REAL full-page
-   modals: opaque, fill the viewport, no floating card. :has() keys off the
-   card class; its specificity overrides compact-dialog narrow rules so every
-   approval/input request gets the same full-page surface. */
+/* ponytail: blocking tool interactions use .card.wide and are REAL full-
+   column modals: opaque, fill the #scroll-wrap area, no floating card.
+   :has() keys off the card class; its specificity overrides compact-dialog
+   narrow rules so every approval/input request gets the same full-surface
+   look (the surface itself is anchored to #scroll-wrap below). */
 #modal:has(.card.wide) {
 	background: var(--surface, #0d1117);
 }
@@ -1776,21 +1777,29 @@ body.w-narrow.ctx-hot #compact {
 	top: 10px;
 	right: 14px;
 }
-/* w-wide push model: modals cover the CHAT AREA only — the sidebars/rail stay
-   visible + interactive (mirrors the body margin rules below). Drawer modes
-   (w-mid/w-narrow) keep the full-viewport overlay: their sidebars are transient
-   scrim overlays, not layout siblings. */
-body.w-wide.ws-on #modal {
-	left: var(--wsbar-w);
+/* Anchor the modal to the #scroll-wrap box (the chat column): it covers
+   exactly the transcript area — header, sidebars, footer + composer stay
+   visible and interactive; cards center within it. CSS anchor positioning
+   (@supports-guarded); browsers without it fall back to the full viewport. */
+#scroll-wrap {
+	anchor-name: --chat;
 }
-body.w-wide.sdd-on #modal {
-	right: 88px;
+@supports (top: anchor(--chat top)) {
+	#modal {
+		top: anchor(--chat top);
+		bottom: anchor(--chat bottom);
+		left: anchor(--chat left);
+		right: anchor(--chat right);
+	}
 }
-body.w-wide.sdd-on.sdd-open #modal {
-	right: min(
-		var(--rail-width, min(400px, 58vw)),
-		calc(100vw - var(--wsbar-w, 0px) - 560px)
-	);
+/* settings/permissions pages hide #scroll-wrap — a display:none anchor has no
+   box, so re-expand the modal to the viewport there (approvals still render
+   while a page is open). */
+body.page-open #modal {
+	top: 0;
+	bottom: 0;
+	left: 0;
+	right: 0;
 }
 #modal .card {
 	background: var(--surface);
