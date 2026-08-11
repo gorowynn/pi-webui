@@ -6,6 +6,8 @@ function setSafeHtml(el, html) {
 	el.replaceChildren(range.createContextualFragment(html));
 }
 const transcript = $("transcript");
+const feedEl = $("tfeed"); // role="feed" wrapper — turns render as articles (FR-8)
+const turnId = { n: 0 }; // incremented per turn — stable ids for role labels
 const inputEl = $("input");
 const sendBtn = $("send");
 const stopBtn = $("stop");
@@ -18,6 +20,10 @@ const dot = $("dot");
 const statusText = $("status-text");
 const activityEl = $("activity");
 const actLabel = $("act-label");
+// diff-view.js dual-mode module (window.diffView, loaded before app.js — plan
+// A5): LCS row builder + gutter/mode helpers. Render layer stays here (the
+// single escaper rule, GOTCHAS #12).
+const dv = window.diffView;
 
 let streaming = false;
 let commands = []; // [{name, description, source}]
@@ -36,6 +42,128 @@ let cur = null; // {bubble, textPar, textBuf, thinkEl, thinkBuf}
 // otherwise drain an accumulated list and starve later ones (the write bug).
 let curToolName = null;
 let curToolArgs = null;
+let curToolCallId = null; // last tool_execution_start id (U6 C8: approval identity)
+// U6 C8 (FR-25): toolCallId → args map, fed at tool_execution_start. The
+// permission paths (diff previews, ack marker) read args through the pending
+// approval's toolCallId instead of the curToolArgs singleton.
+const toolArgs = new Map();
+// U6 C8: the broker-tracked approval currently on screen (set before a
+// blocking select/confirm/input/editor renders, replayed from the snapshot on
+// reload). {requestId, method, title, message, options, toolCallId, toolName,
+// provenance} — provenance is the extension's safeguard context (tier, matched
+// rule, layer, reason, mode).
+let pendingApproval = null;
+let lastSafeguardCtx = null; // parsed provenance from the safeguard setStatus
+let pendingSending = false; // a decision POST is in flight — block dismissal
+
+// U6 C8 (FR-25): the args for the tool behind a pending approval, via the
+// toolCallId map (fallback: the curToolArgs singleton for pre-pending paths).
+function pendingToolArgs() {
+	const p = pendingApproval;
+	if (p && p.toolCallId && toolArgs.has(p.toolCallId))
+		return toolArgs.get(p.toolCallId);
+	return curToolArgs || {};
+}
+function clearPendingApproval() {
+	pendingApproval = null;
+	pendingSending = false;
+}
+// stable decision enums for the version-1 marker (FR-25)
+function decisionForLabel(label) {
+	if (label === "Allow once") return "allow-once";
+	if (label === "Allow for this session") return "allow-session";
+	if (label === "Allow always (save to config)") return "allow-always";
+	if (label === "Deny") return "deny";
+	return typeof label === "object" ? "edited" : "deny";
+}
+// U6 C8/FR-22/23/24: POST a decision; for the on-screen approval keep the UI
+// open until the server broadcasts approval_resolved (ack-before-close). 410
+// with "stale toolCallId" keeps the UI + offers retry; "resolved"/"unknown"
+// closes (another tab or a reload already decided).
+function sendApprovalDecision(id, value, decision) {
+	const body = { type: "extension_ui_response", id, value };
+	const p = pendingApproval;
+	// pi's confirm response is top-level; keep value too for broker/audit parity.
+	if (p && p.requestId === id && p.method === "confirm")
+		body.confirmed = value != null && value.confirmed === true;
+	if (p && p.requestId === id && p.toolCallId) {
+		body.marker = { v: 1, toolCallId: p.toolCallId, decision };
+	}
+	const awaiting = p && p.requestId === id;
+	if (awaiting) {
+		pendingSending = true;
+		pushReceipt({
+			t: Date.now(),
+			requestId: id,
+			toolName: p ? p.toolName : null,
+			decision,
+		}); // FR-28 bounded decision receipts
+	}
+	let settled = false;
+	fetch("/api/cmd", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(body),
+	})
+		.then((r) =>
+			r.json().catch(() => ({ ok: false, error: "http " + r.status })),
+		)
+		.then((j) => {
+			settled = true;
+			if (j && j.ok) return; // resolved — the broadcast closes the UI
+			const err = (j && j.error) || "decision rejected";
+			pendingSending = false;
+			if (err === "stale toolCallId") {
+				toast("Decision too late — retry", "err"); // UI stays (FR-24)
+				return;
+			}
+			if (err === "resolved" || err === "unknown") {
+				hideModal();
+				clearPendingApproval();
+				toast("Decision already recorded elsewhere", "warn");
+				return;
+			}
+			toast("Decision failed to send — retry", "err"); // UI stays (FR-22)
+		})
+		.catch(() => {
+			settled = true;
+			pendingSending = false;
+			toast("Decision failed to send — retry", "err");
+		});
+	// 2s watchdog: the broadcast never arrived — keep the UI + prompt a retry
+	setTimeout(() => {
+		if (!settled && pendingSending && awaiting) {
+			pendingSending = false;
+			toast("Decision not acknowledged — retry", "warn");
+		}
+	}, 2000);
+}
+// U6 C9 (FR-28): bounded decision receipts (last 50) — the audit view's
+// "recent decisions" + retry semantics. In-memory only.
+const APPROVAL_RECEIPTS_MAX = 50;
+const approvalReceipts = [];
+function pushReceipt(rec) {
+	approvalReceipts.push(rec);
+	if (approvalReceipts.length > APPROVAL_RECEIPTS_MAX) approvalReceipts.shift();
+}
+// Decision labels available for this approval. Mandatory-ask keeps only
+// Allow once / Deny even in the full-page modal.
+function approvalOptionLabels() {
+	const p = pendingApproval;
+	if (!p || !Array.isArray(p.options)) return ["Allow once", "Deny"];
+	const labels = p.options.map((o) => (typeof o === "string" ? o : o.label));
+	if (p.provenance && p.provenance.tier === "mandatory-ask") {
+		return labels.filter((l) => l === "Allow once" || l === "Deny");
+	}
+	return labels;
+}
+// turn-generation counter: bumped on EVERY agent_start (live and replay). The
+// snapshot re-check (snap-recheck) compares it to distinguish "the turn the
+// snapshot described has ended" from "a NEW turn started since" — so a stale
+// snapshot can never clobber a live turn's status, nor leave a dead turn's
+// activity bar stuck on "writing…".
+let agentStarts = 0;
+let snapRecheckStarts = -1;
 
 function api(obj) {
 	const p = fetch("/api/cmd", {
@@ -158,11 +286,13 @@ if (jumpBottom)
 	});
 
 function addUser(text, images) {
-	const m = document.createElement("div");
+	const m = document.createElement("article");
 	m.className = "msg";
+	const roleId = "turn-" + ++turnId.n + "-role";
+	m.setAttribute("aria-labelledby", roleId);
 	setSafeHtml(
 		m,
-		`<div class="bubble user"><div class="role you">you</div></div>`,
+		`<div class="bubble user"><div class="role you" id="${roleId}">you</div></div>`,
 	);
 	const b = m.querySelector(".user");
 	const span = document.createElement("div");
@@ -181,11 +311,12 @@ function addUser(text, images) {
 		}
 		b.appendChild(grid);
 	}
-	transcript.appendChild(m);
+	feedEl.appendChild(m);
 	pinned = true;
 	unread = 0;
 	scrollDown();
 	refreshJump();
+	updateEmptyState(); // spec FR-8 — a live first message hides the empty state
 }
 // ponytail: render an extension `notify` payload as a real assistant
 // message in the transcript (markdown-formatted). Used for substantial /
@@ -194,21 +325,31 @@ function addUser(text, images) {
 // Built standalone: it does NOT touch the global `cur`, so it's safe to
 // call mid-stream without hijacking the in-progress assistant bubble.
 function addAssistantText(text) {
-	const m = document.createElement("div");
+	const m = document.createElement("article");
 	m.className = "msg";
-	setSafeHtml(m, `<div class="bubble"><div class="role">assistant</div></div>`);
+	const roleId = "turn-" + ++turnId.n + "-role";
+	m.setAttribute("aria-labelledby", roleId);
+	setSafeHtml(
+		m,
+		`<div class="bubble"><div class="role" id="${roleId}">assistant</div></div>`,
+	);
 	const p = document.createElement("div");
 	setSafeHtml(p, md(text));
 	m.querySelector(".bubble").appendChild(p);
-	transcript.appendChild(m);
+	feedEl.appendChild(m);
 	scrollDown();
 }
 
 function newAssistantBubble() {
-	const m = document.createElement("div");
+	const m = document.createElement("article");
 	m.className = "msg";
-	setSafeHtml(m, `<div class="bubble"><div class="role">assistant</div></div>`);
-	transcript.appendChild(m);
+	const roleId = "turn-" + ++turnId.n + "-role";
+	m.setAttribute("aria-labelledby", roleId);
+	setSafeHtml(
+		m,
+		`<div class="bubble"><div class="role" id="${roleId}">assistant</div></div>`,
+	);
+	feedEl.appendChild(m);
 	cur = {
 		bubble: m.querySelector(".bubble"),
 		textPar: null,
@@ -495,27 +636,21 @@ function scheduleRender() {
 function toolBlock(id, name, args, running) {
 	let wrap = toolBlocks.get(id);
 	if (!wrap) {
-		const el = document.createElement("div");
+		const el = document.createElement("article");
 		el.className = "tool" + (running ? " run open" : "");
-		el.setAttribute("role", "group");
+		// article carries the turn semantics (FR-8); no role="group" needed
 		const detail = toolPresent.toolCallDetail(name, args);
 		const cmdHtml = detail ? `<span class="cmd">${esc(detail)}</span>` : "";
 		// card head: caret + tool name + readable command … duration (filled at
 		// end). .out-wrap is the grid-rows animation target (0fr→1fr on .open).
 		setSafeHtml(
 			el,
-			`<div class="head" role="button" tabindex="0" aria-expanded="${running ? "true" : "false"}"><span class="trow"><span class="caret">▸</span><span class="name">${esc(name || "tool")}</span>${cmdHtml}</span><span class="dur"></span></div><div class="out-wrap"><div class="out"></div></div>`,
+			`<button type="button" class="head" aria-expanded="${running ? "true" : "false"}"><span class="trow"><span class="caret">▸</span><span class="name">${esc(name || "tool")}</span>${cmdHtml}</span><span class="dur"></span></button><div class="out-wrap"><div class="out"></div></div>`,
 		);
 		const head = el.querySelector(".head");
 		const toggle = () => openTool(wrap, !el.classList.contains("open"));
-		head.addEventListener("click", toggle);
-		head.addEventListener("keydown", (e) => {
-			if (e.key === "Enter" || e.key === " ") {
-				e.preventDefault();
-				toggle();
-			}
-		});
-		transcript.appendChild(el);
+		head.addEventListener("click", toggle); // Enter/Space are native on <button>
+		feedEl.appendChild(el);
 		wrap = {
 			el,
 			out: el.querySelector(".out"),
@@ -745,82 +880,9 @@ function langOf(path) {
 	return map[e[1].toLowerCase()] || e[1].toLowerCase();
 }
 // ---- edit diff: LCS line diff from oldText/newText args ----
-// ponytail: O(n*m) Uint32Array DP table. Fine for typical edits; swap for
-// Myers if huge files start lagging the UI.
-function diffLines(a, b) {
-	const A = a == null || a === "" ? [] : String(a).split("\n");
-	const B = b == null || b === "" ? [] : String(b).split("\n");
-	const n = A.length,
-		m = B.length;
-	const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
-	for (let i = n - 1; i >= 0; i--)
-		for (let j = m - 1; j >= 0; j--)
-			dp[i][j] =
-				A[i] === B[j]
-					? dp[i + 1][j + 1] + 1
-					: Math.max(dp[i + 1][j], dp[i][j + 1]);
-	const res = [];
-	let i = 0,
-		j = 0;
-	while (i < n && j < m) {
-		if (A[i] === B[j]) {
-			res.push({ t: "ctx", s: A[i] });
-			i++;
-			j++;
-		} else if (dp[i + 1][j] >= dp[i][j + 1]) {
-			res.push({ t: "del", s: A[i] });
-			i++;
-		} else {
-			res.push({ t: "add", s: B[j] });
-			j++;
-		}
-	}
-	while (i < n) {
-		res.push({ t: "del", s: A[i] });
-		i++;
-	}
-	while (j < m) {
-		res.push({ t: "add", s: B[j] });
-		j++;
-	}
-	return res;
-}
-// ---- edit diff: side-by-side, new pane editable + live re-highlight ----
-// diffRows: align the LCS token stream into paired left/right rows so
-// both columns share exactly one row per line. A contiguous change run
-// (dels then adds) is zipped into rows: matched del+add = 'mod' (shows
-// old on the left, new on the right); a lone del/add leaves the opposite
-// side null (rendered as an empty placeholder so the row still exists).
-function diffRows(a, b) {
-	const toks = diffLines(a, b);
-	const rows = [];
-	let i = 0;
-	while (i < toks.length) {
-		if (toks[i].t === "ctx") {
-			rows.push({ kind: "ctx", left: toks[i].s, right: toks[i].s });
-			i++;
-		} else {
-			const dels = [],
-				adds = [];
-			while (i < toks.length && toks[i].t !== "ctx") {
-				if (toks[i].t === "del") dels.push(toks[i].s);
-				else adds.push(toks[i].s);
-				i++;
-			}
-			const n = Math.max(dels.length, adds.length);
-			for (let k = 0; k < n; k++) {
-				const d = dels[k],
-					a2 = adds[k];
-				rows.push({
-					kind: d != null && a2 != null ? "mod" : d != null ? "del" : "add",
-					left: d != null ? d : null,
-					right: a2 != null ? a2 : null,
-				});
-			}
-		}
-	}
-	return rows;
-}
+// diffLines/diffRows live in public/diff-view.js (dual-mode; window.diffView is
+// loaded before app.js — plan A5). Ponytail: O(n*m) Uint32Array DP table — fine
+// for typical edits; swap for Myers if huge files start lagging the UI.
 function rowsToSides(rows, hlOld, hlNew) {
 	const left = [],
 		right = [];
@@ -888,10 +950,6 @@ function sideHtml(lines) {
 		})
 		.join("");
 }
-function gutterCh(maxNum) {
-	const digits = String(Math.max(maxNum || 1, 1)).length;
-	return (digits < 2 ? 2 : digits) + "ch";
-}
 // ponytail: recover the hunk's real line offset from the file on disk so the
 // gutter shows actual file line numbers instead of restarting at 1 per hunk.
 // Pre-apply (permission modal) the file still has oldText; post-apply
@@ -921,6 +979,14 @@ function findStartLine(path, oldText, newText) {
 // body, with live re-highlight and an Apply button. Scrolling is synced
 // across every column (vertical + horizontal); gutters are sticky so line
 // numbers stay pinned during horizontal scroll.
+// basename for the diff editor's aria-label (plan A5 / FR-8.4): bare file
+// name, not the path. Null-safe.
+function baseName(p) {
+	const s = String(p || "");
+	const i = Math.max(s.lastIndexOf("/"), s.lastIndexOf("\\"));
+	return i >= 0 ? s.slice(i + 1) : s;
+}
+
 function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 	const ro = !!(opt && opt.readOnly);
 	const cap = !!(opt && opt.capture);
@@ -937,43 +1003,58 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 					`<span class="sx-line ln-ctx"><span class="sx-gnum">${i + 1}</span><span class="sx-ltxt">${esc(s === "" ? "\u00a0" : s)}</span></span>`,
 			)
 			.join("");
+	// paused state (plan A5 / FR-5.3): over the cell limit the Review pane
+	// shows an explicit label instead of blocking — editing + Apply keep
+	// working; the old column still renders plain so it stays scannable.
+	const pausedSide = () =>
+		`<div class="sx-line sx-paused"><span class="sx-ltxt">diff too large to preview — switch to Edit to continue</span></div>`;
+	// monotonic gutter reserve (plan A5 / FR-2): (digits+1)ch of the max
+	// line count seen — grows, never shrinks, so async line-number patches
+	// can't shift the text origin. Seeded from the initial texts before
+	// first focus. diff-view.js gutterReserveCh is the pure helper.
+	let gutterReserve = 0;
+	const takeReserve = (maxNum) => {
+		gutterReserve = dv.gutterReserveCh(maxNum, gutterReserve);
+		return gutterReserve;
+	};
 	const compute = (o, n) => {
 		const on = o ? o.split("\n").length : 0;
 		const nn = n ? n.split("\n").length : 0;
-		if (on * nn > DIFF_CELL_LIMIT) {
+		if (dv.largeHunkExceeds(on, nn, DIFF_CELL_LIMIT)) {
 			return {
 				leftHtml: plainSide(o || ""),
-				rightHtml: plainSide(n || ""),
-				gutter: gutterCh(Math.max(on, nn)),
+				rightHtml: pausedSide(),
+				gutter: takeReserve(Math.max(on, nn)),
 			};
 		}
 		const lang = langOf(path);
 		const sides = rowsToSides(
-			diffRows(o, n),
+			dv.diffRows(o, n),
 			highlightLines(o, lang),
 			highlightLines(n, lang),
 		);
 		return {
 			leftHtml: sideHtml(sides.left),
 			rightHtml: sideHtml(sides.right),
-			gutter: gutterCh(sides.maxNum),
+			gutter: takeReserve(sides.maxNum),
 		};
 	};
 	const init = compute(baseOld, baseNew);
 	setSafeHtml(
 		host,
 		`<div class="dpath">${esc(path || "(no path)")}${isWrite ? ' <span class="sx-tag">write</span>' : ""}</div>` +
-			`<div class="sxs" style="--sx-gutter:${init.gutter}">` +
+			`<div class="sxs" style="--sx-gutter:${init.gutter}ch">` +
 			`<div class="sx-col sx-old"><div class="sx-hdr">\u2212 original</div><div class="sx-body sx-left">${init.leftHtml}</div></div>` +
-			`<div class="sx-col sx-new"><div class="sx-hdr">+ ${cap ? "proposal" : "edited"}${ro || cap ? "" : ' <button class="sx-apply" type="button">Apply</button>'}</div>` +
+			`<div class="sx-col sx-new"><div class="sx-hdr"><span>+ ${cap ? "proposal" : "edited"}<span class="sx-dirty" hidden> · modified</span></span>${ro ? "" : '<span class="sx-mode" role="group" aria-label="view mode"><button type="button" class="sx-mode-btn" data-mode="review" aria-pressed="true">Review</button><button type="button" class="sx-mode-btn" data-mode="edit" aria-pressed="false">Edit</button></span>'}<button class="sx-reset" type="button" style="display:${ro ? "" : "none"}" hidden>Reset</button><button class="sx-apply" type="button" style="display:${ro || cap ? "none" : ""}">Apply</button></div>` +
 			(ro
 				? `<div class="sx-body sx-right">${init.rightHtml}</div>`
-				: `<div class="sx-edit"><div class="sx-body sx-hlbody" aria-hidden="true">${init.rightHtml}</div><textarea class="sx-ta" spellcheck="false" wrap="off"></textarea></div>`) +
+				: `<div class="sx-edit"><div class="sx-body sx-review">${init.rightHtml}</div><div class="sx-eedit"><div class="sx-egutter" aria-hidden="true"><div class="sx-egutter-in"></div></div><textarea class="sx-ta" spellcheck="false" wrap="off" aria-label="${esc(baseName(path))}" title="${esc(path)}"></textarea></div></div>`) +
 			`</div></div>`,
 	);
 	const leftBody = host.querySelector(".sx-left");
-	const rightBody = host.querySelector(".sx-right, .sx-hlbody");
+	const rightBody = host.querySelector(".sx-right, .sx-review");
 	let ta = null; // set only in editable mode
+	let gutterEl = null; // edit-mode gutter strip (scroll-synced to ta)
 	// ponytail: gutters render 1-based immediately, then snap to the hunk's
 	// real file line numbers once findStartLine resolves. Only the .sx-gnum
 	// text + the --sx-gutter width change -- diff rows, content, and the
@@ -996,7 +1077,7 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 		}
 		host
 			.querySelector(".sxs")
-			.style.setProperty("--sx-gutter", gutterCh(maxNum));
+			.style.setProperty("--sx-gutter", takeReserve(maxNum) + "ch");
 	};
 	if (!isWrite && baseOld) {
 		// ponytail: caller may pass a precomputed start line (a multi-hunk
@@ -1022,6 +1103,7 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 				t.scrollLeft = src.scrollLeft;
 			}
 		}
+		if (gutterEl && ta) gutterEl.scrollTop = ta.scrollTop;
 		syncing = false;
 	};
 	leftBody.addEventListener("scroll", () => syncFrom(leftBody));
@@ -1029,40 +1111,132 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 		rightBody.addEventListener("scroll", () => syncFrom(rightBody));
 		return;
 	}
-	// editable pane wiring
+	// editable pane wiring: Review/Edit split (plan A5 / FR-3). Review shows
+	// the aligned highlighted diff; Edit shows the REAL textarea (visible
+	// text/caret/selection) + a debounced line-number gutter. The same
+	// textarea element persists across switches (undo/selection/scroll
+	// survive). NO LCS while typing in Edit mode (FR-5); the gutter is the
+	// only per-keystroke work.
 	ta = host.querySelector(".sx-ta");
 	const applyBtn = host.querySelector(".sx-apply");
+	gutterEl = host.querySelector(".sx-egutter");
+	const gutterIn = host.querySelector(".sx-egutter-in");
+	const modeBtns = host.querySelectorAll(".sx-mode-btn");
+	let mode = "review";
+	let composing = false;
 	ta.value = baseNew;
+	// fixed-px line grid for the gutter strip; read once at mount (FR-1:
+	// --sx-lh is a fixed px var, so the gutter rows align with the textarea).
+	const lhPx =
+		parseFloat(getComputedStyle(host).getPropertyValue("--sx-lh")) || 17.4;
+	const renderGutter = () => {
+		if (!ta || !gutterIn) return;
+		const n = dv.lineCountOf(ta.value);
+		gutterIn.replaceChildren();
+		const frag = document.createDocumentFragment();
+		for (let i = 1; i <= n; i++) {
+			const row = document.createElement("div");
+			row.className = "sx-eg-row";
+			const num = document.createElement("span");
+			num.className = "sx-eg-num";
+			num.textContent = String(i);
+			row.appendChild(num);
+			frag.appendChild(row);
+		}
+		gutterIn.appendChild(frag);
+		gutterIn.style.height = Math.max(n, 1) * lhPx + "px";
+	};
+	let gTimer = 0;
+	const queueGutter = () => {
+		clearTimeout(gTimer);
+		gTimer = setTimeout(renderGutter, 120);
+	};
+	ta.addEventListener("input", queueGutter);
 	ta.addEventListener("scroll", () => syncFrom(ta));
-	let pend = false;
+	renderGutter();
 	const repaint = () => {
 		const c = compute(baseOld, ta.value);
-		host.querySelector(".sxs").style.setProperty("--sx-gutter", c.gutter);
+		host
+			.querySelector(".sxs")
+			.style.setProperty("--sx-gutter", c.gutter + "ch");
 		setSafeHtml(rightBody, c.rightHtml);
 		setSafeHtml(leftBody, c.leftHtml);
 		if (lineStart > 1) patchGutters(lineStart);
 	};
-	ta.addEventListener("input", () => {
-		if (pend) return;
-		pend = true;
-		requestAnimationFrame(() => {
-			pend = false;
-			repaint();
-		});
+	const setMode = (m) => {
+		if (composing || m === mode || !ta) return;
+		mode = m;
+		host.dataset.mode = m;
+		modeBtns.forEach((b) =>
+			b.setAttribute("aria-pressed", String(b.dataset.mode === m)),
+		);
+		if (m === "review") scheduleRecompute(); // re-align after edits
+	};
+	// recompute policy (plan A5 / FR-5): the aligned diff runs ONLY on
+	// entering Review, Apply, and blur-from-Edit — never per keystroke —
+	// debounced 150ms and coalesced (last call wins).
+	let recomputeTimer = 0;
+	const scheduleRecompute = () => {
+		clearTimeout(recomputeTimer);
+		recomputeTimer = setTimeout(repaint, 150);
+	};
+	ta.addEventListener("blur", scheduleRecompute);
+	modeBtns.forEach((b) =>
+		b.addEventListener("click", () => setMode(b.dataset.mode)),
+	);
+	ta.addEventListener("compositionstart", () => {
+		composing = true;
 	});
+	ta.addEventListener("compositionend", () => {
+		composing = false;
+	});
+	rightBody.addEventListener("scroll", () => syncFrom(rightBody));
 	let baselineNew = baseNew;
+	// dirty indicator + Reset (plan A5 / FR-8): a dot in the header when the
+	// proposal drifted from the baseline; Reset restores the baseline and
+	// returns focus to the textarea.
+	const dirtyEl = host.querySelector(".sx-dirty");
+	const resetBtn = host.querySelector(".sx-reset");
+	const updateDirty = () => {
+		const d = dv.dirty(baselineNew, ta.value);
+		if (dirtyEl) dirtyEl.hidden = !d;
+		if (resetBtn) resetBtn.hidden = !d;
+	};
+	updateDirty();
+	ta.addEventListener("input", updateDirty);
+	if (resetBtn)
+		resetBtn.addEventListener("click", () => {
+			ta.value = baselineNew;
+			updateDirty();
+			queueGutter();
+			scheduleRecompute();
+			ta.focus();
+		});
+	// Ctrl/Cmd+Enter applies (transcript path only — capture mode has no
+	// Apply; the approval buttons own the flow).
+	if (applyBtn && !cap)
+		ta.addEventListener("keydown", (e) => {
+			if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+				e.preventDefault();
+				applyBtn.click();
+			}
+		});
 	if (applyBtn)
 		applyBtn.addEventListener("click", () =>
 			applyEdit(path, baselineNew, ta.value, isWrite, applyBtn, () => {
 				baselineNew = ta.value;
+				updateDirty();
+				scheduleRecompute();
 			}),
 		);
 }
-// applyEdit: read current file, splice the edited hunk in (edit tool) or
-// replace it wholesale (write tool), then POST to /api/write. For edits we
-// anchor on baselineNew (the agent's newText now sitting on disk) and
-// replace its first occurrence; if it can't be found the file moved under
-// us and we bail instead of clobbering.
+// applyEdit: read the current file, splice the edited hunk in (edit tool) or
+// replace it wholesale (write tool), then POST to /api/write with the
+// optimistic-concurrency version read at the same moment (plan A5 / FR-6/7).
+// A 409 means the disk moved between read and write (TOCTOU) and opens the
+// inline conflict banner. For edits we anchor on baselineNew (the agent's
+// newText now sitting on disk) and replace its first occurrence; if it can't
+// be found the file moved under us and we bail instead of clobbering.
 async function applyEdit(path, baselineNew, edited, isWrite, btn, onOk) {
 	if (!path) {
 		toast("no path to apply", "err");
@@ -1075,35 +1249,26 @@ async function applyEdit(path, baselineNew, edited, isWrite, btn, onOk) {
 	const prev = btn.textContent;
 	btn.disabled = true;
 	btn.textContent = "Applying…";
+	const host = btn.closest(".sx-host");
+	removeConflict(host);
 	try {
-		let next;
-		if (isWrite) {
-			next = edited;
-		} else {
-			const r = await fetch("/api/file?path=" + encodeURIComponent(path));
-			const j = await r.json();
-			if (!j.ok) throw new Error(j.error || "read failed");
-			const hits = j.content.split(baselineNew).length - 1;
-			if (hits === 0)
-				throw new Error("original hunk no longer present in file");
-			// ponytail: String.replace hits only the FIRST match. If the agent's
-			// newText is non-unique (common in refactors) we'd silently edit the
-			// wrong occurrence — bail and tell the user instead of clobbering.
-			if (hits > 1)
-				throw new Error(
-					"original hunk appears " +
-						hits +
-						" times in the file — open and edit it manually",
+		const out = await doApply(path, baselineNew, edited, isWrite);
+		if (!out.ok) {
+			if (out.status === 409) {
+				// conflict recovery (FR-7): Reload = single retry with the
+				// fresh version; Compare = read-only disk-vs-proposal review;
+				// Cancel = keep the dirty edit, dismiss.
+				showConflict(host, path, edited, () =>
+					applyEdit(path, baselineNew, edited, isWrite, btn, onOk),
 				);
-			next = j.content.replace(baselineNew, edited);
+				toast("file changed on disk — resolve before applying", "warn");
+			} else {
+				throw new Error(out.error || "write failed");
+			}
+			btn.disabled = false;
+			btn.textContent = prev;
+			return;
 		}
-		const w = await fetch("/api/write", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path, content: next }),
-		});
-		const wj = await w.json();
-		if (!wj.ok) throw new Error(wj.error || "write failed");
 		toast("applied \u2192 " + path, "ok");
 		btn.textContent = "Applied \u2713";
 		if (onOk) onOk();
@@ -1116,6 +1281,124 @@ async function applyEdit(path, baselineNew, edited, isWrite, btn, onOk) {
 		btn.disabled = false;
 		btn.textContent = prev;
 	}
+}
+
+// doApply: one read+write round trip. The edit path splices baselineNew into
+// the fresh disk content (0-hit / N-hit bails preserved); the write path
+// replaces wholesale and derives its expectedVersion from an apply-time read
+// (null when the file doesn't exist yet = create-only). The version read at
+// that same moment is sent as expectedVersion — the server answers 409 if the
+// disk moved in between (FR-6.5).
+async function doApply(path, baselineNew, edited, isWrite) {
+	let next;
+	let expectedVersion;
+	if (isWrite) {
+		next = edited;
+		try {
+			const r = await fetch("/api/file?path=" + encodeURIComponent(path));
+			const j = await r.json();
+			expectedVersion = j && j.ok ? j.version : null;
+		} catch {
+			expectedVersion = null; // unreadable → attempt create-only; a 409 surfaces the truth
+		}
+	} else {
+		const r = await fetch("/api/file?path=" + encodeURIComponent(path));
+		const j = await r.json();
+		if (!j.ok) throw new Error(j.error || "read failed");
+		const hits = j.content.split(baselineNew).length - 1;
+		if (hits === 0) throw new Error("original hunk no longer present in file");
+		// ponytail: String.replace hits only the FIRST match. If the agent's
+		// newText is non-unique (common in refactors) we'd silently edit the
+		// wrong occurrence — bail and tell the user instead of clobbering.
+		if (hits > 1)
+			throw new Error(
+				"original hunk appears " +
+					hits +
+					" times in the file — open and edit it manually",
+			);
+		next = j.content.replace(baselineNew, edited);
+		expectedVersion = j.version;
+	}
+	const w = await fetch("/api/write", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ path, content: next, expectedVersion }),
+	});
+	const wj = await w.json();
+	if (!wj.ok)
+		return {
+			ok: false,
+			status: w.status,
+			error: wj.error || "write failed",
+			version: wj.version,
+		};
+	return { ok: true };
+}
+
+// conflict banner (plan A5 / FR-7.2): inline in the sx host, not toast-only.
+// Reload retries once with the fresh version; Compare mounts a READ-ONLY
+// Review of disk-current vs the current proposal above the live diff;
+// Cancel dismisses banner + compare, keeping the dirty edit untouched.
+function showConflict(host, path, edited, retry) {
+	removeConflict(host);
+	const b = document.createElement("div");
+	b.className = "sx-conflict";
+	b.setAttribute("role", "alert");
+	const msg = document.createElement("span");
+	msg.className = "sx-conflict-msg";
+	msg.textContent = "File changed on disk";
+	const rel = document.createElement("button");
+	rel.type = "button";
+	rel.className = "sx-conflict-btn";
+	rel.textContent = "Reload";
+	rel.title = "re-fetch the file and retry Apply once";
+	rel.addEventListener("click", retry);
+	const cmp = document.createElement("button");
+	cmp.type = "button";
+	cmp.className = "sx-conflict-btn";
+	cmp.textContent = "Compare";
+	cmp.title = "review the disk version against your edit";
+	cmp.addEventListener("click", () => compareDisk(host, path, edited));
+	const can = document.createElement("button");
+	can.type = "button";
+	can.className = "sx-conflict-btn";
+	can.textContent = "Cancel";
+	can.title = "keep your edit and dismiss";
+	can.addEventListener("click", () => removeConflict(host));
+	b.append(msg, rel, cmp, can);
+	const dp = host.querySelector(".dpath");
+	if (dp) dp.after(b);
+	else host.prepend(b);
+}
+function removeConflict(host) {
+	if (!host) return;
+	const b = host.querySelector(".sx-conflict");
+	if (b) b.remove();
+	const c = host.querySelector(".sx-compare");
+	if (c) c.remove();
+}
+// Compare: fetch the disk version and mount a read-only Review of disk-current
+// vs the current proposal. The banner stays visible so Cancel can dismiss both.
+function compareDisk(host, path, edited) {
+	const prev = host.querySelector(".sx-compare");
+	if (prev) prev.remove();
+	fetch("/api/file?path=" + encodeURIComponent(path))
+		.then((r) => r.json())
+		.then((j) => {
+			if (!j.ok) {
+				toast("compare failed: " + (j.error || "read failed"), "err");
+				return;
+			}
+			const cmp = document.createElement("div");
+			cmp.className = "sx-compare";
+			const sxs = host.querySelector(".sxs");
+			if (sxs) sxs.before(cmp);
+			else host.appendChild(cmp);
+			mountSideBySide(cmp, path, j.content, edited, false, {
+				readOnly: true,
+			});
+		})
+		.catch((e) => toast("compare failed: " + e.message, "err"));
 }
 
 // ---- working indicator: spinner + current activity ----
@@ -1137,17 +1420,33 @@ function setActivity(label, working) {
 	lastActivity = key;
 	activityEl.className = "activity " + (working ? "working" : "idle");
 	actLabel.textContent = label;
+	// spec FR-6: the idle row is reserved for work / intervention / error
+	// states — the pure-idle "ready" hides it (body.act-on); everything else
+	// (working, waiting-for-input, reconnecting, stopped) keeps it visible.
+	document.body.classList.toggle("act-on", working || label !== "ready");
 }
 
+// ---- stateful empty state (spec FR-8) ----
+// Shows only while the transcript has no messages; its one primary action
+// focuses the composer. Replaces the old #transcript:empty::before pseudo.
+const emptyState = $("empty-state");
+function updateEmptyState() {
+	if (!emptyState) return;
+	emptyState.hidden = transcript.querySelector(".msg") !== null;
+}
+const emptyStart = $("empty-start");
+if (emptyStart) emptyStart.onclick = () => inputEl.focus();
+updateEmptyState(); // initial paint: fresh session -> visible
+
 function note(text, cls) {
-	const m = document.createElement("div");
+	const m = document.createElement("article");
 	m.className = "msg";
 	const b = document.createElement("div");
 	b.className = "bubble";
 	if (cls) b.style.color = `var(--${cls})`;
 	b.textContent = text;
 	m.appendChild(b);
-	transcript.appendChild(m);
+	feedEl.appendChild(m);
 	scrollDown();
 }
 
@@ -1252,9 +1551,10 @@ function openModal() {
 		if (f) f.focus();
 	});
 }
-function showModal(html, free) {
-	// reset any per-modal modifier (e.g. .wide) so it can't leak across opens
-	card.className = "card";
+function showModal(html, free, fullPage) {
+	// Reset per-modal modifiers so they cannot leak across opens. Blocking tool
+	// interactions use the full-page surface rather than a tool-card control.
+	card.className = fullPage ? "card wide" : "card";
 	setSafeHtml(card, html);
 	openModal();
 	if (free) {
@@ -1271,6 +1571,13 @@ function dismissModal() {
 	const d = card.querySelector("[data-dismiss]");
 	if (d) {
 		d.click();
+		return;
+	}
+	// U6 C8 (FR-23): for a broker-tracked approval, Esc/backdrop = Deny routed
+	// through the same ack path (never a silent close that strands pi). While a
+	// decision POST is in flight the close is inert.
+	if (pendingApproval && !pendingSending) {
+		sendApprovalDecision(pendingApproval.requestId, "Deny", "deny");
 		return;
 	}
 	if (modalFree) hideModal();
@@ -2060,7 +2367,8 @@ function askQuestion(args) {
 	const answers = qs.map(() => null); // per-question: string | string[]
 	let step = 0; // current question index (one-at-a-time multistep)
 	const total = qs.length;
-	openModal();
+	showModal("", false, true);
+	toast("Your input is needed", "warn");
 
 	// advance to the next question, or commit once the last is answered
 	function choose(qi, value) {
@@ -2485,8 +2793,11 @@ function buildPermissionBody(title, message) {
 // decide the whole prompt.
 function renderEditDiffPreviews(container) {
 	if (!container) return null;
-	const name = curToolName;
-	const inp = curToolArgs || {};
+	// U6 C8 (FR-25): read the tool identity through the pending approval so the
+	// preview always matches the request on screen (fallback: live tool state).
+	const p = pendingApproval;
+	const name = p && p.toolName ? p.toolName : curToolName;
+	const inp = pendingToolArgs();
 	const isEdit =
 		name === "edit" && Array.isArray(inp.edits) && inp.edits.length;
 	const isWrite = name === "write";
@@ -2601,7 +2912,22 @@ async function diffInIde(req) {
 	try {
 		const payload = await buildDiffPayload();
 		const decision = await window.piWebuiOpenDiff(payload);
-		api({ type: "extension_ui_response", id, value: decision });
+		// U6 C11 (FR-40): the plugin flags a mid-review file change when the user
+		// edited the proposal — warn so the stale base can't pass silently.
+		if (decision && typeof decision === "object" && decision.conflict) {
+			toast("file changed during review — base may be stale", "warn");
+		}
+		// U6 C8 (FR-25): the IDE decision is an approval response — carry the
+		// marker so the broker can validate identity (the payload forwarded to
+		// the extension is unchanged; the server strips the marker).
+		const body = { type: "extension_ui_response", id, value: decision };
+		if (pendingApproval && pendingApproval.toolCallId)
+			body.marker = {
+				v: 1,
+				toolCallId: pendingApproval.toolCallId,
+				decision: decisionForLabel(decision),
+			};
+		api(body);
 	} catch (_e) {
 		toast("IDE diff unavailable — showing in webui", "warn");
 		openSelectModal(req);
@@ -2613,7 +2939,7 @@ async function diffInIde(req) {
 // replace, like the edit tool), or the write content. Path resolution stays in
 // server.js — the plugin only renders left vs right.
 async function buildDiffPayload() {
-	const inp = curToolArgs || {};
+	const inp = pendingToolArgs();
 	const path = inp.path || "";
 	const filename = path.split(/[\\/]/).pop() || "change";
 	let leftText = "";
@@ -2633,6 +2959,9 @@ async function buildDiffPayload() {
 	else if (op === "write") rightText = inp.content || "";
 	// leftText/rightText are the fallback for paths not under the IDE project; the
 	// plugin prefers path+op+edits/content for a real, syntax-highlighted diff.
+	// U6 C11 (FR-39/41): broker identity + active mode ride the payload so the
+	// native tab shows the gate's posture and keys decisions by request id.
+	const p = pendingApproval;
 	return {
 		filename,
 		path,
@@ -2641,6 +2970,9 @@ async function buildDiffPayload() {
 		content: inp.content || "",
 		leftText,
 		rightText,
+		requestId: p ? p.requestId : "",
+		toolCallId: p ? p.toolCallId : "",
+		mode: p && p.provenance ? p.provenance.mode || "default" : "default",
 	};
 }
 
@@ -2728,6 +3060,16 @@ function installCtxStepper(card, enabled, rebuild) {
 	const wrap = document.createElement("span");
 	wrap.className = "sx-ctx";
 	wrap.title = "context lines around the change";
+	// plan A5 / FR-8.5: rebuilding drops in-flight edits (documented existing
+	// behavior) — when the proposal is dirty, surface that with a warning
+	// label instead of silently losing work.
+	const ta0 = card.querySelector(".sx-ta");
+	const baseline = ta0 ? ta0.value : null;
+	const warn = document.createElement("span");
+	warn.className = "sx-ctx-warn";
+	warn.textContent = "rebuild drops edits";
+	warn.hidden = true;
+	let warnTimer = 0;
 	const dec = document.createElement("button");
 	dec.type = "button";
 	dec.className = "sx-ctx-btn";
@@ -2741,22 +3083,34 @@ function installCtxStepper(card, enabled, rebuild) {
 	inc.textContent = "+";
 	const apply = (v) => {
 		localStorage.setItem("pi:diffCtx", String(Math.max(0, Math.min(80, v))));
+		if (ta0 && dv.dirty(baseline, ta0.value)) {
+			warn.hidden = false;
+			clearTimeout(warnTimer);
+			warnTimer = setTimeout(() => {
+				warn.hidden = true;
+			}, 2500);
+		}
 		rebuild();
 	};
 	dec.onclick = () => apply(getDiffCtx() - 1);
 	inc.onclick = () => apply(getDiffCtx() + 1);
-	wrap.append(dec, num, inc);
+	wrap.append(dec, num, inc, warn);
 	hdr.append(wrap);
 }
 
 // The webui permission modal, factored out so the IDE-diff path can fall back
 // to it. For edit/write it renders an EDITABLE side-by-side so the user can
 // tweak pi's proposal before approving; other tools get the read-only preview.
-async function openSelectModal(req) {
+async function openSelectModal(req, notify = false) {
 	const { id } = req;
-	const opts = (req.options || []).map((o) =>
-		typeof o === "string" ? { label: o } : o,
-	);
+	const rawOpts = Array.isArray(req.options) ? req.options : [];
+	const allowed =
+		pendingApproval && pendingApproval.requestId === id
+			? new Set(approvalOptionLabels())
+			: null;
+	const opts = rawOpts
+		.filter((o) => !allowed || allowed.has(typeof o === "string" ? o : o.label))
+		.map((o) => (typeof o === "string" ? { label: o } : o));
 	const labels = opts.map((o) => (o.label || "").toLowerCase());
 	const isPermission =
 		labels.some((l) =>
@@ -2774,8 +3128,16 @@ async function openSelectModal(req) {
 	}
 	showModal(
 		`<h3>${esc(req.title || "Choose")}</h3>${bodyHtml}<div class='opts'></div>`,
+		false,
+		true,
 	);
-	const isEditWrite = curToolName === "edit" || curToolName === "write";
+	if (notify)
+		toast(isPermission ? "Approval required" : "Your input is needed", "warn");
+	const isEditWrite =
+		(pendingApproval && pendingApproval.toolName) === "edit" ||
+		(pendingApproval && pendingApproval.toolName) === "write" ||
+		curToolName === "edit" ||
+		curToolName === "write";
 	let editedValue = null; // (label) => label | {label, oldFull, newFull}
 	if (isEditWrite) {
 		const payload = await buildDiffPayload();
@@ -2832,12 +3194,14 @@ async function openSelectModal(req) {
 		)
 			b.className = "danger";
 		b.onclick = () => {
-			hideModal();
-			api({
-				type: "extension_ui_response",
+			// U6 C8: ack-before-close — the modal stays up until the server
+			// broadcasts approval_resolved (FR-22); the marker carries the
+			// toolCallId + stable decision enum (FR-25).
+			sendApprovalDecision(
 				id,
-				value: editedValue ? editedValue(val) : val,
-			});
+				editedValue ? editedValue(val) : val,
+				decisionForLabel(editedValue ? editedValue(val) : val),
+			);
 		};
 		list.appendChild(b);
 	});
@@ -2879,6 +3243,21 @@ function uiRequest(req) {
 		return;
 	}
 	if (method === "setStatus") {
+		// U6 C8: the safeguard provenance context (emitted by the extension right
+		// before every blocking select) is JSON — stash it for the pending
+		// approval; it must NOT overwrite the statusbar text.
+		if (req.statusKey === "safeguard") {
+			try {
+				lastSafeguardCtx = JSON.parse(req.statusText || "null");
+			} catch {
+				lastSafeguardCtx = null;
+			}
+			// the provenance broadcast carries the ACTIVE mode (incl. session-only
+			// yolo, which no config read can see) — keep the composer chip truthful
+			if (lastSafeguardCtx && lastSafeguardCtx.mode)
+				setModeChip(lastSafeguardCtx.mode);
+			return;
+		}
 		statusText.textContent = stripAnsi(
 			req.statusText || statusText.textContent.replace(/\s*•.*$/, ""),
 		);
@@ -2907,8 +3286,21 @@ function uiRequest(req) {
 		return;
 	}
 
-	// dialog methods
+	// dialog methods — register the broker-tracked approval BEFORE rendering so
+	// the marker + ack flow (FR-25/22) and the diff previews (FR-25) can read
+	// tool identity + provenance. The ask bridge (input+MARKER) is handled
+	// above and keeps its own immediate-close flow.
 	if (method === "select") {
+		pendingApproval = {
+			requestId: id,
+			method,
+			title: req.title,
+			message: req.message,
+			options: req.options,
+			toolCallId: curToolCallId,
+			toolName: curToolName,
+			provenance: lastSafeguardCtx,
+		};
 		// ponytail: when the JetBrains plugin hosts this page it injects
 		// window.piWebuiOpenDiff — route edit/write approvals to the IDE's native
 		// diff dialog as the gate. The decision comes back over the SAME
@@ -2922,10 +3314,25 @@ function uiRequest(req) {
 			void diffInIde(req);
 			return;
 		}
-		openSelectModal(req);
+		openSelectModal(req, true);
 	} else if (method === "confirm") {
+		pendingApproval = {
+			requestId: id,
+			method,
+			title: req.title,
+			message: req.message,
+			options: null,
+			toolCallId: curToolCallId,
+			toolName: curToolName,
+			provenance: lastSafeguardCtx,
+		};
 		const body = buildPermissionBody(req.title, req.message);
-		showModal(`<h3>${esc(req.title || "Confirm")}</h3>${body.html}`);
+		showModal(
+			`<h3>${esc(req.title || "Confirm")}</h3>${body.html}`,
+			false,
+			true,
+		);
+		toast("Approval required", "warn");
 		const stack = renderEditDiffPreviews(card);
 		if (stack) card.classList.add("wide");
 		const row = document.createElement("div");
@@ -2933,10 +3340,7 @@ function uiRequest(req) {
 		const no = document.createElement("button");
 		no.textContent = "No";
 		no.dataset.dismiss = ""; // ponytail: Esc = decline
-		no.onclick = () => {
-			hideModal();
-			api({ type: "extension_ui_response", id, confirmed: false });
-		};
+		no.onclick = () => sendApprovalDecision(id, { confirmed: false }, "deny");
 		const yes = document.createElement("button");
 		if (body.maxSev >= 3) {
 			yes.className = "danger";
@@ -2944,14 +3348,23 @@ function uiRequest(req) {
 		} else {
 			yes.textContent = "Yes";
 		}
-		yes.onclick = () => {
-			hideModal();
-			api({ type: "extension_ui_response", id, confirmed: true });
-		};
+		yes.onclick = () =>
+			sendApprovalDecision(id, { confirmed: true }, "allow-once");
 		row.append(no, yes);
 		card.appendChild(row);
 	} else if (method === "input") {
-		showModal(`<h3>${esc(req.title || "Input")}</h3>`);
+		pendingApproval = {
+			requestId: id,
+			method,
+			title: req.title,
+			message: req.message,
+			options: null,
+			toolCallId: curToolCallId,
+			toolName: curToolName,
+			provenance: lastSafeguardCtx,
+		};
+		showModal(`<h3>${esc(req.title || "Input")}</h3>`, false, true);
+		toast("Your input is needed", "warn");
 		const inp = document.createElement("input");
 		inp.type = "text";
 		inp.placeholder = req.placeholder || "";
@@ -2960,22 +3373,28 @@ function uiRequest(req) {
 		row.className = "row";
 		const ok = document.createElement("button");
 		ok.textContent = "OK";
-		ok.onclick = () => {
-			hideModal();
-			api({ type: "extension_ui_response", id, value: inp.value });
-		};
+		ok.onclick = () => sendApprovalDecision(id, inp.value, "allow-once");
 		const cancel = document.createElement("button");
 		cancel.textContent = "Cancel";
 		cancel.dataset.dismiss = ""; // ponytail: Esc = cancel
-		cancel.onclick = () => {
-			hideModal();
-			api({ type: "extension_ui_response", id, cancelled: true });
-		};
+		cancel.onclick = () =>
+			sendApprovalDecision(id, { cancelled: true }, "deny");
 		row.append(ok, cancel);
 		card.append(inp, row);
 		setTimeout(() => inp.focus(), 10);
 	} else if (method === "editor") {
-		showModal(`<h3>${esc(req.title || "Edit")}</h3>`);
+		pendingApproval = {
+			requestId: id,
+			method,
+			title: req.title,
+			message: req.message,
+			options: null,
+			toolCallId: curToolCallId,
+			toolName: curToolName,
+			provenance: lastSafeguardCtx,
+		};
+		showModal(`<h3>${esc(req.title || "Edit")}</h3>`, false, true);
+		toast("Your input is needed", "warn");
 		const ta = document.createElement("textarea");
 		ta.rows = 12;
 		ta.value = req.prefill || "";
@@ -2984,17 +3403,12 @@ function uiRequest(req) {
 		row.className = "row";
 		const ok = document.createElement("button");
 		ok.textContent = "OK";
-		ok.onclick = () => {
-			hideModal();
-			api({ type: "extension_ui_response", id, value: ta.value });
-		};
+		ok.onclick = () => sendApprovalDecision(id, ta.value, "allow-once");
 		const cancel = document.createElement("button");
 		cancel.textContent = "Cancel";
 		cancel.dataset.dismiss = ""; // ponytail: Esc = cancel
-		cancel.onclick = () => {
-			hideModal();
-			api({ type: "extension_ui_response", id, cancelled: true });
-		};
+		cancel.onclick = () =>
+			sendApprovalDecision(id, { cancelled: true }, "deny");
 		row.append(ok, cancel);
 		card.append(ta, row);
 		setTimeout(() => ta.focus(), 10);
@@ -3056,8 +3470,10 @@ function renderMessage(msg) {
 		// looks abruptly truncated. Summary is pi-generated markdown; md() escapes
 		// raw HTML (html:false), same path as assistant text. Collapsed by default
 		// (it's metadata, not conversation). Generic custom messages render too.
-		const wrap = document.createElement("details");
-		wrap.className = "compact-mark";
+		const wrap = document.createElement("article");
+		wrap.className = "compact-turn"; // FR-8: the marker is a turn (article)
+		const d = document.createElement("details");
+		d.className = "compact-mark"; // CSS `> summary` selectors stay intact
 		const isCompaction = msg.customType === "compaction";
 		const meta =
 			isCompaction && typeof msg.tokensBefore === "number"
@@ -3066,13 +3482,15 @@ function renderMessage(msg) {
 					? `· ${msg.customType}`
 					: "";
 		const sum = document.createElement("summary");
-		sum.innerHTML =
+		setSafeHtml(
+			sum,
 			`<span class="cm-glyph"></span>` +
-			`<span class="cm-label">${esc(
-				isCompaction ? "Context compacted" : msg.customType || "custom",
-			)}</span>` +
-			(meta ? `<span class="cm-meta">${esc(meta)}</span>` : "");
-		wrap.appendChild(sum);
+				`<span class="cm-label">${esc(
+					isCompaction ? "Context compacted" : msg.customType || "custom",
+				)}</span>` +
+				(meta ? `<span class="cm-meta">${esc(meta)}</span>` : ""),
+		);
+		d.appendChild(sum);
 		if (msg.content != null) {
 			const body = document.createElement("div");
 			body.className = "cm-body";
@@ -3081,18 +3499,22 @@ function renderMessage(msg) {
 					? msg.content
 					: toolProtocol.toolContentText(msg.content);
 			if (src) setSafeHtml(body, md(src));
-			wrap.appendChild(body);
+			d.appendChild(body);
 		}
-		transcript.appendChild(wrap);
+		wrap.appendChild(d);
+		feedEl.appendChild(wrap);
 		cur = null;
 	} else if (msg.role === "bashExecution") {
+		const turn = document.createElement("article");
+		turn.className = "msg"; // FR-8: a turn — article wrapper, unstyled
 		const el = document.createElement("details");
 		el.className = "tool done";
 		setSafeHtml(
 			el,
 			`<summary class="head"><span class="trow"><span class="caret">▸</span><span class="name">bash</span></span><code>${esc(msg.command || "")}</code></summary><div class="out">${esc(msg.output || "")}</div>`,
 		);
-		transcript.appendChild(el);
+		turn.appendChild(el);
+		feedEl.appendChild(turn);
 	}
 }
 
@@ -3140,19 +3562,31 @@ function setCompacting(on) {
 }
 
 // ---- event dispatch ----
+const a11yStatus = $("a11y-status");
+function announceStatus(evt) {
+	// coarse progress only — the pure mapping (a11y-contrast.statusTextForEvent)
+	// returns null for every streaming event, so this never fires per token
+	const txt = statusTextForEvent(evt);
+	if (txt && a11yStatus) a11yStatus.textContent = txt;
+}
 function handle(payload) {
 	switch (payload.type) {
 		case "agent_start":
+			agentStarts++;
+			announceStatus("agent_start");
 			setStreaming(true);
 			setActivity("thinking…", true);
 			// reset per-tool tracking for a fresh turn
 			curToolName = null;
 			curToolArgs = null;
+			curToolCallId = null;
+			toolArgs.clear(); // per-turn args; the replay re-feeds them (FR-25)
 			break;
 		case "agent_end":
 			// safety net: render if message_end never fired (broken stream).
 			// finalizeBubble drops an empty bubble, so this can't leave a stray label.
 			// setStreaming(false) below then nulls cur.
+			announceStatus("agent_end");
 			if (cur) finalizeBubble();
 			setStreaming(false);
 			setActivity("ready", false);
@@ -3276,6 +3710,8 @@ function handle(payload) {
 			// before THIS tool's safeguard select, so it's always the right one.
 			curToolName = payload.toolName || null;
 			curToolArgs = payload.args || null;
+			curToolCallId = payload.toolCallId || null;
+			if (payload.toolCallId) toolArgs.set(payload.toolCallId, payload.args);
 			if (payload.toolName === "ask_user_question") {
 				// DON'T open the modal yet: the safeguard "Allow?" select fires
 				// next and would clobber it. Stash args; the modal renders from
@@ -3433,7 +3869,8 @@ function handle(payload) {
 			// stale edit/write diff leaking onto an unrelated later select/confirm
 			curToolName = null;
 			curToolArgs = null;
-			setActivity("thinking…", true);
+			// A delayed tool-end must not revive the activity bar after agent_end.
+			setActivity(streaming ? "thinking…" : "ready", streaming);
 			autoscroll();
 			break;
 		}
@@ -3450,12 +3887,14 @@ function handle(payload) {
 			break;
 		}
 		case "auto_retry_start":
+			announceStatus("auto_retry_start");
 			toast(
 				`retry ${payload.attempt}/${payload.maxAttempts}: ${(payload.errorMessage || "").slice(0, 80)}`,
 				"warn",
 			);
 			break;
 		case "compaction_start":
+			announceStatus("compaction_start");
 			setCompacting(true);
 			setActivity("compacting context…", true);
 			note("compacting context…", "warn");
@@ -3505,34 +3944,32 @@ function handle(payload) {
 	}
 }
 
-const sb = [
-	"repo",
-	"git",
-	"model",
-	"think",
-	"ctx",
-	"cache",
-	"tok",
-	"cost",
-].reduce((o, k) => ((o[k] = $("sb-" + k)), o), {});
+const sb = ["repo", "git", "model", "think", "cache", "tok", "cost"].reduce(
+	(o, k) => ((o[k] = $("sb-" + k)), o),
+	{},
+);
 // ponytail: statusbar secondary group (git/think/cache/tok/$cost/ide) collapses
-// to a ⋯ popover under 720px (style.css @media). <details> is default-open so the
-// wide layout is inline without fighting the UA's closed-details hiding; we just
-// close it on narrow viewports and when the user shrinks into one.
+// to a ⋯ popover on narrow (body.w-narrow, set by the inline width script).
+// <details> is default-open so the wide layout is inline without fighting the
+// UA's closed-details hiding; we just close it on narrow and when the user
+// shrinks into one (widthchange fires only on an actual w-narrow crossing).
 const sbSec = $("sb-sec");
-let sbNarrow = window.matchMedia("(max-width: 720px)").matches;
+const barOvf = $("bar-ovf"); // composer overflow ⋯ (spec FR-4)
+let sbNarrow = document.body.classList.contains("w-narrow");
 if (sbSec) sbSec.open = !sbNarrow; // wide: inline (open); narrow: popover starts closed
+if (barOvf) barOvf.open = !sbNarrow; // same: wide inline, narrow popover closed
 function syncSbOverflow() {
-	if (!sbSec) return;
-	const n = window.matchMedia("(max-width: 720px)").matches;
+	if (!sbSec && !barOvf) return;
+	const n = document.body.classList.contains("w-narrow");
 	if (n !== sbNarrow) {
 		// only react to actual wide<->narrow crossings, not every resize tick, so
 		// a user-opened popover isn't snapped shut by a same-mode window nudge.
 		sbNarrow = n;
-		sbSec.open = !n; // wide -> open (inline); narrow -> closed
+		if (sbSec) sbSec.open = !n; // wide -> open (inline); narrow -> closed
+		if (barOvf) barOvf.open = !n;
 	}
 }
-window.addEventListener("resize", syncSbOverflow);
+document.body.addEventListener("widthchange", syncSbOverflow);
 function refreshSbModel() {
 	sb.model.textContent = (modelSel.selectedOptions[0] || {}).textContent || "…";
 }
@@ -3600,6 +4037,7 @@ function refreshHealth() {
 }
 function refreshStats() {
 	api({ type: "get_session_stats", id: "sb-stats" });
+	refreshModeChip(); // piggyback: keeps the composer mode chip fresh (15s/3s)
 }
 // IDE-connection badge: the JetBrains plugin injects window.piWebuiIdeInfo on
 // load and calls window.piWebuiIdeStatus(info) once we register it. Falls to
@@ -3634,20 +4072,48 @@ updateIdeBadge(window.piWebuiIdeInfo || null);
 let lastMessages = [],
 	lastStats = null,
 	lastRunning = false;
+// ---- context-pressure meter + Compact promotion (spec FR-10) ----
+// Width % = contextUsage.percent; bands: neutral <50, --warning 50–70,
+// --danger >=70 (body.ctx-hot also promotes #compact at narrow widths).
+const CTX_HOT = 70;
+const ctxMeter = $("ctx-meter");
+const ctxLabel = $("ctx-label");
+function updateCtxMeter(cu) {
+	if (!ctxMeter) return;
+	const p = cu && cu.percent != null ? cu.percent : null;
+	document.body.classList.toggle("ctx-on", p != null);
+	document.body.classList.toggle(
+		"ctx-mid",
+		p != null && p >= 50 && p < CTX_HOT,
+	);
+	document.body.classList.toggle("ctx-hot", p != null && p >= CTX_HOT);
+	if (p != null) {
+		document.documentElement.style.setProperty("--ctx-pct", p + "%");
+		// the meter's label is now the single context readout (user decision
+		// 2026-08-07 — the statusbar sb-ctx display was removed)
+		if (ctxLabel)
+			ctxLabel.textContent = `${p.toFixed(0)}% (${fmt(cu.tokens)}/${fmt(
+				cu.contextWindow,
+			)})`;
+	}
+}
 function applyState(data) {
 	if (!data) return;
 	if (data.thinkingLevel != null) setThinkSel(data.thinkingLevel);
 	if (data.isStreaming != null) {
-		// authoritative (plan 5.1): pi's get_state knows whether a turn is live.
-		// Previously only the true branch set the flag, so a reconnect after a
-		// mid-turn crash left a stale "streaming" indicator pinned forever.
-		setStreaming(!!data.isStreaming);
-		lastRunning = !!data.isStreaming;
-		if (data.isStreaming) setActivity("working…", true);
+		// get_state is authoritative. Its explicit idle state must clear the
+		// activity row too; otherwise a lost agent_end leaves "thinking…" pinned.
+		const isStreaming = data.isStreaming === true;
+		setStreaming(isStreaming);
+		lastRunning = isStreaming;
 	}
-	if (data.isCompacting) {
-		setCompacting(true);
+	if (data.isCompacting != null) setCompacting(data.isCompacting === true);
+	if (data.isCompacting === true) {
 		setActivity("compacting context…", true);
+	} else if (data.isStreaming === true) {
+		setActivity("working…", true);
+	} else if (data.isStreaming === false) {
+		setActivity("ready", false);
 	}
 	if (setCurrentModel(data.model)) {
 		applyCurrentModel();
@@ -3661,15 +4127,20 @@ function applyState(data) {
 function applyMessages(messages) {
 	if (!Array.isArray(messages)) return;
 	lastMessages = messages;
-	setSafeHtml(transcript, "");
+	// a11y FR-9: bracket the synchronous DOM mutation with aria-busy so
+	// screen readers don't traverse a half-replaced conversation
+	feedEl.setAttribute("aria-busy", "true");
+	setSafeHtml(feedEl, ""); // clear the FEED, not <main> — the feed is a child of it
 	toolBlocks.clear();
 	replayArgs = {}; // rebuild the toolCall-id → args map for this replay
 	messages.forEach((msg, idx) => {
 		renderMessage(msg);
-		const el = transcript.lastChild;
+		const el = feedEl.lastChild;
 		if (el && el.setAttribute) el.setAttribute("data-mi", String(idx));
 	});
+	feedEl.setAttribute("aria-busy", "false");
 	scrollDown();
+	updateEmptyState(); // spec FR-8 — bootstrap/replay may leave the transcript empty
 }
 function applyCommands(cmds) {
 	if (Array.isArray(cmds)) commands = cmds;
@@ -3696,11 +4167,7 @@ function applyStats(data) {
 	sb.cache.title =
 		"cache: read↓ (from cache) / write↑ (newly created); % = reads ÷ (reads + fresh input)";
 	sb.cost.textContent = data.cost != null ? data.cost.toFixed(3) : "…";
-	const cu = data.contextUsage;
-	sb.ctx.textContent =
-		cu && cu.percent != null
-			? `${cu.percent.toFixed(0)}% (${fmt(cu.tokens)}/${fmt(cu.contextWindow)})`
-			: "—";
+	updateCtxMeter(data.contextUsage); // spec FR-10 — same event that refreshes the readout
 }
 // fetch the bundled bootstrap object (state+messages+commands+models+stats) in
 // one round-trip and apply it. Fire-and-forget at every call site (like the old
@@ -3732,17 +4199,66 @@ async function fetchSnapshot() {
 			// + pi idle → the turn is dead (pi crashed/was killed mid-turn). Finalize
 			// the ghost bubble + stop streaming, and neutralize tool cards still
 			// mid-run so their spinner doesn't imply still-active.
-			handle({ type: "agent_end" });
-			for (const b of toolBlocks.values())
-				if (b.el.classList.contains("run")) {
-					b.el.classList.remove("run");
-					b.el.classList.add("done");
-				}
+			finalizeDeadTurn();
+		}
+		// Race guard ("stuck writing…"): the snapshot is a point-in-time bundle —
+		// get_state was read on the server BEFORE the possibly-multi-MB transcript
+		// was serialized, so a turn can end while the snapshot is in flight. The
+		// live stream already consumed that turn's agent_end (buffer cleared), and
+		// replaying the stale buffer then re-arms "writing…" with nothing left to
+		// reset it (the !piStreaming branch above is skipped because the STALE
+		// flag said the turn was live). Re-verify against fresh pi state: if pi is
+		// now idle and no NEW turn started meanwhile, synthesize the turn end.
+		// The snap-recheck handler deliberately does NOT applyState() — a stale
+		// isStreaming:true captured by the check itself must not re-arm the
+		// spinner after the live stream already reset it.
+		if ((snap.state && snap.state.isStreaming) || replayed) {
+			snapRecheckStarts = agentStarts; // AFTER replay — replay bumps agent_start
+			api({ type: "get_state", id: "snap-recheck" });
+		}
+		// U6 C8 (FR-21): a reload mid-approval must re-render the pending request
+		// from the broker snapshot — the original requestId stays valid, so the
+		// user's decision still resolves the latch. The tool identity comes from
+		// the record (the live stream's tool_execution_start may predate us).
+		if (snap.pendingApprovals && snap.pendingApprovals.length) {
+			const rec = snap.pendingApprovals[0];
+			pendingApproval = {
+				requestId: rec.requestId,
+				method: rec.method,
+				title: rec.title,
+				message: rec.message,
+				options: rec.options,
+				toolCallId: rec.toolCallId,
+				toolName: rec.toolName,
+				provenance: rec.provenance,
+			};
+			if (rec.toolCallId) curToolCallId = rec.toolCallId;
+			if (rec.toolName) curToolName = rec.toolName;
+			openSelectModal({
+				id: rec.requestId,
+				title: rec.title,
+				message: rec.message,
+				options: rec.options,
+			});
 		}
 		return true;
 	} catch {
 		return false;
 	}
+}
+// finalize a turn whose terminal event the page will never receive (pi died
+// mid-turn, or a stale snapshot replay re-armed the status after the real
+// agent_end was consumed): synthesize agent_end + neutralize still-"run" tool
+// cards so no spinner implies an active turn. Idempotent — agent_end with a
+// null cur only resets streaming/status, and a re-run after the real end is a
+// no-op.
+function finalizeDeadTurn() {
+	handle({ type: "agent_end" });
+	for (const b of toolBlocks.values())
+		if (b.el.classList.contains("run")) {
+			b.el.classList.remove("run");
+			b.el.classList.add("done");
+		}
 }
 // replay the current-turn buffer (plan F§5.2): re-apply each buffered event's
 // payload through handle() — the same path live SSE events take — so tool cards
@@ -3824,7 +4340,16 @@ es.onmessage = (ev) => {
 		const p = env.payload;
 		// intercept init responses to populate UI
 		if (p.type === "response" && p.success) {
-			if (p.id === "init-state" && p.data) applyState(p.data);
+			if (p.id === "snap-recheck" && p.data) {
+				// fetchSnapshot race guard (see there): the snapshot claimed a live
+				// turn (or replayed a partial buffer), but this FRESH get_state proves
+				// it ended — synthesize the end so the activity bar can't stick on
+				// "writing…". Skipped when agent_start has fired since (a new turn
+				// owns the status and will deliver its own agent_end).
+				if (p.data.isStreaming === false && agentStarts === snapRecheckStarts) {
+					finalizeDeadTurn();
+				}
+			} else if (p.id === "init-state" && p.data) applyState(p.data);
 			else if (p.id === "init-msgs" && p.data) applyMessages(p.data.messages);
 			else if (p.id === "init-cmds" && p.data) applyCommands(p.data.commands);
 			else if (p.id === "init-models" && p.data) applyModels(p.data.models);
@@ -3858,6 +4383,14 @@ es.onmessage = (ev) => {
 	} else if (env.source === "pi_exit") {
 		setConnState("reconnecting"); // persist the disconnect — a toast alone is easy to miss
 		toast("pi subprocess exited — reconnecting…", "err");
+	} else if (env.source === "server" && env.type === "approval_resolved") {
+		// U6 C8 (FR-22/24): the server acknowledged OUR decision — close the
+		// approval UI. A mismatched requestId is someone else's broadcast and
+		// must not close anything (FR-24).
+		if (pendingApproval && pendingApproval.requestId === env.requestId) {
+			hideModal();
+			clearPendingApproval();
+		}
 	} else if (env.source === "server" && env.type === "pi_ready") {
 		// pi (re)spawned after a crash/exit (server.js startPi). Re-sync state +
 		// transcript and flip out of "reconnecting". wasDown gates the toast so a
@@ -3875,10 +4408,14 @@ es.onmessage = (ev) => {
 		// refresh the sidebar + SDD rail for the new project. Idempotent — the
 		// initiating tab receives its own broadcast too (EC-6).
 		setTodos([]);
-		setSafeHtml(transcript, "");
+		setSafeHtml(feedEl, "");
 		toolBlocks.clear();
 		curSessionFile = null;
 		setStreaming(false);
+		// U6 C8: the old project's approvals/args must not leak into the new one
+		clearPendingApproval();
+		toolArgs.clear();
+		curToolCallId = null;
 		toast(
 			`switched to ${env.workspace ? env.workspace.split(/[\\/]/).pop() : "workspace"}`,
 			"ok",
@@ -3965,26 +4502,406 @@ modelSel.onchange = () => {
 $("models-btn").onclick = () =>
 	api({ type: "get_available_models", id: "init-models" });
 
-// ---- settings sidebar ----
-// ponytail: fixed right drawer + backdrop. Open via ⚙; close via ✕, backdrop
-// click, or Esc. The relocated selects keep their IDs, so their onchange
-// handlers (model/think/pony) work unchanged from the old header position.
+// ---- settings page ----
+// ponytail: a real in-shell PAGE (design.md §4), same pattern as #permissions:
+// hidden-attribute toggle + body.page-open (which hides the chat column). The
+// relocated selects keep their IDs, so their onchange handlers (model/think/pony)
+// work unchanged from the old drawer position.
 const settingsEl = $("settings");
-const settingsBack = $("settings-back");
 function openSettings() {
+	closePermPage();
+	settingsEl.hidden = false;
 	settingsEl.classList.add("open");
-	settingsBack.classList.add("open");
 	settingsEl.setAttribute("aria-hidden", "false");
+	document.body.classList.add("page-open");
+	settingsEl.focus();
 }
 function closeSettings() {
+	settingsEl.hidden = true;
 	settingsEl.classList.remove("open");
-	settingsBack.classList.remove("open");
 	settingsEl.setAttribute("aria-hidden", "true");
+	document.body.classList.remove("page-open");
 }
 $("refresh-btn").onclick = () => location.reload();
 $("settings-btn").onclick = openSettings;
 $("settings-close").onclick = closeSettings;
-settingsBack.onclick = closeSettings;
+settingsEl.addEventListener("keydown", (e) => {
+	if (e.key === "Escape") closeSettings();
+});
+
+// ---- #permissions page (U6 C10: FR-29..36, FR-17) ----
+// Hash-routed full page: posture (mode selector + yolo confirm), explain,
+// effective policy layers, diagnostics, session grants, decision audit.
+// All reads/writes go through the fixed /api/permissions endpoints — the
+// browser never touches policy files directly (FR-37).
+const permPage = $("permissions");
+const permPageEls = {
+	mode: $("perm-mode"),
+	modePage: $("perm-mode-page"),
+	modeState: $("perm-mode-state"),
+	confirm: $("perm-confirm"),
+	layers: $("perm-layers"),
+	diags: $("perm-diags"),
+	grants: $("perm-grants"),
+	audit: $("perm-audit"),
+	explainTool: $("perm-explain-tool"),
+	explainSel: $("perm-explain-sel"),
+	explainOut: $("perm-explain-out"),
+};
+let permData = null; // last GET /api/permissions payload
+const pu = window.permissionsUx; // pure helpers (dual-mode module)
+
+// ---- composer mode chip (always-visible permission posture) ----
+// Polled via refreshStats (persisted modes) + updated live from the
+// extension's safeguard setStatus broadcast (yolo — session-only, FR-12).
+const modeChip = $("mode-chip");
+function setModeChip(mode) {
+	const m = mode || "default";
+	modeChip.textContent = m === "yolo" ? "\u26a0 yolo" : m;
+	modeChip.dataset.mode = m;
+	modeChip.title =
+		m === "yolo"
+			? "⚠ yolo — everything auto-allows this session. click to open permissions"
+			: "permission mode — click to open permissions";
+}
+async function refreshModeChip() {
+	try {
+		const r = await fetch("/api/permissions/mode");
+		const j = await r.json();
+		if (j && j.ok) setModeChip(j.mode);
+	} catch {
+		/* best-effort */
+	}
+}
+modeChip.onclick = () => {
+	location.hash = "#permissions";
+};
+refreshModeChip();
+
+function openPermPage() {
+	closeSettings();
+	permPage.hidden = false;
+	permPage.classList.add("open");
+	document.body.classList.add("page-open");
+	permPage.focus();
+	refreshPermPage();
+}
+function closePermPage() {
+	permPage.hidden = true;
+	permPage.classList.remove("open");
+	document.body.classList.remove("page-open");
+	history.replaceState(null, "", location.pathname + location.search);
+}
+function permRoute() {
+	if (location.hash === "#permissions") openPermPage();
+}
+window.addEventListener("hashchange", permRoute);
+permRoute();
+permPage.addEventListener("keydown", (e) => {
+	if (e.key === "Escape") closePermPage();
+});
+$("perm-close").onclick = closePermPage;
+$("perm-page-btn").onclick = () => {
+	location.hash = "#permissions";
+};
+async function refreshPermPage() {
+	try {
+		const r = await fetch("/api/permissions");
+		const j = await r.json();
+		if (!j || !j.ok) {
+			toast("permissions fetch failed", "err");
+			return;
+		}
+		permData = j;
+		const mode = j.mode || "default";
+		permPageEls.mode.value = mode === "yolo" ? "default" : mode; // settings select: persisted modes only
+		permPageEls.modePage.value = mode;
+		permPageEls.modeState.textContent =
+			mode === "yolo"
+				? "⚠ YOLO active — everything auto-allows this session"
+				: mode === "read-only"
+					? "read-only — mutations denied silently"
+					: mode === "auto-approve"
+						? "auto-approve — ordinary asks skipped (sensitive still prompts)"
+						: "";
+		// effective policy layers (FR-30) + diagnostics (FR-33)
+		const tree = pu.buildLayerTree(
+			j.layers.default,
+			j.layers.user,
+			j.layers.workspace,
+			j.diagnostics,
+		);
+		setSafeHtml(permPageEls.layers, renderLayerTree(tree.tools, j.layers.user));
+		wireRuleRemove();
+		fillPermTools(j);
+		if (tree.diagnostics.length) {
+			permPageEls.diags.hidden = false;
+			setSafeHtml(
+				permPageEls.diags,
+				"<h4>diagnostics</h4>" +
+					tree.diagnostics
+						.map(
+							(d) =>
+								`<div class="perm-diag"><span class="perm-layer">${esc(d.layer)}</span><code>${esc(d.path)}</code><span>${esc(d.message)}</span></div>`,
+						)
+						.join(""),
+			);
+		} else permPageEls.diags.hidden = true;
+		// session grants (FR-32)
+		renderPermGrants(j.grants);
+		// decision audit (FR-34)
+		fetchPermAudit();
+	} catch (e) {
+		toast("permissions fetch failed: " + e.message, "err");
+	}
+}
+function renderLayerTree(tools, userCfg) {
+	if (!tools || !tools.length)
+		return "<p class='perm-empty'>no per-tool rules</p>";
+	let h = "";
+	for (const t of tools) {
+		h += `<div class="perm-tool"><div class="perm-tool-head"><span class="perm-tool-name">${esc(t.tool)}</span><span class="perm-fallback">fallback ${esc(t.fallback)}</span></div>`;
+		for (const r of t.rules) {
+			h += `<div class="perm-rule"><code>${esc(r.pattern)}</code><span class="perm-action ${esc(r.action)}">${esc(r.action)}</span>`;
+			h += r.layers
+				.map((l) => `<span class="perm-layer">${esc(l)}</span>`)
+				.join("");
+			// user-layer rules are the editable layer (floor locked, workspace
+			// tighten-only via its own file) — offer remove for those
+			if (r.layers.includes("user"))
+				h += `<button type="button" class="perm-rule-rm" data-rm="${esc(t.tool)}" data-pat="${esc(r.pattern)}" title="remove rule">×</button>`;
+			h += `</div>`;
+		}
+		h += `</div>`;
+	}
+	return h;
+}
+// remove buttons on user-layer rules → mutate the user cfg + revision-checked PUT
+function wireRuleRemove() {
+	permPageEls.layers.querySelectorAll("[data-rm]").forEach((b) => {
+		b.onclick = () => {
+			const cur = (permData && permData.layers && permData.layers.user) || {};
+			const res = pu.removeRule(cur, b.dataset.rm, b.dataset.pat);
+			if (!res.ok) {
+				toast(res.error, "err");
+				return;
+			}
+			saveUserRule(res.config);
+		};
+	});
+}
+// shared revision-checked config write for mode + rule edits (FR-37)
+async function saveUserRule(cfg, okMsg) {
+	const cur = (permData && permData.layers && permData.layers.user) || {};
+	try {
+		const r = await fetch("/api/permissions/config", {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ revision: cur.revision, config: cfg }),
+		});
+		const j = await r.json();
+		if (j && j.ok) {
+			toast(okMsg || "rule updated", "ok");
+			refreshPermPage();
+			return true;
+		}
+		toast("rule save failed: " + (j.error || "validation"), "err");
+		refreshPermPage(); // re-sync with the server truth
+	} catch (e) {
+		toast("rule save failed: " + e.message, "err");
+	}
+	return false;
+}
+// datalist of known tool names for the rule + explain inputs
+const PERM_TOOL_EXTRAS = [
+	"bash",
+	"edit",
+	"write",
+	"read",
+	"grep",
+	"find",
+	"ls",
+	"glob",
+	"subagent",
+	"ask_user_question",
+	"todo",
+];
+function fillPermTools(j) {
+	const el = $("perm-tools");
+	if (!el) return;
+	const meta = new Set([
+		"version",
+		"revision",
+		"mode",
+		"nonInteractive",
+		"sensitivePaths",
+		"grants",
+		"*",
+	]);
+	const names = new Set(PERM_TOOL_EXTRAS);
+	for (const L of [j.layers.default, j.layers.user, j.layers.workspace])
+		for (const k of Object.keys(L || {})) if (!meta.has(k)) names.add(k);
+	setSafeHtml(
+		el,
+		[...names]
+			.sort()
+			.map((n) => `<option value="${esc(n)}">`)
+			.join(""),
+	);
+}
+function renderPermGrants(grants) {
+	if (!Array.isArray(grants) || !grants.length) {
+		setSafeHtml(
+			permPageEls.grants,
+			"<p class='perm-empty'>no session grants</p>",
+		);
+		return;
+	}
+	let h = "";
+	grants.forEach((g, i) => {
+		h += `<div class="perm-grant"><span class="perm-grant-n">${i + 1}.</span><code>${esc(g.toolName || "?")}</code><span class="perm-muted">${new Date(g.at).toLocaleTimeString()}</span><button type="button" data-revoke="${i + 1}">revoke</button></div>`;
+	});
+	setSafeHtml(permPageEls.grants, h);
+	permPageEls.grants.querySelectorAll("[data-revoke]").forEach((b) => {
+		b.onclick = () => {
+			fetch("/api/permissions/grants/" + b.dataset.revoke, {
+				method: "DELETE",
+			})
+				.then((r) => r.json())
+				.then((j) => {
+					toast(
+						j && j.ok ? "revoke sent" : "revoke failed",
+						j && j.ok ? "ok" : "err",
+					);
+					refreshPermPage();
+				});
+		};
+	});
+}
+$("perm-grants-clear").onclick = () => {
+	fetch("/api/permissions/grants", { method: "DELETE" })
+		.then((r) => r.json())
+		.then((j) => {
+			toast(
+				j && j.ok ? "grants cleared" : "clear failed",
+				j && j.ok ? "ok" : "err",
+			);
+			refreshPermPage();
+		});
+};
+async function fetchPermAudit() {
+	try {
+		const r = await fetch("/api/permissions/audit");
+		const j = await r.json();
+		const entries = (j && j.entries) || [];
+		if (!entries.length) {
+			setSafeHtml(
+				permPageEls.audit,
+				"<p class='perm-empty'>no decisions yet</p>",
+			);
+			return;
+		}
+		let h = "";
+		for (const e of entries.slice(-30).reverse()) {
+			const denied = e.decision === "Deny" || e.decision === "deny";
+			h += `<div class="perm-audit-row"><span class="perm-muted">${new Date(e.t).toLocaleTimeString()}</span><code>${esc(e.toolName || "")}</code><span class="perm-action ${denied ? "deny" : "allow"}">${denied ? "deny" : "allow"}</span>${e.matchedRule ? `<code>${esc(e.matchedRule)}</code>` : ""}<span class="perm-layer">${esc(e.mode || "")}</span></div>`;
+		}
+		setSafeHtml(permPageEls.audit, h);
+	} catch {
+		/* best-effort */
+	}
+}
+
+// mode setting (FR-17/32b): persisted modes PUT the user config; yolo is a
+// session-scoped command (never persisted) with a confirm step on the page.
+// yolo engagement arrives via the extension's safeguard setStatus broadcast
+// and flips the composer chip without a round-trip.
+function applyModeSetting(mode) {
+	if (mode === "yolo") {
+		api({ type: "prompt", message: "/safeguard mode yolo" });
+		permPageEls.modeState.textContent =
+			"yolo engage requested — confirm in the prompt…";
+		toast("yolo engage command sent", "warn");
+		return;
+	}
+	const cur = (permData && permData.layers && permData.layers.user) || {};
+	const cfg = { ...cur, mode };
+	saveUserRule(cfg, "mode → " + mode).then((ok) => {
+		if (ok) setModeChip(mode);
+	});
+}
+permPageEls.mode.onchange = () => applyModeSetting(permPageEls.mode.value);
+permPageEls.modePage.onchange = () => {
+	const next = permPageEls.modePage.value;
+	const st = pu.modeState(permData ? permData.mode : "default", next, false);
+	if (st.confirm) {
+		permPageEls.confirm.hidden = false; // yolo needs the confirm step (FR-32b)
+		permPageEls.modePage.value = st.value; // revert until confirmed
+		return;
+	}
+	applyModeSetting(st.value);
+};
+
+// ---- quick rule editor (add): tool + pattern + effect → user config ----
+const permRuleTool = $("perm-rule-tool");
+const permRulePat = $("perm-rule-pat");
+const permRuleEff = $("perm-rule-eff");
+$("perm-rule-add").onclick = () => {
+	const cur = (permData && permData.layers && permData.layers.user) || {};
+	const res = pu.applyRule(
+		cur,
+		permRuleTool.value,
+		permRulePat.value,
+		permRuleEff.value,
+	);
+	if (!res.ok) {
+		toast(res.error, "err");
+		return;
+	}
+	saveUserRule(res.config);
+};
+$("perm-confirm-yes").onclick = () => {
+	permPageEls.confirm.hidden = true;
+	applyModeSetting("yolo");
+};
+$("perm-confirm-no").onclick = () => {
+	permPageEls.confirm.hidden = true;
+};
+
+// explain (FR-35): same engine as the gate — verdict + per-part breakdown
+$("perm-explain-go").onclick = async () => {
+	const tool = permPageEls.explainTool.value.trim() || "bash";
+	const selector = permPageEls.explainSel.value;
+	permPageEls.explainOut.textContent = "…";
+	try {
+		const r = await fetch("/api/permissions/explain", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ tool, selector }),
+		});
+		const j = await r.json();
+		if (!j || !j.ok) {
+			permPageEls.explainOut.textContent = "explain failed: " + (j && j.error);
+			return;
+		}
+		const v = pu.explainView(j.verdict, j.bash, j.gateVerdict);
+		let h = `<div class="perm-ev"><span class="perm-action ${esc(v.action)}">${esc(v.action)}</span><span class="perm-tier">${esc(v.tier)}</span><code>${esc(v.matchedRule)}</code><span class="perm-layer">${esc(v.layer || "")}</span>${v.autoAllowable ? "<span class='perm-auto'>auto-allow</span>" : ""}</div><div class="perm-reason">${esc(v.reason)}</div>`;
+		if (v.parts) {
+			h +=
+				`<div class="perm-parts">` +
+				v.parts
+					.map(
+						(p) =>
+							`<div class="perm-part"><code>${esc(p.command)}</code><span class="perm-action ${p.readonly ? "allow" : "ask"}">${p.readonly ? "readonly" : "mutate"}</span></div>`,
+					)
+					.join("") +
+				`</div>`;
+		}
+		setSafeHtml(permPageEls.explainOut, h);
+	} catch (e) {
+		permPageEls.explainOut.textContent = "explain failed: " + e.message;
+	}
+};
 
 // ponytail: in-UI stop. The button POSTs /api/stop; the server kills its pi
 // child + exits. We close the SSE stream (no reconnect loop) and mark a static
@@ -4410,7 +5327,7 @@ function resumeSession(sessionPath, current) {
 	hideModal();
 	if (current) return; // already active — nothing to resume
 	setTodos([]); // fresh todo panel for the resumed session
-	setSafeHtml(transcript, "");
+	setSafeHtml(feedEl, "");
 	toolBlocks.clear();
 	api({ type: "switch_session", sessionPath, id: "resume" });
 }
@@ -4477,6 +5394,20 @@ $("new").onclick = () =>
 		},
 	);
 $("sessions").onclick = showSessions;
+// composer overflow ⋯ (spec FR-4): selecting an action closes the popover;
+// Escape closes it too — stopPropagation so the wsbar drawer listener can't
+// also fire. Open state is transient, never persisted.
+if (barOvf) {
+	barOvf.addEventListener("click", (e) => {
+		if (sbNarrow && e.target.closest("select, button")) barOvf.open = false;
+	});
+	barOvf.addEventListener("keydown", (e) => {
+		if (e.key === "Escape") {
+			barOvf.open = false;
+			e.stopPropagation();
+		}
+	});
+}
 
 // ---- left sidebar: workspaces + sessions (FR-6/FR-7/FR-9/FR-10) ----
 // workspaces come from /api/workspaces (auto-discovered project roots); the
@@ -4570,32 +5501,64 @@ async function refreshSessionsSidebar() {
 		host.appendChild(row);
 	}
 }
+// ponytail: drawer mode = w-mid/w-narrow (spec FR-2). Push-vs-drawer is pure
+// CSS off body.w-* — a widthchange conversion (FR-2.3) needs no JS here.
+function drawerMode() {
+	return !document.body.classList.contains("w-wide");
+}
 function collapseWsbar() {
 	document.body.classList.remove("ws-on");
 	localStorage.setItem(WS_KEY, "off");
 	const open = $("ws-open");
-	if (open) open.hidden = false;
+	if (open) {
+		open.hidden = false;
+		open.setAttribute("aria-expanded", "false");
+		open.focus(); // return focus to the launcher (spec FR-2.4)
+	}
 }
 function expandWsbar() {
 	document.body.classList.add("ws-on");
 	localStorage.setItem(WS_KEY, "on");
 	const open = $("ws-open");
-	if (open) open.hidden = true;
+	if (open) {
+		open.hidden = true;
+		open.setAttribute("aria-expanded", "true");
+	}
+	const bar = $("wsbar");
+	if (bar) bar.focus(); // drawer gets initial focus (spec FR-2.4)
 	refreshWorkspaces();
 	refreshSessionsSidebar();
 }
 (function initWsbar() {
 	// default on (first run); honor an explicit "off".
+	const open = $("ws-open");
 	if (localStorage.getItem(WS_KEY) === "off") {
-		const open = $("ws-open");
 		if (open) open.hidden = false;
 	} else {
 		document.body.classList.add("ws-on");
 	}
+	if (open) {
+		open.setAttribute(
+			"aria-expanded",
+			document.body.classList.contains("ws-on") ? "true" : "false",
+		);
+	}
 	const collapse = $("ws-collapse");
 	if (collapse) collapse.onclick = collapseWsbar;
-	const open = $("ws-open");
 	if (open) open.onclick = expandWsbar;
+	const scrim = $("ws-scrim");
+	if (scrim) scrim.onclick = collapseWsbar;
+	// Escape closes the drawer — but never while the modal is open (the
+	// capture-phase onModalKey owns Escape then) or the settings drawer.
+	document.addEventListener("keydown", (e) => {
+		if (e.key !== "Escape") return;
+		if (modal.style.display === "flex") return;
+		if (settingsEl.classList.contains("open")) return;
+		if (!document.body.classList.contains("ws-on")) return;
+		if (!drawerMode()) return;
+		e.preventDefault();
+		collapseWsbar();
+	});
 	const neu = $("ws-new");
 	if (neu)
 		neu.onclick = () =>
@@ -5340,6 +6303,16 @@ function gitActionButtons(s) {
 }
 
 // ---- register built-in UI commands ----
+// FR-29: permissions page is reachable from the command palette (rail launcher
+// arrives with W1). Registered here, after the uiCommands registry exists.
+registerCommand(
+	"permissions",
+	"Permissions (policy & approvals)",
+	"open the permissions page",
+	() => {
+		location.hash = "#permissions";
+	},
+);
 registerCommand("new-session", "new session", "start a fresh session", () =>
 	api({ type: "new_session" }),
 );
@@ -5411,8 +6384,38 @@ registerCommand(
 // ---- right-rail drag-resize (plan 3.5 / U§2.6) ----
 // The #sddbar (and future widget rail) is drag-resizable via a .rail-resize
 // handle on its left edge; the width persists as the --rail-width CSS var (read
-// by the body.sdd-on.sdd-open rules). Clamped 240–720px. Only active when the
-// pane is open. Mouse + touch.
+// by the body.sdd-on.sdd-open rules). Clamped 240–720px; when the transcript
+// floor cap binds (narrow w-wide viewports, spec FR-3.3) the upper bound
+// shrinks below 240 rather than violate it. Only active when the pane is open.
+// Mouse + touch.
+const CONTENT_FLOOR = 560; // spec FR-3 — the transcript never falls below this
+function wsbarPushWidth() {
+	// JS mirror of --wsbar-w (min(240px, 26vw)); 0 unless the sidebar actually
+	// pushes (drawer modes don't reserve body margin).
+	if (!document.body.classList.contains("ws-on")) return 0;
+	if (!document.body.classList.contains("w-wide")) return 0;
+	return Math.min(240, Math.round(document.documentElement.clientWidth * 0.26));
+}
+function railMaxWidth() {
+	// Overlay modes (w-mid/w-narrow) don't push — only the 720 hard cap applies;
+	// push mode (w-wide) keeps the transcript >= CONTENT_FLOOR.
+	if (!document.body.classList.contains("w-wide")) return 720;
+	return Math.max(
+		88,
+		document.documentElement.clientWidth - wsbarPushWidth() - CONTENT_FLOOR,
+	);
+}
+function clampRailWidth() {
+	const cur = parseFloat(
+		document.documentElement.style.getPropertyValue("--rail-width"),
+	);
+	if (!(cur > 0)) return;
+	const max = railMaxWidth();
+	if (cur > max) {
+		document.documentElement.style.setProperty("--rail-width", max + "px");
+		localStorage.setItem("pi:rail-width", String(max));
+	}
+}
 function initRailResize() {
 	const bar = $("sddbar");
 	if (!bar || bar.querySelector(".rail-resize")) return;
@@ -5421,11 +6424,16 @@ function initRailResize() {
 	handle.setAttribute("role", "separator");
 	handle.setAttribute("aria-orientation", "vertical");
 	handle.setAttribute("aria-label", "resize sidebar");
+	handle.setAttribute("aria-valuemin", "0");
+	handle.setAttribute("aria-valuemax", "100");
+	handle.setAttribute("aria-valuenow", "50");
+	handle.tabIndex = 0; // focusable separator — keyboard-resizable (a11y FR-6)
 	handle.title = "drag to resize";
 	bar.appendChild(handle);
 	const saved = parseFloat(localStorage.getItem("pi:rail-width"));
 	if (saved >= 240 && saved <= 720)
 		document.documentElement.style.setProperty("--rail-width", saved + "px");
+	clampRailWidth(); // a stale wide save must not exceed the current floor cap
 	let dragging = false,
 		startX = 0,
 		startW = 0;
@@ -5442,15 +6450,45 @@ function initRailResize() {
 	const move = (clientX) => {
 		if (!dragging) return;
 		const delta = startX - clientX; // left drag = wider (right-anchored)
-		const w = Math.max(240, Math.min(720, startW + delta));
-		document.documentElement.style.setProperty("--rail-width", w + "px");
+		const w = Math.max(88, Math.min(720, railMaxWidth(), startW + delta));
+		applyWidth(w);
 	};
+	// a11y FR-6: live WAI value metadata + one shared apply path for pointer
+	// and keyboard (aria-valuenow is percent of the current 88..max range)
+	const applyWidth = (w) => {
+		document.documentElement.style.setProperty("--rail-width", w + "px");
+		const mx = railMaxWidth();
+		handle.setAttribute(
+			"aria-valuenow",
+			String(Math.round(((w - 88) / Math.max(1, mx - 88)) * 100)),
+		);
+	};
+	// keyboard: ArrowLeft widens (mirrors pointer), ArrowRight narrows,
+	// Home/End jump — step math in a11y-contrast.resizeStep (unit-tested)
+	handle.addEventListener("keydown", (e) => {
+		if (!document.body.classList.contains("sdd-open")) return;
+		if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+		e.preventDefault();
+		const mx = railMaxWidth();
+		const cur = Math.max(88, Math.min(mx, bar.offsetWidth));
+		const pct = resizeStep(
+			((cur - 88) / Math.max(1, mx - 88)) * 100,
+			e.key,
+			0,
+			100,
+		);
+		const w = 88 + (pct / 100) * (mx - 88);
+		applyWidth(w);
+		clampRailWidth();
+		localStorage.setItem("pi:rail-width", String(bar.offsetWidth));
+	});
 	const up = () => {
 		if (!dragging) return;
 		dragging = false;
 		handle.classList.remove("active");
 		document.body.style.userSelect = "";
 		document.body.style.cursor = "";
+		clampRailWidth(); // final safety pass
 		localStorage.setItem("pi:rail-width", String(bar.offsetWidth));
 	};
 	handle.addEventListener("mousedown", (e) => {
@@ -5476,6 +6514,8 @@ function initRailResize() {
 		{ passive: false },
 	);
 	document.addEventListener("touchend", up);
+	// re-clamp the persisted width when the viewport crosses width modes
+	document.body.addEventListener("widthchange", clampRailWidth);
 }
 initRailResize();
 

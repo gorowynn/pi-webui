@@ -49,14 +49,16 @@
 	/* ponytail: neutral black depth only — no colored glow halo (glowing
 	   accents on dark are a top AI-slop tell). paperlike softens further. */
 	--shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+	/* wsbar push width — single source for the sidebar, the body margin, and
+	   the sdd-open floor cap (spec FR-3). */
+	--wsbar-w: min(240px, 26vw);
 }
 * {
 	box-sizing: border-box;
 }
 /* ponytail: themed scrollbars. The UA default is a bright white bar that
    clashes with the dark UI — style it once globally (webkit pseudo-elements +
-   the spec scrollbar-color for Firefox). Hidden-on-purpose bars (.sx-hlbody)
-   keep their own none/none rules, which win on specificity. */
+   the spec scrollbar-color for Firefox). */
 * {
 	scrollbar-width: thin;
 	scrollbar-color: var(--muted) transparent;
@@ -85,6 +87,8 @@ body {
 	margin: 0;
 }
 body {
+	min-height: 100vh;
+	min-height: 100dvh; /* spec FR-9 — dvh with vh fallback for installed/PWA */
 	background: var(--canvas);
 	color: var(--ink);
 	/* ponytail: global monospace per design.md 'engineering-first' feel. JetBrains/Fira if installed, else system mono. No web-font fetch (add @import if you want guaranteed JetBrains Mono). */
@@ -105,6 +109,8 @@ header {
 	gap: 8px;
 	align-items: center;
 	padding: 5px 12px;
+	padding-left: calc(12px + env(safe-area-inset-left));
+	padding-right: calc(12px + env(safe-area-inset-right));
 	background: var(--surface);
 	border-bottom: 1px solid var(--line);
 	flex: 0 0 auto;
@@ -183,24 +189,39 @@ main {
 	min-height: 0;
 	overflow-y: auto;
 	scrollbar-gutter: stable;
-	/* ponytail: cap transcript content at ~900px and center on wide screens
-	   (plan 1.2 / U§2.8) — edge-to-edge on ultrawide hurt readability.
-	   scrollbar-gutter: stable reserves the track so growing/shrinking content
-	   doesn't cause a horizontal reflow. */
-	padding: 16px max(28px, calc((100% - 900px) / 2)) 8px;
+	/* ponytail: cap transcript content at ~1200px and center on wide screens
+	   (plan 1.2 / U§2.8) — edge-to-edge on ultrawide hurt readability; 900px
+	   left the column narrow at 1440+ (content area is ~1112px with both rails
+	   open). scrollbar-gutter: stable reserves the track so growing/shrinking
+	   content doesn't cause a horizontal reflow. */
+	padding: 16px max(28px, calc((100% - 1200px) / 2)) 8px;
 }
-/* ponytail: empty-state hint — purely CSS (:empty), no JS. Shows only while the
-   transcript has no messages (fresh session / cleared), removed the moment the
-   first message renders. */
-#transcript:empty::before {
-	content: "no messages yet — send one to begin";
-	display: block;
+/* stateful empty state (spec FR-8): labelled surface + one primary action.
+   Shown/hidden by app.js updateEmptyState — replaces the old :empty pseudo. */
+#empty-state {
+	padding: 15vh 20px 0;
 	text-align: center;
 	color: var(--muted);
 	font:
 		italic 13px / 1.4 system-ui,
 		sans-serif;
-	padding: 15vh 20px 0;
+}
+#empty-state p {
+	margin: 0 0 10px;
+}
+#empty-state button {
+	font-style: normal;
+	background: var(--surface-raised);
+	color: var(--ink);
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	padding: 6px 14px;
+	cursor: pointer;
+	font-size: 13px;
+}
+#empty-state button:hover {
+	border-color: var(--accent);
+	color: var(--accent);
 }
 /* ponytail: chat-app "↓ N new" pill. Floats over the transcript's visible area
    (absolute vs the non-scrolling #scroll-wrap), shown only when the user has
@@ -208,7 +229,7 @@ main {
 #jump-bottom {
 	position: absolute;
 	right: 22px;
-	bottom: 16px;
+	bottom: calc(16px + env(safe-area-inset-bottom)); /* spec FR-9 */
 	z-index: 20;
 	background: var(--accent);
 	color: var(--on-accent);
@@ -472,6 +493,11 @@ pre code.hljs {
 }
 /* card head: caret + tool name + readable command … duration */
 .tool .head {
+	font: inherit; /* button reset — the head is a native <button> (a11y) */
+	text-align: left;
+	background: none;
+	border: 0;
+	width: 100%;
 	cursor: pointer;
 	padding: 6px 10px;
 	display: flex;
@@ -554,6 +580,9 @@ pre code.hljs {
 	padding: 8px 12px;
 	max-height: 320px;
 	overflow: auto;
+	/* a11y FR-10: focus/scrollIntoView must not land under the sticky hunk
+	   label — dhunk height + breathing room */
+	scroll-padding-top: 36px;
 }
 /* ---- tool-output typed renders (plan 2.x / R§2.x) ----
    raw tool content is never innerHTML'd here — textContent only, safe md
@@ -686,6 +715,11 @@ pre code.hljs {
 	align-items: center;
 	border-top: 1px solid var(--line);
 	background: var(--canvas);
+}
+/* spec FR-6: the activity row only exists for work / intervention / error —
+   the pure-idle "ready" state hides it (body.act-on toggled by setActivity). */
+body:not(.act-on) .activity {
+	display: none;
 }
 .activity .spin {
 	width: 11px;
@@ -833,6 +867,18 @@ pre code.hljs {
 }
 .sx-host {
 	padding: 2px 0 6px;
+	/* shared diff geometry (plan A5 / FR-1): one variable set drives every
+	   pane. --sx-lh is a FIXED px value (12px × 1.45) so the textarea line
+	   grid and the highlight rows align exactly at any zoom — no relative
+	   units. --sx-gutter is set by JS (monotonic ch reserve, FR-2). */
+	--sx-font: ui-monospace, Menlo, Consolas, monospace;
+	--sx-fs: 12px;
+	--sx-lh: 17.4px;
+	--sx-tab: 2;
+	--sx-gutter: 2ch;
+	--sx-gutter-pad: 10px;
+	letter-spacing: 0;
+	word-spacing: 0;
 }
 .sxs {
 	display: grid;
@@ -856,6 +902,10 @@ pre code.hljs {
 	align-items: center;
 	justify-content: space-between;
 	padding: 4px 8px;
+	/* plan A5 / FR-1: both columns' headers must be the SAME height — the new
+	   column carries the Review/Edit toggle + Apply (24px targets), which made
+	   it taller than the bare "− original" header and offset the two bodies. */
+	min-height: 36px;
 	font-size: 11px;
 	background: var(--surface-raised);
 	border-bottom: 1px solid var(--line);
@@ -874,10 +924,10 @@ pre code.hljs {
 	margin: 0;
 	height: 300px;
 	overflow: auto;
-	font-family: ui-monospace, Menlo, Consolas, monospace;
-	font-size: 12px;
-	line-height: 1.45;
-	tab-size: 2;
+	font-family: var(--sx-font);
+	font-size: var(--sx-fs);
+	line-height: var(--sx-lh);
+	tab-size: var(--sx-tab);
 	background: var(--surface);
 }
 .sx-line {
@@ -891,8 +941,8 @@ pre code.hljs {
 	position: sticky;
 	left: 0;
 	flex: 0 0 auto;
-	min-width: var(--sx-gutter, 2.5ch);
-	padding: 0 10px;
+	min-width: calc(var(--sx-gutter, 2ch) + var(--sx-gutter-pad, 10px));
+	padding: 0 var(--sx-gutter-pad, 10px);
 	text-align: right;
 	color: var(--muted);
 	opacity: 0.5;
@@ -906,6 +956,10 @@ pre code.hljs {
 }
 .sx-line.ln-empty {
 	background: #ffffff08;
+}
+.sx-line.sx-paused .sx-ltxt {
+	color: var(--muted);
+	padding: 8px 12px;
 }
 .sx-line.ln-empty .sx-ltxt {
 	color: var(--muted);
@@ -926,27 +980,81 @@ pre code.hljs {
 	color: #b5e89a;
 	opacity: 0.8;
 }
-/* editable new pane: transparent textarea layered over a colored body.
-         Its left padding mirrors the gutter width so typed text lines up with
-         the highlight rows behind it (gutter shows through the transparency). */
-/* ponytail: .sx-edit is a flex column so .sx-ta can flex to fill it. Sizing
-   the textarea with flex (not height:%) is what makes it fill the modal column
-   — percentage heights don't resolve up an indefinite-height (max-height only)
-   flex chain, so height:100% collapsed the textarea to its ~2-row default. */
+/* editable new pane: Review (aligned highlighted diff, read-only) vs Edit
+   (real visible textarea + line-number gutter) — plan A5 / FR-3. Both views
+   stay in the DOM and CSS flips visibility via host[data-mode], so the SAME
+   textarea element persists across switches (native undo/selection/scroll
+   survive). No LCS runs while in Edit mode (FR-5); returning to Review
+   recomputes the alignment. In Edit mode the old column hides and the grid
+   goes single-column (a stale left alignment would be a lie — raw editor
+   lines are never drawn over deletion placeholders, FR-3.4). */
 .sx-edit {
 	position: relative;
 	display: flex;
 	flex-direction: column;
+	min-height: 0;
 }
-.sx-hlbody {
-	position: absolute;
-	inset: 0;
-	overflow: auto;
-	pointer-events: none;
-	scrollbar-width: none;
+.sx-edit .sx-review {
+	height: 300px;
 }
-.sx-hlbody::-webkit-scrollbar {
+.sx-eedit {
 	display: none;
+	position: relative;
+	/* plan A5 / FR-3: COLUMN direction — in the modal the textarea is
+	   `flex:1 1 auto; height:auto`, and inside a row flex that only stretches
+	   horizontally, collapsing the editor to its ~2-row intrinsic height. */
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
+}
+.sx-host[data-mode="edit"] .sx-review,
+.sx-host[data-mode="edit"] .sx-old {
+	display: none;
+}
+.sx-host[data-mode="edit"] .sxs {
+	grid-template-columns: 1fr;
+}
+.sx-host[data-mode="edit"] .sx-eedit {
+	display: flex;
+}
+.sx-host[data-mode="edit"] .sx-ta {
+	/* real-text editor: show its extent so the pane never reads as dead
+	   space (plan A5 fix, round 2). */
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+}
+/* edit-mode gutter strip: fixed width = the shared gutter reserve (FR-2), so
+   the numbers sit exactly where the review gutter is; scrolls with the
+   textarea (JS keeps gutter.scrollTop == ta.scrollTop). */
+.sx-egutter {
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: calc(var(--sx-gutter, 2ch) + var(--sx-gutter-pad, 10px));
+	overflow: hidden;
+	background: var(--surface);
+	border-right: 1px solid var(--line);
+	user-select: none;
+}
+.sx-egutter-in {
+	display: flex;
+	flex-direction: column;
+}
+.sx-eg-row {
+	flex: 0 0 auto;
+	height: var(--sx-lh);
+	display: flex;
+	align-items: flex-start;
+	justify-content: flex-end;
+	padding: 0 var(--sx-gutter-pad, 10px);
+}
+.sx-eg-num {
+	font-family: var(--sx-font);
+	font-size: var(--sx-fs);
+	line-height: var(--sx-lh);
+	color: var(--muted);
+	opacity: 0.5;
 }
 .sx-ta {
 	position: relative;
@@ -954,20 +1062,93 @@ pre code.hljs {
 	width: 100%;
 	height: 300px;
 	margin: 0;
-	padding: 6px 12px 6px calc(var(--sx-gutter, 2.5ch) + 20px);
+	/* plan A5 / FR-1: block padding 0 — the old 6px top/bottom offset the
+	   caret from the highlight rows; left padding = the gutter reserve + pad
+	   (no +20px fudge). */
+	padding: 0 12px 0 calc(var(--sx-gutter, 2ch) + var(--sx-gutter-pad, 10px));
 	resize: vertical;
-	font-family: ui-monospace, Menlo, Consolas, monospace;
-	font-size: 12px;
-	line-height: 1.45;
-	tab-size: 2;
+	font-family: var(--sx-font);
+	font-size: var(--sx-fs);
+	line-height: var(--sx-lh);
+	tab-size: var(--sx-tab);
 	white-space: pre;
-	background: transparent;
-	color: transparent;
-	-webkit-text-fill-color: transparent;
-	caret-color: var(--ink);
+	background: var(--surface);
+	color: var(--ink);
 	border: 0;
 	outline: none;
 	overflow: auto;
+}
+/* Review/Edit segmented toggle in the new-column header (FR-3, FR-8). */
+.sx-mode {
+	display: inline-flex;
+	margin: 0 8px;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	overflow: hidden;
+}
+.sx-mode-btn {
+	font: inherit;
+	font-size: 11px;
+	line-height: 1;
+	min-height: 24px;
+	padding: 0 8px;
+	border: 0;
+	background: var(--surface-raised);
+	color: var(--muted);
+	cursor: pointer;
+}
+.sx-mode-btn + .sx-mode-btn {
+	border-left: 1px solid var(--line);
+}
+.sx-mode-btn[aria-pressed="true"] {
+	background: var(--accent);
+	color: var(--surface);
+}
+.sx-mode-btn:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+.sx-mode-btn:focus-visible {
+	outline: 1px solid var(--accent);
+	outline-offset: -1px;
+}
+/* conflict recovery banner (plan A5 / FR-7.2): inline in the sx host, amber
+   to stand apart from the diff itself. */
+.sx-conflict {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 6px 0 0;
+	padding: 6px 10px;
+	border: 1px solid #e5a03a66;
+	border-radius: var(--r);
+	background: #e5a03a1a;
+	font-size: 12px;
+}
+.sx-conflict-msg {
+	flex: 1 1 auto;
+	color: var(--ink);
+}
+.sx-conflict-btn {
+	font: inherit;
+	font-size: 11px;
+	min-height: 24px;
+	padding: 1px 8px;
+	border-radius: var(--r);
+	border: 1px solid var(--line);
+	background: var(--surface-raised);
+	color: var(--accent);
+	cursor: pointer;
+}
+.sx-conflict-btn:hover:not(:disabled) {
+	border-color: var(--accent);
+}
+/* read-only disk-vs-proposal review mounted above the live diff */
+.sx-compare {
+	margin-top: 8px;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	overflow: hidden;
 }
 .sx-apply {
 	font: inherit;
@@ -999,6 +1180,8 @@ pre code.hljs {
 	font: inherit;
 	font-size: 13px;
 	line-height: 1;
+	min-width: 24px;
+	min-height: 24px;
 	width: 18px;
 	height: 18px;
 	padding: 0;
@@ -1007,6 +1190,35 @@ pre code.hljs {
 	background: var(--surface-raised);
 	color: var(--muted);
 	cursor: pointer;
+}
+.sx-ctx-warn {
+	font-size: 11px;
+	color: #e5a03a;
+	text-transform: none;
+	letter-spacing: 0;
+	white-space: nowrap;
+}
+.sx-dirty {
+	color: var(--accent);
+	font-weight: 600;
+	text-transform: none;
+	letter-spacing: 0;
+}
+.sx-reset {
+	font: inherit;
+	font-size: 11px;
+	min-height: 24px;
+	padding: 1px 8px;
+	margin-left: 8px;
+	border-radius: var(--r);
+	border: 1px solid var(--line);
+	background: var(--surface-raised);
+	color: var(--muted);
+	cursor: pointer;
+}
+.sx-reset:hover:not(:disabled) {
+	color: var(--accent);
+	border-color: var(--accent);
 }
 .sx-ctx-btn:hover {
 	color: var(--accent);
@@ -1076,8 +1288,22 @@ pre code.hljs {
 	flex: 1 1 auto;
 	min-height: 0;
 }
+#modal .sx-eedit {
+	/* plan A5 fix: for short diffs the modal's flex chain is content-driven
+	   (the 92vh clamp only resolves when content overflows), so the edit pane
+	   collapsed to the textarea's 2-row intrinsic height. Floor it here — in
+	   edit mode only (the host only carries data-mode="edit" then); Review
+	   stays content-sized. The textarea's own flex-basis carries the same
+	   45vh so the editor never depends on flex-grow resolving. */
+	/* test-edit marker 2026-08-07 */
+	min-height: 45vh;
+}
 #modal .sx-ta {
-	flex: 1 1 auto;
+	/* plan A5 fix: explicit basis (not auto) — with the content-driven chain
+	   the auto basis resolved to the textarea's intrinsic 2 rows and grow had
+	   no free space; a 45vh basis is deterministic, and flex-grow still fills
+	   the pane when a tall diff makes the chain definite. */
+	flex: 1 1 45vh;
 	min-height: 0;
 	height: auto;
 }
@@ -1150,6 +1376,10 @@ footer {
 	background: var(--surface);
 	border-top: 1px solid var(--line);
 	padding: 10px clamp(8px, 4vw, 48px);
+	/* spec FR-9: safe-area insets (landscape notch / home indicator) */
+	padding-left: calc(clamp(8px, 4vw, 48px) + env(safe-area-inset-left));
+	padding-right: calc(clamp(8px, 4vw, 48px) + env(safe-area-inset-right));
+	padding-bottom: calc(10px + env(safe-area-inset-bottom));
 }
 .statusbar {
 	margin: 8px 0 0;
@@ -1200,7 +1430,22 @@ footer {
 	margin: 0;
 	position: relative;
 }
-textarea {
+/* a11y: visually-hidden but announced — coarse progress (FR-9) */
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+	border: 0;
+}
+/* ponytail: the composer's generic textarea styling must not touch the diff
+   editor — max-height: 200px would clamp .sx-ta to ~11 lines (same exclusion
+   idiom as the #modal textarea:not(.sx-ta) rule below). */
+textarea:not(.sx-ta) {
 	width: 100%;
 	min-height: 48px;
 	max-height: 200px;
@@ -1241,6 +1486,30 @@ textarea:focus {
 	opacity: 0.4;
 	cursor: not-allowed;
 }
+/* ponytail: permission-mode chip — always visible in the composer bar so the
+   current posture (default / auto-approve / read-only / yolo) can't be
+   forgotten mid-chat. Colored by [data-mode]; click opens #permissions. */
+.bar button.mode-chip {
+	font-size: 11px;
+	padding: 6px 10px;
+	color: var(--muted);
+	border-color: var(--line);
+	text-transform: lowercase;
+}
+.bar button.mode-chip:hover {
+	border-color: var(--accent);
+	color: var(--ink);
+}
+.bar button.mode-chip[data-mode="auto-approve"] {
+	color: var(--warning-strong, #e3b341);
+	border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+}
+.bar button.mode-chip[data-mode="read-only"],
+.bar button.mode-chip[data-mode="yolo"] {
+	color: var(--danger);
+	border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+	font-weight: 600;
+}
 .bar select {
 	background: var(--surface-raised);
 	color: var(--ink);
@@ -1253,6 +1522,144 @@ textarea:focus {
 	color: var(--muted);
 	font-size: 11px;
 	margin-left: auto;
+}
+/* composer overflow (spec FR-4): lower-frequency actions group behind a ⋯
+   toggle on narrow; wide/mid keep them inline exactly like the old flat bar
+   (mirrors the statusbar .sb-sec pattern). #compact stays a sibling so the
+   ctx-hot promotion (FR-10) is pure CSS. */
+.composer .bar-ovf {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+.composer .bar-ovf-items {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+}
+.composer .bar-ovf > summary {
+	list-style: none;
+	display: none; /* wide: inline, no toggle */
+	cursor: pointer;
+}
+.composer .bar-ovf > summary::-webkit-details-marker {
+	display: none;
+}
+/* narrow: ⋯ toggle + popover above the bar */
+body.w-narrow .composer .bar-ovf {
+	flex: 0 0 auto;
+	position: relative;
+}
+body.w-narrow .composer .bar-ovf > summary {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 24px;
+	height: 20px;
+	padding: 0 6px;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	background: var(--surface);
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1;
+}
+body.w-narrow .composer .bar-ovf > summary:hover {
+	color: var(--ink);
+	border-color: var(--accent);
+}
+body.w-narrow .composer .bar-ovf[open] > summary {
+	color: var(--accent);
+	border-color: var(--accent);
+}
+body.w-narrow .composer .bar-ovf-items {
+	position: absolute;
+	bottom: calc(100% + 6px);
+	left: 0;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+	padding: 8px 12px;
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	box-shadow: var(--shadow);
+	white-space: nowrap;
+	z-index: 60;
+}
+body.w-narrow .composer .bar-ovf:not([open]) .bar-ovf-items {
+	display: none;
+}
+body.w-narrow .composer .bar-ovf-items .hint {
+	margin-left: 0;
+}
+/* Sessions/New dedup (spec FR-5): hidden only while the sidebar is
+   push-visible (w-wide + ws-on) — drawer and collapsed states keep them. */
+body.ws-on.w-wide #sessions,
+body.ws-on.w-wide #new {
+	display: none;
+}
+/* context-pressure meter (spec FR-10, extended per user decision 2026-08-07):
+   a thin bar + label on the footer's top edge. Bar width % = --ctx-pct (set by
+   app.js updateCtxMeter); the label carries the numeric readout "percent%
+   (used/max)" — now the SINGLE context display (the statusbar sb-ctx readout
+   was removed). Hidden until data exists (body.ctx-on); neutral / --warning /
+   --danger by band. */
+#ctx-meter {
+	display: none;
+	align-items: center;
+	gap: 10px;
+	margin: 0 0 8px;
+}
+body.ctx-on #ctx-meter {
+	display: flex;
+}
+.ctx-bar {
+	flex: 1 1 auto;
+	min-width: 40px;
+	height: 3px;
+	border-radius: 2px;
+	background: linear-gradient(
+		to right,
+		var(--accent) var(--ctx-pct, 0%),
+		var(--line) var(--ctx-pct, 0%)
+	);
+}
+body.ctx-on.ctx-mid .ctx-bar {
+	background: linear-gradient(
+		to right,
+		var(--warning) var(--ctx-pct, 0%),
+		var(--line) var(--ctx-pct, 0%)
+	);
+}
+body.ctx-on.ctx-hot .ctx-bar {
+	background: linear-gradient(
+		to right,
+		var(--danger) var(--ctx-pct, 0%),
+		var(--line) var(--ctx-pct, 0%)
+	);
+}
+.ctx-label {
+	flex: 0 0 auto;
+	color: var(--muted);
+	font:
+		600 10px / 1 "JetBrains Mono",
+		ui-monospace,
+		monospace;
+	white-space: nowrap;
+}
+body.ctx-hot .ctx-label {
+	color: var(--danger);
+}
+/* narrow: Compact hides into the overflow row… and is promoted back with a
+   clear nudge while context is hot (FR-10.3) — pure CSS, no DOM moves. */
+body.w-narrow #compact {
+	display: none;
+}
+body.w-narrow.ctx-hot #compact {
+	display: inline-block;
+	border-color: var(--danger);
+	color: var(--danger);
 }
 
 #palette {
@@ -1341,12 +1748,32 @@ textarea:focus {
 #modal-wrap {
 	position: relative;
 	width: min(640px, 94vw);
+	padding-bottom: env(safe-area-inset-bottom); /* spec FR-9 */
 }
-/* ponytail: widen the wrapper to match a .wide card so the x button and diff
-   previews still track the card edge. :has() keys the parent off the card's
-   class without touching the 3 JS spots that toggle .wide. */
-#modal-wrap:has(.card.wide) {
-	width: min(1500px, 96vw);
+/* ponytail: blocking tool interactions use .card.wide and are REAL full-page
+   modals: opaque, fill the viewport, no floating card. :has() keys off the
+   card class; its specificity overrides compact-dialog narrow rules so every
+   approval/input request gets the same full-page surface. */
+#modal:has(.card.wide) {
+	background: var(--surface, #0d1117);
+}
+#modal:has(.card.wide) #modal-wrap {
+	width: 100vw;
+	max-width: none;
+	height: 100vh;
+	max-height: none;
+	padding: 0;
+}
+#modal:has(.card.wide) .card {
+	max-height: none;
+	height: 100%;
+	border: 0;
+	border-radius: 0;
+}
+#modal:has(.card.wide) .modal-x {
+	position: fixed;
+	top: 10px;
+	right: 14px;
 }
 #modal .card {
 	background: var(--surface);
@@ -1639,8 +2066,12 @@ textarea:focus {
 	border: none;
 	color: var(--muted);
 	cursor: pointer;
-	font: 600 15px / 1 ui-monospace, monospace;
+	font:
+		600 15px / 1 ui-monospace,
+		monospace;
 	padding: 0 2px;
+	min-width: 24px; /* a11y FR-11: touch target */
+	min-height: 24px;
 }
 .toast .toast-x:hover {
 	color: var(--ink);
@@ -1966,96 +2397,92 @@ textarea:focus-visible,
 	outline-offset: 1px;
 }
 
-/* ponytail: narrow-window fallback (<=720px). Status chips wrap instead of
-   forcing horizontal scroll; the side-by-side edit diff stacks old-above-new;
-   the header reflows. */
-@media (max-width: 720px) {
-	.statusbar {
-		justify-content: flex-start;
-		overflow: visible; /* let the popover clear the bar */
-		gap: 10px;
-	}
-	/* primary readouts stay inline (scroll internally if the repo path is long);
-	   secondary readouts collapse into a ⋯ popover above the bar. */
-	.statusbar .sb-grp.primary {
-		flex: 1 1 auto;
-		min-width: 0;
-		overflow-x: auto;
-		scrollbar-width: none;
-	}
-	.statusbar .sb-grp.primary::-webkit-scrollbar {
-		display: none;
-	}
-	.statusbar .sb-sec {
-		position: relative;
-		flex: 0 0 auto;
-	}
-	.statusbar .sb-sec > summary {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-width: 24px;
-		height: 20px;
-		padding: 0 6px;
-		border: 1px solid var(--line);
-		border-radius: var(--r);
-		background: var(--surface);
-		color: var(--muted);
-		font-size: 12px;
-		line-height: 1;
-	}
-	.statusbar .sb-sec > summary:hover {
-		color: var(--ink);
-		border-color: var(--accent);
-	}
-	.statusbar .sb-sec[open] > summary {
-		color: var(--accent);
-		border-color: var(--accent);
-	}
-	.statusbar .sb-sec-items {
-		position: absolute;
-		bottom: calc(100% + 6px);
-		right: 0;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 4px 0;
-		padding: 8px 12px;
-		background: var(--surface);
-		border: 1px solid var(--line);
-		border-radius: var(--r);
-		box-shadow: var(--shadow);
-		white-space: nowrap;
-		z-index: 60;
-	}
-	.statusbar .sb-sec:not([open]) .sb-sec-items {
-		display: none;
-	}
-	.statusbar .sb-sec-items .sep {
-		display: none;
-	}
-	header {
-		flex-wrap: wrap;
-		gap: 6px;
-	}
-	.sxs {
-		grid-template-columns: 1fr;
-	}
-	.sx-col + .sx-col {
-		border-left: 0;
-		border-top: 1px solid var(--line);
-	}
-	#modal .card {
-		width: 98vw;
-		max-height: 92vh;
-	}
-	/* ponytail: on narrow screens the left workspace sidebar auto-collapses so the
-	   transcript stays usable; the edge launcher (#ws-open) still re-opens it. */
-	body.ws-on {
-		margin-left: 0;
-	}
-	body.ws-on #wsbar {
-		display: none;
-	}
+/* ponytail: narrow-window fallback (body.w-narrow, set by the inline width
+   script — spec FR-11). Status chips wrap instead of forcing horizontal scroll;
+   the side-by-side edit diff stacks old-above-new; the header reflows. */
+body.w-narrow .statusbar {
+	justify-content: flex-start;
+	overflow: visible; /* let the popover clear the bar */
+	gap: 10px;
+}
+/* primary readouts stay inline (scroll internally if the repo path is long);
+   secondary readouts collapse into a ⋯ popover above the bar. */
+body.w-narrow .statusbar .sb-grp.primary {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+body.w-narrow .statusbar .sb-grp.primary::-webkit-scrollbar {
+	display: none;
+}
+body.w-narrow .statusbar .sb-sec {
+	position: relative;
+	flex: 0 0 auto;
+}
+body.w-narrow .statusbar .sb-sec > summary {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 24px;
+	height: 20px;
+	padding: 0 6px;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	background: var(--surface);
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1;
+}
+body.w-narrow .statusbar .sb-sec > summary:hover {
+	color: var(--ink);
+	border-color: var(--accent);
+}
+body.w-narrow .statusbar .sb-sec[open] > summary {
+	color: var(--accent);
+	border-color: var(--accent);
+}
+body.w-narrow .statusbar .sb-sec-items {
+	position: absolute;
+	bottom: calc(100% + 6px);
+	right: 0;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px 0;
+	padding: 8px 12px;
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	box-shadow: var(--shadow);
+	white-space: nowrap;
+	z-index: 60;
+}
+body.w-narrow .statusbar .sb-sec:not([open]) .sb-sec-items {
+	display: none;
+}
+body.w-narrow .statusbar .sb-sec-items .sep {
+	display: none;
+}
+body.w-narrow header {
+	flex-wrap: wrap;
+	gap: 6px;
+}
+body.w-narrow .sxs {
+	grid-template-columns: 1fr;
+}
+body.w-narrow .sx-col + .sx-col {
+	border-left: 0;
+	border-top: 1px solid var(--line);
+}
+body.w-narrow #modal .card {
+	width: 98vw;
+	max-height: 92vh;
+}
+/* ponytail: narrow screens never let the sidebar squeeze the transcript — body
+   margin stays 0 (the drawer rules live in the #wsbar section). */
+body.w-narrow.ws-on,
+body.w-mid.ws-on {
+	margin-left: 0;
 }
 
 /* ---- provider quota bar (inline in header, click for details) ---- */
@@ -2164,6 +2591,7 @@ textarea:focus-visible,
 	border: 1px solid var(--line);
 	border-radius: var(--r);
 	padding: 2px 8px;
+	min-height: 24px; /* a11y FR-11: touch target */
 	cursor: pointer;
 	font-size: 12px;
 }
@@ -2334,42 +2762,39 @@ textarea:focus-visible,
 	color: var(--ink);
 }
 
-/* ---- collapsible settings sidebar ---- */
+/* ---- utility pages in the shell: settings + permissions ----
+   Real pages per design.md §4 — they occupy the center region in place of the
+   transcript/composer (NOT overlays/drawers). Shared chrome: .perm-head
+   (sticky title bar) + .perm-body (centered 900px column). body gets
+   .page-open while one is shown, which hides the chat column; the shell
+   header stays (model select, status, refresh). */
 #settings-btn {
 	margin-left: 8px;
 	font-size: 15px;
 	line-height: 1;
 }
-#settings {
-	position: fixed;
-	top: 0;
-	right: 0;
-	bottom: 0;
-	width: min(340px, 86vw);
-	background: var(--surface);
-	border-left: 1px solid var(--line);
-	box-shadow: -8px 0 24px rgba(0, 0, 0, 0.4);
-	transform: translateX(100%);
-	transition: transform 0.18s ease;
+#settings,
+#permissions {
+	display: none;
+	flex: 1 1 auto;
+	min-height: 0;
 	overflow-y: auto;
-	z-index: 40;
-	padding: 14px 16px 28px;
+	flex-direction: column;
+	background: var(--surface, #0d1117);
 }
-#settings.open {
-	transform: translateX(0);
-}
-.set-head {
+#settings.open,
+#permissions:not([hidden]) {
 	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	margin-bottom: 12px;
 }
-.set-head h3 {
-	margin: 0;
-	font-size: 13px;
-	text-transform: uppercase;
-	letter-spacing: 0.6px;
-	color: var(--accent);
+#settings[hidden],
+#permissions[hidden] {
+	display: none;
+}
+body.page-open #scroll-wrap,
+body.page-open #todopanel,
+body.page-open footer,
+body.page-open .activity {
+	display: none;
 }
 .set-x {
 	background: none;
@@ -2378,6 +2803,8 @@ textarea:focus-visible,
 	font-size: 20px;
 	cursor: pointer;
 	line-height: 1;
+	min-width: 24px; /* a11y FR-11: touch target */
+	min-height: 24px;
 }
 .set-x:hover {
 	color: var(--ink);
@@ -2385,11 +2812,10 @@ textarea:focus-visible,
 .set-sec {
 	border-top: 1px solid var(--line);
 	padding-top: 10px;
-	margin-top: 10px;
 }
 .set-sec:first-of-type {
 	border-top: none;
-	margin-top: 0;
+	padding-top: 0;
 }
 .set-sec h4 {
 	margin: 0 0 8px;
@@ -2434,7 +2860,7 @@ textarea:focus-visible,
 	accent-color: var(--accent);
 }
 /* ponytail: danger button — outlined in --danger, fills on hover. Sits full-width in
-   the settings panel's "server" section. */
+   the settings page's "server" section. */
 #settings .set-stop {
 	width: 100%;
 	max-width: none;
@@ -2446,19 +2872,6 @@ textarea:focus-visible,
 #settings .set-stop:hover {
 	background: var(--danger);
 	color: var(--on-danger);
-}
-#settings-back {
-	position: fixed;
-	inset: 0;
-	background: rgba(0, 0, 0, 0.45);
-	opacity: 0;
-	pointer-events: none;
-	transition: opacity 0.18s ease;
-	z-index: 39;
-}
-#settings-back.open {
-	opacity: 1;
-	pointer-events: auto;
 }
 
 /* ---- left workspace/session sidebar (#wsbar) ----
@@ -2473,18 +2886,21 @@ textarea:focus-visible,
 	top: 0;
 	bottom: 0;
 	z-index: 30;
-	width: min(240px, 26vw);
+	width: var(--wsbar-w);
 	background: var(--surface);
 	border-right: 1px solid var(--line);
 	overflow-y: auto;
 	padding: 30px 0 12px;
+	/* spec FR-9: safe-area insets on the edges this rail touches */
+	padding-top: calc(30px + env(safe-area-inset-top));
+	padding-bottom: calc(12px + env(safe-area-inset-bottom));
 	display: none;
 }
 body.ws-on #wsbar {
 	display: block;
 }
 body.ws-on {
-	margin-left: min(240px, 26vw);
+	margin-left: var(--wsbar-w);
 }
 body.no-switch #ws-workspaces-sec {
 	display: none; /* IDE mode (PI_WEBUI_NO_SWITCH): fixed project, no list */
@@ -2494,8 +2910,8 @@ body.no-switch #ws-workspaces-sec {
 	top: 50%;
 	right: 6px;
 	transform: translateY(-50%);
-	width: 22px;
-	height: 22px;
+	width: 24px; /* a11y FR-11: ≥24×24 touch target */
+	height: 24px;
 	line-height: 1;
 	background: none;
 	border: 1px solid transparent;
@@ -2535,6 +2951,8 @@ body.no-switch #ws-workspaces-sec {
 		ui-monospace,
 		monospace;
 	padding: 3px 6px;
+	min-width: 24px; /* a11y FR-11: touch targets */
+	min-height: 24px;
 	border-radius: 4px;
 	cursor: pointer;
 }
@@ -2624,11 +3042,11 @@ body.no-switch #ws-workspaces-sec {
 /* edge launcher — visible only while the sidebar is collapsed (hidden) */
 #ws-open {
 	position: fixed;
-	left: 0;
+	left: env(safe-area-inset-left); /* spec FR-9 */
 	top: 50%;
 	transform: translateY(-50%);
 	z-index: 30;
-	width: 22px;
+	width: 24px; /* a11y FR-11: ≥24×24 touch target */
 	height: 34px;
 	background: var(--surface);
 	border: 1px solid var(--line);
@@ -2639,6 +3057,43 @@ body.no-switch #ws-workspaces-sec {
 }
 #ws-open:hover {
 	color: var(--ink);
+}
+/* drawer mode (w-mid / w-narrow, spec FR-2): the sidebar is an off-canvas
+   overlay — always mounted so ws-on slides it in; the scrim dims the content
+   and the body margin stays 0. w-wide keeps the push model above. */
+body.w-mid #wsbar,
+body.w-narrow #wsbar {
+	display: block;
+	width: min(280px, 84vw);
+	transform: translateX(-100%);
+	visibility: hidden;
+	transition:
+		transform 0.18s ease,
+		visibility 0.18s;
+	box-shadow: var(--shadow);
+}
+body.w-mid.ws-on #wsbar,
+body.w-narrow.ws-on #wsbar {
+	transform: translateX(0);
+	visibility: visible;
+}
+/* scrim: below #wsbar (z 30) and settings (z 39/40), above all content */
+#ws-scrim {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 29;
+	display: none;
+	border: 0;
+	padding: 0;
+	background: rgba(0, 0, 0, 0.35);
+	cursor: default;
+}
+body.w-mid.ws-on #ws-scrim,
+body.w-narrow.ws-on #ws-scrim {
+	display: block;
 }
 
 /* plan/spec right rail: narrow vertical stepper that expands into a rendered
@@ -2658,6 +3113,9 @@ body.no-switch #ws-workspaces-sec {
 	background: var(--surface);
 	border-left: 1px solid var(--line);
 	transition: width 0.16s ease;
+	/* spec FR-9: safe-area insets on the edges this rail touches */
+	padding-top: env(safe-area-inset-top);
+	padding-bottom: env(safe-area-inset-bottom);
 }
 body.sdd-on {
 	margin-right: 88px;
@@ -2667,10 +3125,19 @@ body.sdd-on #sddbar {
 	width: 88px;
 }
 body.sdd-on.sdd-open {
-	margin-right: var(--rail-width, min(400px, 58vw));
+	margin-right: min(
+		var(--rail-width, min(400px, 58vw)),
+		calc(100vw - var(--wsbar-w, 0px) - 560px)
+	);
 }
 body.sdd-on.sdd-open #sddbar {
 	width: var(--rail-width, min(400px, 58vw));
+}
+/* w-mid / w-narrow: the open pane overlays content — the rail keeps its 88px
+   reservation and never pushes the transcript (spec FR-3.2). */
+body.w-mid.sdd-on.sdd-open,
+body.w-narrow.sdd-on.sdd-open {
+	margin-right: 88px;
 }
 /* right-rail drag-resize handle (plan 3.5 / U§2.6) — on the bar's left edge;
    width persists via the --rail-width CSS var (set by app.js). Flat surface,
@@ -2695,11 +3162,30 @@ body.sdd-on.sdd-open #sddbar {
 	outline: 2px solid var(--accent);
 	outline-offset: -1px;
 }
+/* a11y FR-11: 24px hit area (the visible strip stays 6px). The rail's left
+   padding (below) reserves the zone so taps never steal rail-button edges. */
+#sddbar > .rail-resize::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: 24px;
+}
+/* a11y FR-12: touch has no hover — keep the resize handle visible so the
+   rail is discoverably resizable on touch devices */
+@media (hover: none) {
+	#sddbar > .rail-resize {
+		background: var(--line);
+		opacity: 0.5;
+	}
+}
 .sdd-rail {
 	flex: 0 0 88px;
 	display: flex;
 	flex-direction: column;
 	padding: 8px 0;
+	padding-left: 24px; /* a11y FR-11: reserves the resize handle's hit zone */
 	gap: 2px;
 	border-left: 1px solid var(--line);
 }
@@ -2780,6 +3266,7 @@ body.sdd-on.sdd-open #sddbar {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+/* a11y FR-11: the icon glyphs are small — floor the touch targets at 24px */
 .sdd-close {
 	background: none;
 	border: none;
@@ -2788,6 +3275,8 @@ body.sdd-on.sdd-open #sddbar {
 	line-height: 1;
 	cursor: pointer;
 	padding: 0 4px;
+	min-width: 24px;
+	min-height: 24px;
 }
 .sdd-close:hover {
 	color: var(--ink);
@@ -2847,13 +3336,13 @@ body.sdd-on.sdd-open #sddbar {
 	--surface-raised: #e9e2d2; /* block containers */
 	--line: #ddd2bd; /* warm hairline */
 	--ink: #3a342a; /* dark warm ink */
-	--muted: #8a7f70; /* sepia metadata */
+	--muted: #6a5f4e; /* sepia metadata — AA 4.5:1 at 10px on surface-raised */
 	--bubble-user: #ece4d4;
-	--accent: #b45309; /* amber-700: strong on cream */
-	--secondary: #7a6b8a; /* muted purple — thinking label readable on cream */
+	--accent: #92400e; /* amber-800: AA on surface + raised (was amber-700) */
+	--secondary: #6c5c7f; /* muted purple — AA on canvas + surface-inset */
 	--cyan: #0e7490; /* cyan-700: paths / links */
-	--success: #4d7c0f; /* lime-700 */
-	--warning: #a16207; /* yellow-700 */
+	--success: #3f6212; /* green-700 — AA on raised (was lime-700) */
+	--warning: #854d0e; /* yellow-800 — AA on canvas (was yellow-700) */
 	--danger: #be123c; /* rose-700 */
 	--surface-inset: #ece3d0; /* soft warm "musing" panel */
 	--r: 6px; /* softer paper corners (vs 2px dark) */
@@ -3173,6 +3662,8 @@ body.sdd-on.sdd-open #sddbar {
 	right: 1px;
 	width: 16px;
 	height: 16px;
+	min-width: 24px; /* a11y FR-11: touch target (grows over the image corner) */
+	min-height: 24px;
 	border: none;
 	border-radius: 50%;
 	background: color-mix(in srgb, var(--surface) 85%, transparent);
@@ -3413,4 +3904,259 @@ body.sdd-on.sdd-open #sddbar {
 	padding: 5px 12px;
 	cursor: pointer;
 	font-size: 12px;
+}
+
+/* Compact, non-blocking dialogs dock to the bottom edge at narrow widths.
+   Full-page tool interaction modals use .card.wide and override these rules. */
+body.w-narrow #modal {
+	align-items: flex-end;
+}
+body.w-narrow #modal-wrap {
+	width: 100vw;
+	max-height: 75vh;
+	overflow: auto;
+	border-radius: var(--r, 8px) var(--r, 8px) 0 0;
+}
+/* ---- U6 C10: #permissions page ----
+   In-shell center page — the shared #settings+#permissions layout above owns
+   display/flex/sizing; this block only adds the page's head/body chrome. */
+.perm-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 10px 16px;
+	border-bottom: 1px solid var(--border, #30363d);
+	position: sticky;
+	top: 0;
+	background: var(--surface, #0d1117);
+	z-index: 1;
+}
+.perm-head h2 {
+	margin: 0;
+	font-size: 16px;
+}
+.perm-body {
+	max-width: 900px;
+	width: 100%;
+	margin: 0 auto;
+	padding: 14px 16px 60px;
+	display: flex;
+	flex-direction: column;
+	gap: 18px;
+}
+.perm-sec h3 {
+	margin: 0 0 8px;
+	font-size: 13px;
+	text-transform: lowercase;
+	color: var(--muted, #8b949e);
+}
+.perm-mode-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+.perm-rule-row {
+	display: flex;
+	gap: 6px;
+	flex-wrap: wrap;
+	align-items: center;
+	margin-bottom: 10px;
+}
+.perm-rule-row input {
+	flex: 1 1 160px;
+	min-width: 120px;
+}
+.perm-rule-row input:first-child {
+	flex: 0 1 150px;
+}
+.perm-rule-row .perm-rule-rm {
+	border: none;
+	background: none;
+	color: var(--muted);
+	cursor: pointer;
+	font-size: 13px;
+	line-height: 1;
+	padding: 2px 6px;
+}
+.perm-rule-row .perm-rule-rm:hover {
+	color: var(--danger);
+}
+.perm-mode-state {
+	color: var(--warning-strong, #e3b341);
+	font-size: 12px;
+}
+.perm-confirm {
+	border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
+	border-radius: calc(var(--r, 8px) - 2px);
+	padding: 10px;
+	background: color-mix(in srgb, var(--warning) 10%, transparent);
+	margin-top: 8px;
+}
+.perm-confirm p {
+	margin: 0 0 8px;
+	font-size: 12px;
+}
+.perm-explain-row {
+	display: flex;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+.perm-explain-row input {
+	flex: 1;
+	min-width: 120px;
+}
+.perm-explain-out {
+	margin-top: 8px;
+	font-size: 12px;
+}
+.perm-ev {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+.perm-action {
+	padding: 1px 8px;
+	border-radius: 10px;
+	font-size: 11px;
+	font-weight: 600;
+}
+.perm-action.allow,
+.perm-action.readonly {
+	background: color-mix(in srgb, var(--success, #3fb950) 18%, transparent);
+	color: var(--success, #3fb950);
+}
+.perm-action.ask,
+.perm-action.mutate {
+	background: color-mix(in srgb, var(--warning) 18%, transparent);
+	color: var(--warning-strong, #e3b341);
+}
+.perm-action.deny {
+	background: color-mix(in srgb, #f85149 18%, transparent);
+	color: #f85149;
+}
+.perm-tier,
+.perm-auto {
+	padding: 1px 8px;
+	border-radius: 10px;
+	background: var(--accent-soft);
+	font-size: 11px;
+}
+.perm-auto {
+	background: color-mix(in srgb, var(--success, #3fb950) 18%, transparent);
+	color: var(--success, #3fb950);
+}
+.perm-reason {
+	margin-top: 4px;
+	color: var(--muted, #8b949e);
+}
+.perm-parts {
+	margin-top: 6px;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.perm-part {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.perm-tool {
+	border: 1px solid var(--border, #30363d);
+	border-radius: calc(var(--r, 8px) - 2px);
+	padding: 8px 10px;
+	margin-bottom: 8px;
+}
+.perm-tool-head {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 6px;
+}
+.perm-tool-name {
+	font-weight: 600;
+	font-size: 13px;
+}
+.perm-fallback {
+	color: var(--muted, #8b949e);
+	font-size: 11px;
+}
+.perm-rule {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	padding: 3px 0;
+	font-size: 12px;
+}
+.perm-rule code {
+	color: var(--ink, #e6edf3);
+}
+.perm-layer {
+	padding: 0 6px;
+	border-radius: 8px;
+	background: var(--accent-soft);
+	font-size: 10px;
+	color: var(--muted, #8b949e);
+	text-transform: lowercase;
+}
+.perm-diag {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	font-size: 12px;
+	padding: 3px 0;
+}
+.perm-diag code {
+	color: var(--warning-strong, #e3b341);
+}
+.perm-grant {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 12px;
+	padding: 3px 0;
+}
+.perm-grant-n {
+	color: var(--muted, #8b949e);
+}
+.perm-muted {
+	color: var(--muted, #8b949e);
+	font-size: 11px;
+}
+.perm-audit-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 12px;
+	padding: 3px 0;
+	flex-wrap: wrap;
+}
+.perm-empty {
+	color: var(--muted, #8b949e);
+	font-size: 12px;
+}
+#permissions button {
+	min-height: 24px;
+	padding: 3px 12px;
+	border-radius: calc(var(--r, 8px) - 2px);
+	border: 1px solid var(--border, #30363d);
+	background: var(--surface, #0d1117);
+	color: var(--ink, #e6edf3);
+	cursor: pointer;
+	font-size: 12px;
+}
+#permissions input,
+#permissions select {
+	min-height: 24px;
+	padding: 2px 8px;
+	border-radius: calc(var(--r, 8px) - 2px);
+	border: 1px solid var(--border, #30363d);
+	background: var(--surface, #0d1117);
+	color: var(--ink, #e6edf3);
+	font-size: 12px;
+}
+#permissions button:hover {
+	border-color: var(--accent);
 }

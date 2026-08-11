@@ -13,6 +13,10 @@ const { createLiveBuffer } = require("./livebuf.js"); // current-turn buffer for
 const { activeSessionMessages } = require("./session-entries.js"); // compaction-aware history (plan F§5.3)
 const { listRecentSessions } = require("./recent-sessions.js"); // head/tail session reader (plan F§4.1)
 const {
+	versionOf,
+	writeWorkspaceFileIfVersion,
+} = require("./workspace-file.js"); // versioned writes (plan A5 / FR-6)
+const {
 	getGitSnapshot,
 	getGitFileDiff,
 	commitChanges,
@@ -30,6 +34,9 @@ sanitizeWindowsPathExt(process.env, process.platform);
 const { improvePrompt } = require("./isolated-prompt.js"); // disposable isolated pi prompt (plan 4.7/4.8)
 const { discoverWorkspaces, isKnownWorkspacePath } = require("./workspaces.js");
 const { opencodeGoWindows } = require("./public/usage-provider.js"); // dashboard HTML parser (shared with the browser, like md.js)
+const { createBroker } = require("./broker.js"); // pending-approval broker (U6 C7)
+const policyEngine = require("./extensions/pi_minimal_webui/policy-engine.js"); // THE policy engine (shared with safeguard.ts)
+const bashCls = require("./extensions/pi_minimal_webui/bash-classifier.js"); // compound-command classifier (shared)
 
 const PORT = parseInt(process.env.PORT || "4317", 10);
 const GIT_BIN = gitExecutableForPlatform(process.platform);
@@ -37,8 +44,73 @@ const PI_BIN = process.env.PI_BIN || "pi";
 const PI_ARGS = (process.env.PI_ARGS || "").split(/\s+/).filter(Boolean); // e.g. "--no-session"
 let PI_CWD = process.env.PI_CWD || process.cwd(); // let: workspace switch re-points it live
 const NO_SWITCH = /^(1|true|yes)$/i.test(process.env.PI_WEBUI_NO_SWITCH || ""); // IDE mode: workspace switching is disabled (the host owns the cwd)
+// U6 C7: pending-approval broker + decision audit ring (server-owned, survives
+// pi crashes; cleared on pi exit / workspace switch).
+const broker = createBroker();
+const AUDIT_MAX = 200;
+const auditRing = []; // {t, requestId, toolName, decision, tier, matchedRule, layer, mode}
+const grantsMirror = []; // webui-observed session grants (display mirror; the extension is authoritative)
+// blocking extension-UI methods that hold a pi latch — registered as pending
+const BLOCKING_UI_METHODS = new Set(["select", "confirm", "input", "editor"]);
+function pushAudit(rec, decision) {
+	auditRing.push({
+		t: Date.now(),
+		requestId: rec.requestId,
+		toolName: rec.toolName,
+		decision,
+		tier: rec.provenance ? rec.provenance.tier : null,
+		matchedRule: rec.provenance ? rec.provenance.matchedRule : null,
+		layer: rec.provenance ? rec.provenance.layer : null,
+		mode: rec.provenance ? rec.provenance.mode : null,
+	});
+	if (auditRing.length > AUDIT_MAX) auditRing.shift();
+}
+function readJsonFile(p) {
+	try {
+		return JSON.parse(fs.readFileSync(p, "utf8"));
+	} catch {
+		return null;
+	}
+}
+// atomic policy-config write (temp + rename, revision checked by the PUT handler)
+function atomicWriteJson(p, obj) {
+	const tmp = p + ".tmp";
+	fs.writeFileSync(tmp, JSON.stringify(obj, null, 2) + "\n", "utf8");
+	fs.renameSync(tmp, p);
+}
+// the full permissions payload shared by GET /api/permissions (FR-30/33)
+function effectiveMode() {
+	const user = readJsonFile(USER_SAFEGUARD_PATH) ?? {};
+	const ws = readJsonFile(WORKSPACE_SAFEGUARD_PATH()) ?? {};
+	const merged = policyEngine.mergeLayers(
+		policyEngine.DEFAULT_CONFIG,
+		user,
+		ws,
+	);
+	return merged.effective.mode ?? "default";
+}
+function permissionsPayload() {
+	const user = readJsonFile(USER_SAFEGUARD_PATH) ?? {};
+	const ws = readJsonFile(WORKSPACE_SAFEGUARD_PATH()) ?? {};
+	const merged = policyEngine.mergeLayers(
+		policyEngine.DEFAULT_CONFIG,
+		user,
+		ws,
+	);
+	return {
+		config: merged.effective,
+		layers: { default: policyEngine.DEFAULT_CONFIG, user, workspace: ws },
+		mode: merged.effective.mode ?? "default",
+		diagnostics: merged.diagnostics,
+		grants: grantsMirror,
+		pending: broker.snapshot(),
+	};
+}
 const AUTH_FILE = path.join(os.homedir(), ".pi", "agent", "auth.json");
 const AGENT_DIR = path.dirname(AUTH_FILE); // ~/.pi/agent — pi's agent dir
+const USER_SAFEGUARD_PATH = path.join(AGENT_DIR, "safeguard.json"); // user policy layer (shared with safeguard.ts)
+const WORKSPACE_SAFEGUARD_PATH = () =>
+	path.join(PI_CWD, ".pi", "safeguard.json"); // tighten-only workspace layer
 const HTML_PATH = path.join(__dirname, "public", "index.html");
 // ponytail: static assets (all browser-facing, under public/) split out of
 // index.html. Whitelist (not a full static dir) keeps the surface to known
@@ -46,6 +118,14 @@ const HTML_PATH = path.join(__dirname, "public", "index.html");
 const STATIC = {
 	"/style.css": { file: "style.css", type: "text/css; charset=utf-8" },
 	"/md.js": { file: "md.js", type: "text/javascript; charset=utf-8" },
+	"/diff-view.js": {
+		file: "diff-view.js",
+		type: "text/javascript; charset=utf-8",
+	},
+	"/permissions-ux.js": {
+		file: "permissions-ux.js",
+		type: "text/javascript; charset=utf-8",
+	},
 	// vendored highlight.js (github-dark theme) — first third-party runtime we
 	// ship; static asset like md.js, no npm/build. Gated client-side so a
 	// missing file degrades to uncolored code (see app.js highlightCode).
@@ -228,6 +308,33 @@ function startPi() {
 			// pi's payload), so the client can ignore it until incremental replay.
 			const sequence = lb.push(obj);
 			broadcast({ source: "pi", payload: obj, sequence });
+			// U6 C7: broker context + pending registration from pi's stream.
+			// tool_execution_start precedes its safeguard select (preparation is
+			// sequential) — same ordering guarantee the browser relies on.
+			if (obj && obj.type === "tool_execution_start") {
+				broker.setContext(obj.toolCallId, obj.toolName);
+			} else if (obj && obj.type === "extension_ui_request") {
+				if (
+					obj.method === "setStatus" &&
+					obj.statusKey === "safeguard"
+				) {
+					try {
+						broker.setProvenance(
+							JSON.parse(obj.statusText || "null"),
+						);
+					} catch {
+						/* malformed provenance — ignore */
+					}
+				} else if (BLOCKING_UI_METHODS.has(obj.method)) {
+					broker.register({
+						requestId: obj.id,
+						method: obj.method,
+						title: obj.title,
+						message: obj.message,
+						options: obj.options,
+					});
+				}
+			}
 			// settle any awaitable RPC waiting on this response (plan F§5.1).
 			if (obj && obj.type === "response" && obj.id) resolveRpc(obj);
 		});
@@ -245,6 +352,7 @@ function startPi() {
 	pi.on("exit", (code, sig) => {
 		if (shuttingDown) return shutdownNow();
 		rejectAllRpc("pi exited"); // fail fast: pending awaitable RPCs won't resolve
+		broker.clear(); // no dangling approvals after a crash/restart (FR-20)
 		broadcast({ source: "pi_exit", payload: { code, sig } });
 		if (deliberateRestart) {
 			// workspace switch (not a crash): respawn now in the (already-updated)
@@ -253,6 +361,7 @@ function startPi() {
 			// get_messages buffer in the pipe until pi boots.
 			deliberateRestart = false;
 			lb.clear(); // old project's in-flight turn must not leak into the new one
+			broker.clear(); // …and neither may the old project's approvals
 			startPi();
 			broadcast({
 				source: "server",
@@ -912,6 +1021,60 @@ const server = http.createServer(async (req, res) => {
 		try {
 			body = await readBody(req);
 			const obj = JSON.parse(body || "{}");
+			// U6 C7: broker-tracked approval responses (extension_ui_response with
+			// a pending record) are validated + resolved here — first response
+			// wins, stale ids rejected (410), and the decision is broadcast as
+			// approval_resolved so the browser only closes its UI after the ack
+			// (FR-19/22/24). Unknown ids fall through to the legacy forward path.
+			if (obj && obj.type === "extension_ui_response" && obj.id) {
+				const rec = broker.get(obj.id);
+				if (rec) {
+					// FR-24: marker toolCallId must match the pending record
+					const marker = obj.marker;
+					if (
+						marker &&
+						rec.toolCallId &&
+						marker.toolCallId !== rec.toolCallId
+					) {
+						res.writeHead(410, {
+							"Content-Type": "application/json",
+						});
+						return res.end(
+							JSON.stringify({
+								ok: false,
+								error: "stale toolCallId",
+							}),
+						);
+					}
+					const r = broker.resolve(obj.id, obj.value);
+					if (!r.ok) {
+						res.writeHead(410, {
+							"Content-Type": "application/json",
+						});
+						return res.end(
+							JSON.stringify({ ok: false, error: r.reason }),
+						);
+					}
+					pushAudit(rec, obj.value);
+					if (obj.value === "Allow for this session")
+						grantsMirror.push({
+							toolName: rec.toolName,
+							toolCallId: rec.toolCallId,
+							at: Date.now(),
+						});
+					// forward to pi the UNCHANGED payload (the marker is a
+					// browser↔server contract; safeguard.ts never sees it)
+					const { marker: _m, ...fwd } = obj;
+					sendToPi(fwd);
+					broadcast({
+						source: "server",
+						type: "approval_resolved",
+						...r.event,
+					});
+					res.writeHead(200, { "Content-Type": "application/json" });
+					return res.end('{"ok":true}');
+				}
+			}
 			sendToPi(obj);
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end('{"ok":true}');
@@ -920,6 +1083,174 @@ const server = http.createServer(async (req, res) => {
 			res.end(JSON.stringify({ ok: false, error: e.message }));
 		}
 		return;
+	}
+
+	if (req.method === "GET" && url.pathname === "/api/permissions") {
+		// U6 C7/F: full policy state for the #permissions page (FR-30/33/32).
+		// Same engine + same files as the live gate — no second implementation.
+		try {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({ ok: true, ...permissionsPayload() }),
+			);
+		} catch (e) {
+			res.writeHead(500, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+
+	if (req.method === "GET" && url.pathname === "/api/permissions/mode") {
+		// chip readout for the composer (mode can change via the page, settings,
+		// or /safeguard commands; yolo is session-only and arrives via the
+		// extension's setStatus broadcast instead).
+		try {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({ ok: true, mode: effectiveMode() }),
+			);
+		} catch (e) {
+			res.writeHead(500, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+
+	if (req.method === "PUT" && url.pathname === "/api/permissions/config") {
+		// U6 C7/F: revision-checked atomic config write (FR-37). Only the fixed
+		// user-config path is ever written — the browser never supplies a path.
+		try {
+			const body = JSON.parse((await readBody(req)) || "{}");
+			const cfg = body.config;
+			const v = policyEngine.validateConfig(cfg);
+			if (!v.ok) {
+				res.writeHead(400, { "Content-Type": "application/json" });
+				return res.end(JSON.stringify({ ok: false, errors: v.errors }));
+			}
+			const onDisk = readJsonFile(USER_SAFEGUARD_PATH) ?? {};
+			if (onDisk.revision != null && onDisk.revision !== body.revision) {
+				res.writeHead(409, { "Content-Type": "application/json" });
+				return res.end(
+					JSON.stringify({
+						ok: false,
+						error: "revision conflict — reload the page and retry",
+						onDiskRevision: onDisk.revision,
+					}),
+				);
+			}
+			const next = policyEngine.normalizeForWrite(cfg);
+			next.revision = ((onDisk.revision ?? 0) || 0) + 1;
+			atomicWriteJson(USER_SAFEGUARD_PATH, next);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({ ok: true, revision: next.revision }),
+			);
+		} catch (e) {
+			res.writeHead(500, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+
+	if (req.method === "DELETE" && url.pathname === "/api/permissions/grants") {
+		// clear all session grants — routes through the extension's own command so
+		// the authoritative sessionAllow is what actually clears (FR-32)
+		grantsMirror.length = 0;
+		sendToPi({ type: "prompt", message: "/safeguard reset" });
+		res.writeHead(200, { "Content-Type": "application/json" });
+		return res.end('{"ok":true}');
+	}
+
+	const grantRevoke = url.pathname.match(
+		/^\/api\/permissions\/grants\/(\d+)$/,
+	);
+	if (req.method === "DELETE" && grantRevoke) {
+		// per-grant revoke — best-effort by index (1-based, insertion order;
+		// the extension's /safeguard revoke <n> is the authority; grants made in
+		// the TUI may shift indices — the page mirrors what the broker saw)
+		const n = parseInt(grantRevoke[1], 10);
+		grantsMirror.splice(n - 1, 1);
+		sendToPi({ type: "prompt", message: `/safeguard revoke ${n}` });
+		res.writeHead(200, { "Content-Type": "application/json" });
+		return res.end('{"ok":true}');
+	}
+
+	if (req.method === "POST" && url.pathname === "/api/permissions/explain") {
+		// FR-35: same engine + classifier as the live gate — the verdict the
+		// page shows IS the verdict the gate would produce.
+		try {
+			const body = JSON.parse((await readBody(req)) || "{}");
+			const tool = String(body.tool || "bash");
+			const selector = String(body.selector ?? body.command ?? "");
+			const { layers, effective } = (() => {
+				const user = readJsonFile(USER_SAFEGUARD_PATH) ?? {};
+				const ws = readJsonFile(WORKSPACE_SAFEGUARD_PATH()) ?? {};
+				return policyEngine.mergeLayers(
+					policyEngine.DEFAULT_CONFIG,
+					user,
+					ws,
+				);
+			})();
+			const opts = {
+				sensitivePaths: effective.sensitivePaths,
+				realpath: fs.realpathSync,
+				cwd: PI_CWD,
+				workspaceRoot: PI_CWD,
+			};
+			const verdict = policyEngine.resolve(tool, selector, layers, opts);
+			// same containment the gate applies to bash (FR-6): path args
+			// escaping PI_CWD mark the command outside → the verdict asks
+			const isOutsidePart = (part) => {
+				for (const t of bashCls.partPathTokens(part)) {
+					let p = t;
+					if (p === "~" || p.startsWith("~/"))
+						p = os.homedir() + p.slice(1);
+					else if (p.startsWith("$HOME")) p = os.homedir() + p.slice(5);
+					else if (p.startsWith("$PWD")) p = PI_CWD + p.slice(4);
+					const abs = path.isAbsolute(p) ? p : path.join(PI_CWD, p);
+					let canon = abs;
+					try {
+						const r = fs.realpathSync(abs);
+						if (r) canon = r;
+					} catch {
+						/* target may not exist yet — literal join stays */
+					}
+					if (!policyEngine.isUnderRoot(canon, PI_CWD)) return true;
+				}
+				return false;
+			};
+			const out = {
+				verdict,
+				mode: effective.mode ?? "default",
+				bash: tool === "bash" ? bashCls.classify(selector) : null,
+				// what the GATE would actually do for bash (FR-9 binding): a rule
+				// allow only auto-passes when every part is allow-ruled + readonly
+				// and no part touches a path outside the workspace root
+				gateVerdict:
+					tool === "bash"
+						? bashCls.gateBash(
+								selector,
+							(part) =>
+								policyEngine.resolve(
+									"bash",
+									part,
+									layers,
+									opts,
+								),
+								isOutsidePart,
+							)
+						: null,
+			};
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true, ...out }));
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+
+	if (req.method === "GET" && url.pathname === "/api/permissions/audit") {
+		// FR-34: redacted decision audit (no selectors stored at all — only
+		// provenance metadata, so nothing to redact beyond the record itself)
+		res.writeHead(200, { "Content-Type": "application/json" });
+		return res.end(JSON.stringify({ ok: true, entries: auditRing }));
 	}
 
 	if (req.method === "POST" && url.pathname === "/api/rpc") {
@@ -993,6 +1324,9 @@ const server = http.createServer(async (req, res) => {
 				// livebuf.snapshot). Awaitable RPCs fan out FIRST, so this reads
 				// the buffer state after those responses (most recent).
 				liveEvents: lb.snapshot(),
+				// U6 C7 (FR-21): pending approvals survive a reload — a reconnecting
+				// tab re-renders the in-flight approval from this list.
+				pendingApprovals: broker.snapshot(),
 			});
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end(body);
@@ -1027,12 +1361,20 @@ const server = http.createServer(async (req, res) => {
 
 	if (req.method === "GET" && url.pathname === "/api/file") {
 		// manual-edit feature: read a project file (sandboxed to PI_CWD).
+		// `version` (sha256 of the content) backs the optimistic-concurrency
+		// write protocol (plan A5 / FR-6) — server-computed only.
 		try {
 			const content = readWorkspaceFile(
 				url.searchParams.get("path") || "",
 			);
 			res.writeHead(200, { "Content-Type": "application/json" });
-			return res.end(JSON.stringify({ ok: true, content }));
+			return res.end(
+				JSON.stringify({
+					ok: true,
+					content,
+					version: versionOf(content),
+				}),
+			);
 		} catch (e) {
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: false, error: e.message }));
@@ -1041,17 +1383,28 @@ const server = http.createServer(async (req, res) => {
 
 	if (req.method === "POST" && url.pathname === "/api/write") {
 		// manual-edit feature: write a project file (sandboxed to PI_CWD).
+		// expectedVersion is the optimistic-concurrency guard (plan A5 / FR-6):
+		// hash = must match the file on disk, null = must not exist; mismatch
+		// answers 409 {error, version} so the client can recover without a
+		// second fetch.
 		let body;
 		try {
 			body = await readBody(req);
 			const obj = JSON.parse(body || "{}");
 			const full = safePath(obj.path || "");
-			fs.mkdirSync(path.dirname(full), { recursive: true });
-			fs.writeFileSync(
+			const out = writeWorkspaceFileIfVersion(
 				full,
 				obj.content == null ? "" : obj.content,
-				"utf8",
+				obj.expectedVersion,
 			);
+			if (!out.ok) {
+				const payload = { ok: false, error: out.error };
+				if (out.version !== undefined) payload.version = out.version;
+				res.writeHead(out.status || 500, {
+					"Content-Type": "application/json",
+				});
+				return res.end(JSON.stringify(payload));
+			}
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end('{"ok":true}');
 		} catch (e) {
