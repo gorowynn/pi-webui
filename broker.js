@@ -95,9 +95,13 @@ function createBroker() {
 			lastContext = null;
 			lastProvenance = null;
 		},
-		/** Copy of the pending list (reconnect replay, FR-21). */
+		/** Copy of the PENDING list (reconnect replay, FR-21). Resolved records
+		 *  stay in the map for stale-id 410 detection but are never replayed —
+		 *  otherwise a reload mid-session re-opens an already-answered modal. */
 		snapshot() {
-			return [...pending.values()].map((r) => ({ ...r }));
+			return [...pending.values()]
+				.filter((r) => r.status === "pending")
+				.map((r) => ({ ...r }));
 		},
 		size() {
 			return pending.size;

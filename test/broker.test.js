@@ -116,6 +116,12 @@ const ok = (name) => {
 	assert.equal(b.snapshot().length, 2);
 	snap[0].decision = "tampered";
 	assert.equal(b.get("a").decision, null, "snapshot is a copy");
+	// resolved records are dropped from the replay list (a reload mid-session
+	// must not re-open an already-answered modal) while still answering
+	// stale-id 410s via get()/resolve()
+	b.resolve("a", "allow");
+	assert.equal(b.snapshot().length, 1, "resolved excluded from snapshot");
+	assert.equal(b.resolve("a", "deny").reason, "resolved", "stale 410 still works");
 	b.clear();
 	assert.equal(b.size(), 0);
 	assert.equal(b.snapshot().length, 0);

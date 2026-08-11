@@ -1739,7 +1739,7 @@ body.w-narrow.ctx-hot #compact {
 #modal {
 	position: fixed;
 	inset: 0;
-	background: #0008;
+	background: transparent; /* no dim layer: the modal is exactly the card, nothing more */
 	display: none;
 	align-items: center;
 	justify-content: center;
@@ -1751,26 +1751,19 @@ body.w-narrow.ctx-hot #compact {
 	max-width: 100%; /* never overflow a shrunken chat-area modal (w-wide rails) */
 	padding-bottom: env(safe-area-inset-bottom); /* spec FR-9 */
 }
-/* ponytail: blocking tool interactions use .card.wide and are REAL full-
-   column modals: opaque, fill the #scroll-wrap area, no floating card.
-   :has() keys off the card class; its specificity overrides compact-dialog
-   narrow rules so every approval/input request gets the same full-surface
-   look (the surface itself is anchored to #scroll-wrap below). */
-#modal:has(.card.wide) {
-	background: var(--surface, #0d1117);
-}
+/* ponytail: diff-bearing approvals use .card.wide — a LARGE but capped
+   floating card (side-by-side panes need width; nothing covers the rest of
+   the column). :has() keys off the card class; its specificity overrides
+   compact-dialog narrow rules. */
 #modal:has(.card.wide) #modal-wrap {
-	width: 100%;
+	width: auto;
 	max-width: none;
-	height: 100%;
-	max-height: none;
 	padding: 0;
 }
 #modal:has(.card.wide) .card {
+	width: min(960px, calc(100vw - 64px));
+	height: min(720px, calc(100vh - 96px));
 	max-height: none;
-	height: 100%;
-	border: 0;
-	border-radius: 0;
 }
 #modal:has(.card.wide) .modal-x {
 	position: absolute;

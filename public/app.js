@@ -2369,8 +2369,7 @@ function askQuestion(args) {
 	const answers = qs.map(() => null); // per-question: string | string[]
 	let step = 0; // current question index (one-at-a-time multistep)
 	const total = qs.length;
-	showModal("", false, true);
-	card.classList.add("wide");
+	showModal("", false);
 	toast("Your input is needed", "warn");
 
 	// advance to the next question, or commit once the last is answered
@@ -3132,11 +3131,7 @@ async function openSelectModal(req) {
 	showModal(
 		`<h3>${esc(req.title || "Choose")}</h3>${bodyHtml}<div class='opts'></div>`,
 		false,
-		true,
 	);
-	// every approval gets the opaque full-column surface (not the translucent
-	// compact card) — the diff preview below only widens it further.
-	card.classList.add("wide");
 	const isEditWrite =
 		(pendingApproval && pendingApproval.toolName) === "edit" ||
 		(pendingApproval && pendingApproval.toolName) === "write" ||
@@ -3176,7 +3171,10 @@ async function openSelectModal(req) {
 		buildDiff();
 	} else {
 		const stack = renderEditDiffPreviews(card);
-		if (stack) card.querySelector(".opts").before(stack);
+		if (stack) {
+			card.classList.add("wide");
+			card.querySelector(".opts").before(stack);
+		}
 	}
 	const list = card.querySelector(".opts");
 	opts.forEach((o) => {
@@ -3331,10 +3329,9 @@ function uiRequest(req) {
 		showModal(
 			`<h3>${esc(req.title || "Confirm")}</h3>${body.html}`,
 			false,
-			true,
 		);
-		card.classList.add("wide");
-		renderEditDiffPreviews(card);
+		const stack = renderEditDiffPreviews(card);
+		if (stack) card.classList.add("wide");
 		const row = document.createElement("div");
 		row.className = "row";
 		const no = document.createElement("button");
@@ -3363,8 +3360,7 @@ function uiRequest(req) {
 			toolName: curToolName,
 			provenance: lastSafeguardCtx,
 		};
-		showModal(`<h3>${esc(req.title || "Input")}</h3>`, false, true);
-		card.classList.add("wide");
+		showModal(`<h3>${esc(req.title || "Input")}</h3>`, false);
 		toast("Your input is needed", "warn");
 		const inp = document.createElement("input");
 		inp.type = "text";
@@ -3394,8 +3390,7 @@ function uiRequest(req) {
 			toolName: curToolName,
 			provenance: lastSafeguardCtx,
 		};
-		showModal(`<h3>${esc(req.title || "Edit")}</h3>`, false, true);
-		card.classList.add("wide");
+		showModal(`<h3>${esc(req.title || "Edit")}</h3>`, false);
 		toast("Your input is needed", "warn");
 		const ta = document.createElement("textarea");
 		ta.rows = 12;
