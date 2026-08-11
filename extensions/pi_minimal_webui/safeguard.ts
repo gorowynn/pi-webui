@@ -187,10 +187,9 @@ function selectorFor(toolName: string, input: Record<string, unknown>): string {
 	// `"subagent": { "implementer": "ask", "*": "allow" }` work. parallel/chain
 	// span multiple agents — key those by the mode label. This gates the
 	// *delegation* itself; the spawned subprocess's internal tool calls are gated
-	// by its own --tools allowlist (see subagent.ts TIERS) — that allowlist is the
-	// capability wall, since the subprocess runs headless (hasUI=false) and thus
-	// auto-allows under nonInteractive. Two layers: parent decides IF, allowlist
-	// decides WHAT.
+	// by its own --tools allowlist — that allowlist is the capability wall, since
+	// the subprocess runs headless (hasUI=false) and thus auto-allows under
+	// nonInteractive. Two layers: parent decides IF, allowlist decides WHAT.
 	if (toolName === "subagent") {
 		const a = input.agent;
 		if (typeof a === "string" && a) return a;

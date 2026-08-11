@@ -4484,7 +4484,6 @@ function populateModels(models) {
 		modelSel.appendChild(o);
 	});
 	applyCurrentModel();
-	populateTierSelects();
 }
 modelSel.onchange = () => {
 	refreshSbModel();
@@ -4972,73 +4971,6 @@ if (viewBtn)
 		applyViewMode(VIEW_MODES[(i + 1) % VIEW_MODES.length]);
 	};
 applyViewMode(viewMode);
-
-// ---- subagent tier-model selects ----
-// Defaults mirror subagent.ts TIERS exactly. The server holds the truth
-// (~/.pi/agent/subagent-tiers.json, re-read by the extension each call); we load
-// it, preselect, and POST on change. localStorage is only a reload hint.
-const TIER_DEFAULTS = {
-	capable: "zai/glm-5.2",
-	implement: "zai/glm-5-turbo",
-	lookup: "zai/glm-4.5-air",
-};
-const tierSels = {
-	capable: $("tier-capable"),
-	implement: $("tier-implement"),
-	lookup: $("tier-lookup"),
-};
-// build each select from availableModels once that list arrives; preselect the
-// current config value (or the default). Called from populateModels().
-function populateTierSelects() {
-	for (const tier of Object.keys(tierSels)) {
-		const sel = tierSels[tier];
-		const cur = sel.dataset.model || TIER_DEFAULTS[tier];
-		setSafeHtml(sel, "");
-		for (const m of availableModels) {
-			const id = m.provider + "/" + m.id;
-			const o = document.createElement("option");
-			o.value = id;
-			o.textContent = (m.name || m.id) + " · " + m.provider;
-			if (id === cur) o.selected = true;
-			sel.appendChild(o);
-		}
-		if (!availableModels.length) {
-			const o = document.createElement("option");
-			o.textContent = TIER_DEFAULTS[tier];
-			sel.appendChild(o);
-		}
-	}
-}
-async function loadTierConfig() {
-	try {
-		const r = await fetch("/api/subagent-tiers").then((r) => r.json());
-		if (!r || !r.ok || !r.tiers) return;
-		for (const tier of Object.keys(tierSels)) {
-			const m = r.tiers[tier] || TIER_DEFAULTS[tier];
-			tierSels[tier].dataset.model = m;
-			localStorage.setItem("pi:tier-" + tier, m);
-		}
-		populateTierSelects();
-	} catch {
-		/* non-fatal — selects keep defaults */
-	}
-}
-loadTierConfig();
-function saveTierConfig() {
-	const tiers = {};
-	for (const tier of Object.keys(tierSels)) {
-		const m = tierSels[tier].value;
-		tiers[tier] = m;
-		localStorage.setItem("pi:tier-" + tier, m);
-	}
-	fetch("/api/subagent-tiers", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(tiers),
-	}).catch(() => {}); // fire-and-forget; the extension re-reads on next call
-}
-for (const tier of Object.keys(tierSels))
-	tierSels[tier].onchange = saveTierConfig;
 
 // ---- composer ----
 function autosize() {

@@ -89,9 +89,8 @@ keyword to the index in `AGENTS.md`.
     `#todopanel`, `footer`, and `.activity`; the shell header stays. Shared
     chrome: `.perm-head` (sticky title bar) + `.perm-body` (centered 900px).
     ⚙ opens, ✕/Esc closes; opening one page closes the other. Model/thinking/
-    pony selects keep their IDs → existing `onchange` unchanged. 3 tier selects
-    POST `/api/subagent-tiers` → `~/.pi/agent/subagent-tiers.json` (re-read
-    each call). `subagentDensity` = module-scope `let` set from its select.
+    pony selects keep their IDs → existing `onchange` unchanged.
+    `subagentDensity` = module-scope `let` set from its select.
     The **composer mode chip** (`#mode-chip` in `.bar`) shows the active
     permission posture at all times: persisted modes via `GET
     /api/permissions/mode` piggybacked on `refreshStats`, yolo via the

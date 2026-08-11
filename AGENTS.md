@@ -98,14 +98,6 @@ Folder name is a legacy TODO — no second webui here, only the ask-bridge tool
   (rule-based allows are bound by the compound gate). Emits a `safeguard`
   `setStatus` provenance context before every blocking select. Commands:
   `/safeguard` · `reset` · `mode yolo` · `revoke <n>`.
-- `subagent.ts` — **Tier-based `subagent` tool.** Spawns isolated
-  `pi --mode json -p --no-session --model <tier>`. Modes: single/parallel/chain
-  (`{previous}`). Parent never ingests child tool I/O — only capped ≤50KB final
-  text (context savings). Tiers re-read
-  `~/.pi/agent/subagent-tiers.json` `{capable,implement,lookup}` each call;
-  sidebar `GET/POST /api/subagent-tiers` edits it (no restart). Defaults:
-  capable `zai/glm-5.2`, implement `zai/glm-5-turbo`, lookup `zai/glm-4.5-air`.
-  Edit the `TIERS` table in-file for agents/tools/prompts.
 - `webui.ts` — `/webui` + `/webui-stop`. Spawns `server.js` detached with
   `PI_WEBUI_NO_SWITCH=1` (the IDE owns the cwd → switching + the workspace list
   are off in the panel); kills the whole tree (POSIX process group / Windows

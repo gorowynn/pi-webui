@@ -6,6 +6,30 @@
 
 ## Changelog
 
+### 2026-08-11 — fix(webui): a11y-contrast.js actually loads in the browser
+
+- Module lived at repo root with an unguarded `module.exports` — never loaded by
+  `index.html`, never shipped by npm, yet `app.js` calls `resizeStep`/
+  `statusTextForEvent` (ReferenceError on rail-resize/status events).
+- Moved to `public/a11y-contrast.js` with the dual-mode guard +
+  `window.a11yContrast` export; added the `<script>` (before `app.js`) and the
+  `server.js` `STATIC` entry; test requires updated.
+
+### 2026-08-11 — chore(extension): drop orphaned subagent-tier config
+
+- `subagent.ts` (tier-based tool) was removed earlier; the sidebar tier selects,
+  the app.js tier block, and `GET/POST /api/subagent-tiers` were still wired.
+- Removed all three; `safeguard.ts` comment no longer references `subagent.ts`;
+  AGENTS.md + GOTCHAS.md #15 updated. Builtin pi `subagent` tool, its live view,
+  and the policy gate stay.
+
+### 2026-08-11 — test: rpc-sse smoke test fails fast without a server
+
+- `test/rpc-sse.test.js` is integration-only (needs a booted server on PORT);
+  it now preflights `GET /api/health` and exits 1 with boot guidance instead of
+  a bare ECONNREFUSED. Also fixed the stale `../style.css` link in
+  `docs/design.md` (→ `public/style.css`).
+
 ### 2026-08-11 — fix(approvals): use full-page interaction modals
 
 - Removed in-card approval controls. Every blocking tool select, confirm, input,
