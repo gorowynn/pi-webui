@@ -94,7 +94,7 @@ components:
 # pi-webui — DESIGN.md
 
 > Visual source of truth for pi-webui. The live values live in
-> [`../style.css`](../style.css) (`:root`); this spec holds the intent, the
+> [`public/style.css`](public/style.css) (`:root`); this spec holds the intent, the
 > palette, and the rationale. Follows the [DESIGN.md format](https://github.com/google-labs-code/design.md).
 > Frontmatter tokens mirror `:root`; where they disagree, `:root` wins.
 
