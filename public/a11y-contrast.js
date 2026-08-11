@@ -153,7 +153,7 @@ function statusTextForEvent(evt) {
 	return Object.hasOwn(STATUS_TEXTS, evt) ? STATUS_TEXTS[evt] : null;
 }
 
-module.exports = {
+const api = {
 	hexToRgb,
 	relativeLuminance,
 	contrastRatio,
@@ -162,3 +162,5 @@ module.exports = {
 	resizeStep,
 	statusTextForEvent,
 };
+if (typeof module !== "undefined" && module.exports) module.exports = api;
+if (typeof window !== "undefined") window.a11yContrast = api;

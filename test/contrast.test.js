@@ -9,7 +9,7 @@ const {
 	contrastRatio,
 	extractThemeTokens,
 	resolveToken,
-} = require("../a11y-contrast.js");
+} = require("../public/a11y-contrast.js");
 
 const css = fs.readFileSync(
 	path.join(__dirname, "..", "public", "style.css"),

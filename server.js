@@ -126,6 +126,10 @@ const STATIC = {
 		file: "permissions-ux.js",
 		type: "text/javascript; charset=utf-8",
 	},
+	"/a11y-contrast.js": {
+		file: "a11y-contrast.js",
+		type: "text/javascript; charset=utf-8",
+	},
 	// vendored highlight.js (github-dark theme) — first third-party runtime we
 	// ship; static asset like md.js, no npm/build. Gated client-side so a
 	// missing file degrades to uncolored code (see app.js highlightCode).

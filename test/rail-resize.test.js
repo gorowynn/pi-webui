@@ -3,7 +3,7 @@
 // (app.js: `delta = startX - clientX; w = startW + delta`). Keyboard mirrors
 // the pointer: ArrowLeft = wider (+5), ArrowRight = narrower (-5).
 const assert = require("node:assert/strict");
-const { resizeStep } = require("../a11y-contrast.js");
+const { resizeStep } = require("../public/a11y-contrast.js");
 
 // basic steps
 assert.equal(resizeStep(50, "ArrowLeft", 0, 100), 55, "ArrowLeft widens by 5");
@@ -54,7 +54,7 @@ assert.equal(resizeStep(100, "ArrowLeft", 0, 100), 100, "already at max stays");
 // Coarse announcements only — turn boundaries and notable transitions, never
 // per-token streaming events (message_update/message_end must map to null).
 
-const { statusTextForEvent } = require("../a11y-contrast.js");
+const { statusTextForEvent } = require("../public/a11y-contrast.js");
 assert.equal(statusTextForEvent("agent_start"), "assistant working");
 assert.equal(statusTextForEvent("agent_end"), "response complete");
 assert.equal(statusTextForEvent("auto_retry_start"), "retrying…");
