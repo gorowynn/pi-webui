@@ -87,6 +87,27 @@ function sseCollect(predicate) {
 	let pass = 0;
 	const ok = (m) => (pass++, console.log("  ok -", m));
 
+	// Integration-only smoke test: requires a booted server on PORT. Fail fast
+	// with guidance instead of a bare ECONNREFUSED when nothing is listening.
+	try {
+		await new Promise((resolve, reject) => {
+			const req = http.get(
+				{ host: "127.0.0.1", port: PORT, path: "/api/health" },
+				(res) => {
+					res.resume();
+					res.on("end", resolve);
+				},
+			);
+			req.on("error", reject);
+			req.setTimeout(5000, () => req.destroy(new Error("timeout")));
+		});
+	} catch {
+		console.error(
+			`  ! no server on 127.0.0.1:${PORT} — boot one first, e.g.:\n      PORT=${PORT} node server.js &  node test/rpc-sse.test.js`,
+		);
+		process.exit(1);
+	}
+
 	// 1. fire-and-forget /api/cmd get_state — its response must arrive on SSE.
 	const sseP = sseCollect((arr) => arr.some((p) => p.id === "ff-state" && p.type === "response"));
 	await post("/api/cmd", { type: "get_state", id: "ff-state" });
