@@ -57,6 +57,8 @@ runtime. Edit `public/app.js`/`public/style.css`/`public/index.html` + refresh =
 | `recent-sessions.js` | Head/tail session-list reader (plan 4.1): reads only the first 64 KB + a backward-scanned tail (≤2 MB) of each `.jsonl` to recover `{id,cwd,name,updatedAt,firstPrompt}` without parsing multi-MB middles. Exact message count only when the whole file fits; otherwise `messages:null` + `size` (bytes). `listRecentSessions(dir)` backs `/api/sessions`. 35 unit tests. |
 | `git.js` | Read-only git porcelain + mutations (plan 4.5/4.6), ported from pi-livecraft. `getGitSnapshot` (status `--porcelain -z` + numstat merge + unpushed commits), `getGitFileDiff`, `commitChanges`/`pushCommits`/`resetGitCommit`/`revertGitCommit`/`discardFileChanges`/`discardChanges`. Scoped to `realpath(PI_CWD)`; the diff path is validated against the snapshot. Pure parsers exported, 32 unit tests. |
 | `isolated-prompt.js` | Disposable isolated pi runner (plan 4.7/4.8): spawns a separate `pi --mode rpc --no-tools --no-extensions …` in `~/.pi/pi-webui-isolated` (copies auth.json/models.json once — the §6.4 security boundary), auto-selects the cheapest model, runs one prompt, extracts the text, terminates. `improvePrompt(cwd,draft,direction)` backs the composer's Improve dropdown. `cheapestAvailableModel`/`assistantText` pure, 17 unit tests. |
+| `broker.js` | Server-owned pending-approval broker (U6): registers every blocking extension-UI request (tool identity from the preceding `tool_execution_start`), first-response-wins, stale-id rejection (410), `approval_resolved` broadcast, cleared on pi exit/workspace switch, replayed via `/api/snapshot` `pendingApprovals`. Zero-dep, 6 unit tests. |
+| `public/permissions-ux.js` | Dual-mode pure helpers for the `#permissions` page: layer-tree builder, editor validation rows, audit redaction, explain view, yolo mode state machine. 5 unit tests. |
 | `bin.js` | `pi-webui` global launcher. Spawns `server.js` **detached** (own process group → closing the console won't kill it), polls a temp log to report early death, opens the browser (`PI_WEBUI_NO_OPEN` skips), then exits. |
 | `test/` | `node:assert/strict` unit tests, no framework (`node test/<x>.test.js`). |
 | `public/vendor/` | Vendored runtimes, served via `server.js` `STATIC` whitelist (no npm/build): **markdown-it** v14.1.0 UMD (`window.markdownit`), **highlight.js** v11.11.1 common + `highlight.css` github-dark. `app.js` `highlightCode()` post-processes `pre code`. Both degrade silently if missing (md.js→escaped text; hljs→uncolored). |
@@ -78,8 +80,24 @@ Folder name is a legacy TODO — no second webui here, only the ask-bridge tool
   via `ctx.ui.input` (blocking latch, which RPC *does* bridge). Smuggle:
   tool→browser via `tool_execution_start` (args verbatim), browser→tool via
   `extension_ui_response{value}`.
-- `safeguard.ts` — **Per-tool allow/ask/deny gate** on every tool call.
-  Config `~/.pi/agent/safeguard.json` (re-read each call). First match wins.
+- `policy-engine.js` + `bash-classifier.js` — **THE policy engine** (zero-dep
+  CommonJS, shared with `server.js` — the page/Explain can never diverge from the
+  gate): verdict `{action,tier,matchedRule,layer,reason}` with provenance;
+  precedence hard-deny → mandatory-ask → remembered-grant → ordinary-ask → allow;
+  layered config (floor → user → workspace, tighten-only); v2 schema with
+  `revision`/`mode`/`sensitivePaths`/`grants`; canonical paths + sensitive-path
+  mandatory-ask/deny on every path tool; outside-workspace access capped at
+  ask in every non-yolo mode (path tools + bash parts, FR-6); `applyMode`
+  (default/auto-approve/read-only/session-yolo); compound-bash classification
+  - FR-9 per-subcommand gating. 45 + 8 unit tests.
+- `safeguard.ts` — **Per-tool allow/ask/deny gate** on every tool call, now a thin
+  shell over the engine + classifier. Config `~/.pi/agent/safeguard.json` +
+  workspace layer `<cwd>/.pi/safeguard.json` (re-read each call). Modes: default /
+  auto-approve / read-only (persisted) + **yolo** (session-only, confirm-gated,
+  never persisted). "Allow always" writes an exact-selector `grants` entry
+  (rule-based allows are bound by the compound gate). Emits a `safeguard`
+  `setStatus` provenance context before every blocking select. Commands:
+  `/safeguard` · `reset` · `mode yolo` · `revoke <n>`.
 - `subagent.ts` — **Tier-based `subagent` tool.** Spawns isolated
   `pi --mode json -p --no-session --model <tier>`. Modes: single/parallel/chain
   (`{previous}`). Parent never ingests child tool I/O — only capped ≤50KB final
@@ -129,16 +147,17 @@ entry — these are load-bearing invariants. Numbers match `GOTCHAS.md #N`.
 | `safePath`, symlinks, path traversal, `fs.realpathSync` | 4 |
 | `api()` fetch helper, unhandled promise rejections | 5 |
 | diff LCS / large diffs; permission-modal diff preview, `curToolArgs`, `tool_execution_*` | 6, 7 |
-| app.js module-scope state, the ~26 closure `let`s | 8 |
+| app.js module-scope state, the ~26 closure `let`s; **top-level eval order (TDZ abort kills the script)** | 8, 19 |
 | sessions, `switch_session`, crash restart, multi-tab | 9 |
 | Windows Git subprocesses, `PATHEXT`, local `git.js` collision, `gitExecutableForPlatform` | 18 |
 | workspace switch (`/api/workspace`, `workspace_changed`, `#wsbar`), `PI_WEBUI_NO_SWITCH` | 4, 9 |
 | security: CSRF, DNS-rebinding, `validateLink`, body cap | 10 |
-| asset load order, markdown-it / md.js / highlight, vendor whitelist | 11 |
+| asset load order, markdown-it / md.js / highlight, vendor whitelist; **new `public/*.js` module: STATIC entry + IIFE + guarded exports** | 11, 20 |
 | `esc()` HTML escaper, shadowing/drift | 12 |
 | assistant text/thinking streaming, `finalizeBubble`, `message_end`, render bugs | 13 |
 | subagent live view, `partialResult.details`, density toggle | 14 |
-| settings sidebar, model/thinking/pony + tier selects | 15 |
+| settings + permissions in-shell pages, mode chip, model/thinking/pony + tier selects | 15 |
+| outside-workspace containment cap (path tools + bash), `outside-workspace` tier | 21 |
 | `jetbrains/` build: gradle pins, Kotlin, `gradlew` in git-bash, `javap`, diff-gate wire contract | 16, 17 |
 
 ## RPC coverage (verified 2026-06-23 — don't re-audit without a pi version bump)

@@ -81,11 +81,28 @@ keyword to the index in `AGENTS.md`.
     `renderSubagentView` renders details at start/update/end. **Density** is a
     sidebar toggle (`pi:sa-density`): `full` = child calls + text, `compact` =
     status + calls.
-15. **Settings sidebar** `<aside id="settings">` (fixed right drawer; ⚙ opens,
-    ✕/backdrop/Esc closes). Model/thinking/pony selects moved here from the
-    header (keep their IDs → existing `onchange` unchanged). 3 tier selects
-    POST `/api/subagent-tiers` → `~/.pi/agent/subagent-tiers.json` (re-read each
-    call). `subagentDensity` = module-scope `let` set from its select.
+15. **Settings + permissions are in-shell utility PAGES**, not drawers/overlays
+    (design.md §4): `<section id="settings">` and `<section id="permissions">`
+    are flex children of `body` that replace the center transcript/composer
+    column while open — `body.page-open` (set/cleared by `openSettings`/
+    `closeSettings`/`openPermPage`/`closePermPage`) hides `#scroll-wrap`,
+    `#todopanel`, `footer`, and `.activity`; the shell header stays. Shared
+    chrome: `.perm-head` (sticky title bar) + `.perm-body` (centered 900px).
+    ⚙ opens, ✕/Esc closes; opening one page closes the other. Model/thinking/
+    pony selects keep their IDs → existing `onchange` unchanged. 3 tier selects
+    POST `/api/subagent-tiers` → `~/.pi/agent/subagent-tiers.json` (re-read
+    each call). `subagentDensity` = module-scope `let` set from its select.
+    The **composer mode chip** (`#mode-chip` in `.bar`) shows the active
+    permission posture at all times: persisted modes via `GET
+    /api/permissions/mode` piggybacked on `refreshStats`, yolo via the
+    extension's `setStatus("safeguard", {mode})` broadcast (session-only — a
+    config read can never see it; safeguard.ts broadcasts on yolo engage and
+    `session_start`). The page's **rules editor** mutates a clone of the USER
+    layer only (`applyRule`/`removeRule` in permissions-ux.js; floor is
+    locked, the workspace layer is tighten-only and edited via its own file) —
+    every write goes through the same revision-checked `PUT
+    /api/permissions/config` as the mode select. `buildLayerTree` shows the
+    HIGHEST-priority layer's action for a rule (not the last-written one).
 16. **JetBrains plugin build is version-pinned (load-bearing):** IntelliJ
     Platform Gradle Plugin **2.7.0** + Foojay resolver **1.0.0**; Kotlin
     **2.4.0**; `instrumentCode = false`. `DiffContentFactory` lives in
@@ -123,3 +140,39 @@ keyword to the index in `AGENTS.md`.
     `sanitizeWindowsPathExt()` must also remove `.JS` from the inherited
     `PATHEXT` so spawned pi, extensions, language servers, and tools cannot make
     the same collision.
+19. **app.js top-level statements run during script evaluation — a TDZ
+    `ReferenceError` aborts the WHOLE script, silently killing everything after
+    the throw point** (no `initWsbar` → `body.ws-on` never set → the left
+    sidebar is off-canvas and "gone"; no later `registerCommand` calls; SSE
+    handlers attached EARLIER fire and throw too). Symptom:
+    `Cannot access 'X' before initialization` at eval. Rule: never call
+    `registerCommand(...)`/any function before the `const`/`let` it touches is
+    declared (`const uiCommands = []` lives in the command-palette section;
+    `let noSwitch` in the left-sidebar section). When reordering sections in
+    a reformat, grep top-level call sites vs. their declarations.
+20. **A new `public/*.js` feature module needs THREE things or it fails in the
+    browser while Node tests pass:** (a) a `server.js` `STATIC` whitelist entry
+    (missing → silent 404, no JS error — the "explain failed: …
+    'explainView'" bug); (b) dual-mode exports guarded with
+    `if (typeof module !== "undefined" && module.exports)`; (c) the whole file
+    wrapped in an IIFE — a top-level `const api`/`const mod` in a classic
+    script leaks into the global lexical scope and collides with app.js's own
+    `function api` (SyntaxError at the LATER script, breaking every page).
+    House pattern: [`public/diff-view.js`](public/diff-view.js).
+21. **Outside-workspace access is capped at ask in EVERY non-yolo mode** (FR-6
+    containment, 2026-08-10 hardening): path tools (read-class) whose
+    canonical path escapes the workspace root get tier `outside-workspace` in
+    `buildVerdict` — rule allows are demoted to ask, and `applyMode` refuses
+    to lift it (auto-approve only lifts `ordinary-ask`; read-only's read-class
+    auto-allow skips the tier). write/edit outside root stay hard-deny.
+    **Bash**: `partPathTokens` extracts path-like args per subcommand;
+    `gateBash(…, isOutside)` marks the command `outside` if any part touches
+    an outside path, and safeguard.ts blocks the auto-approve/read-only
+    mode-bypass for outside commands (yolo is the ONLY exemption — explicit
+    session override). Grants (exact-selector) still win — they're explicit
+    per-action approvals. `isOutsidePart` lives in BOTH safeguard.ts and the
+    server.js explain endpoint (realpath-aware, `~`/`$HOME`/`$PWD` expansion,
+    cwd join) so the page can't diverge from the gate. Named ceiling: no shell
+    parser — `$(…)`-built and `$VAR`-prefixed paths are invisible.
+    Headless (`nonInteractive=allow`) can't prompt — the nonInteractive knob
+    governs there.

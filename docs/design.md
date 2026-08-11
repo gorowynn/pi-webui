@@ -147,8 +147,10 @@ tokens (the hexes are the source of truth).
 
 **Alternate — `paperlike`:** a deliberate redesign, not a recolor. Warm cream
 paper (`#F5F0E6`) + dark warm ink (`#3A342A`), sepia muted text, and deeper
-accents (amber/cyan/lime) tuned for contrast on cream; `--r` softens `2→6px`
-and cards gain a soft shadow. The transcript also renders in a **system serif**
+semantic accents. The current muted/semantic small-text pairs do **not** all
+reach WCAG AA 4.5:1 on raised cream surfaces; the measured gaps and required
+token audit are tracked in [`improvements.md`](improvements.md). `--r` softens
+`2→6px` and cards gain a soft shadow. The transcript also renders in a **system serif**
 on the cream surface, so the conversation reads as ink-on-paper while the chrome
 stays mono. Surfaces that needed overrides: code listings (paper-white), the
 thinking block (quiet violet on cream), diff panes, and `.hljs` tokens.
@@ -172,7 +174,10 @@ second typeface.
 
 - **Frame:** a thin full-width header (model left-aligned, theme name + status
   right-aligned in muted text) above the main area; a left **workspace/session
-  sidebar**; the **transcript** center; the **composer** input at the bottom.
+  sidebar**; the **transcript** center; the **composer** input at the bottom; and
+  a compact right workspace-tools rail. Addressable utility views such as
+  `#permissions` reuse this shell and replace the center transcript/composer
+  region with a bounded page, rather than opening a nested modal.
 - **User input block:** a distinct full-width container on a slightly lighter
   anthracite shade than the canvas, distinguished by background + a small muted
   "You" label — **no left accent stripe** (side-tab accent borders are a top slop tell).
@@ -216,10 +221,113 @@ jump pill / accent chips use `pill` (`999px`). `paperlike` softens `--r` to 6px.
   red/purple, strings light blue, functions purple, numbers blue, comments gray.
   Degrades to uncolored if the vendor file is missing.
 - **Diffs** — red/green line panes, monospace, `surface` background.
+- **Permission request** — a full-page modal with risk summary, matched
+  rule/scope, bounded command or U5 Review/Edit diff, and a sticky decision
+  row. A warning notification accompanies a newly arrived request; the tool
+  card remains status-only.
+- **Permissions page** — a full center utility page with compact overview cards,
+  structured rule rows, active grants, pending requests, redacted audit, and an
+  advanced validated source editor. The rail contains only its badge/launcher.
 - **Actions** — primary button / Send / jump pill: solid `primary` (Carolina
   Blue) with dark ink text.
 
-## 8. Do's and Don'ts
+## 8. Permissions and approval
+
+Permission UI is a security workflow, not a generic four-button select. The
+extension policy remains authoritative; browser risk text is explanatory only.
+
+### 8.1 Pending approval
+
+- Render every blocking tool interaction in one full-page modal, keyed by
+  `toolCallId`; the originating tool card remains a status record only.
+- Lead with a one-line action summary, workspace-relative resource, deterministic
+  risk level/reasons, and “Matched rule” disclosure. Raw structured arguments
+  stay behind an expandable Details control. Show a warning notification when a
+  new interaction modal opens.
+- Bash detail uses a non-wrapping code block with explicit subcommand boundaries.
+  Edit/write uses the shared U5 Review/Edit surface and reports baseline conflict
+  before any allow action becomes available.
+- Decision labels state their real scope: **Allow once**, **Allow this exact
+  action for this session**, **Allow in this workspace**, and **Deny**. A global
+  grant is available only from the Permissions page's advanced flow.
+- Persistent/sensitive grants require a second scope confirmation. Deny remains
+  visible at all times; neither an allow control nor the diff editor receives an
+  implicit Enter/default action.
+- Initial focus lands on the dialog heading or Deny. Escape and backdrop
+  dismissal mean Deny. While a response is being acknowledged, controls disable
+  without hiding the reviewed content; failure restores them with Retry.
+- A minimized or offscreen request leaves a persistent rail badge and status
+  text. Resolution, timeout, abort, another-tab response, Pi exit, or workspace
+  switch removes/neutralizes every duplicate surface.
+
+### 8.2 Dedicated WebUI Permissions page
+
+The page is addressable at `#permissions` inside the existing `index.html`
+shell. Open it from Settings, Alt+K, and the right-rail shield badge. Back returns
+to the prior conversation and restores focus/scroll. Unsaved changes block
+navigation with Save / Discard / Stay.
+
+Desktop information shape (illustrative, not literal pixel art):
+
+```text
+┌ ← Conversation   Permissions                         policy healthy · 2 grants ┐
+│ Workspace: pi-webui     Mode: Default     Headless: Block     Pending: 1       │
+├ Rules ─ Active grants ─ Pending ─ Audit ─ Explain ─ Advanced ──────────────────┤
+│ Current workspace rules                                      + Add rule        │
+│ ? Ask   bash    npm publish *          workspace   user rule       Edit · Delete│
+│ ⛔ Deny  read    **/.ssh/id_*           built-in    locked           Explain    │
+│                                                                               │
+│ Built-in floor (read only)                                      8 rules        │
+└───────────────────────────────────────────────────────────────────────────────┘
+```
+
+Page structure, top to bottom:
+
+1. **Overview:** current workspace, policy/config health, effective mode,
+   headless posture, pending count, and active-grant count. Errors are persistent
+   and actionable, never toast-only.
+2. **Rules:** grouped sections for immutable built-in floor, user-global rules,
+   and current-workspace rules. Each row shows effect, tool, typed matcher,
+   provenance, remember eligibility, enabled state, and Edit/Delete actions.
+3. **Active grants:** exact normalized scope, source surface, creation time/
+   expiry, and Revoke; include a confirm-gated Clear Session Grants action.
+4. **Pending:** links to the originating tool card and the current full-page
+   review surface; the page does not create a second independent decision.
+5. **Audit:** bounded, redacted decision metadata (tool, risk, rule ID, decision,
+   scope, duration, surface). Never persist raw secret-bearing commands or file
+   contents; use a safe summary plus fingerprint.
+6. **Explain:** tool + typed sample input → canonical selector, matched rules,
+   precedence, final effect, risk reasons, and whether each remember scope is
+   eligible. Explain is read-only and runs the same server/policy module as Pi.
+7. **Advanced source:** raw versioned JSON with schema errors, normalized preview
+   and old/new diff. Save stays disabled until valid and requires the expected
+   config revision.
+
+The structured editor is the primary path. Tool is selected from registered
+names; matcher controls change by selector kind (command, path, agent, typed
+input); effect is Allow / Ask / Deny; scope is user-global or current workspace.
+Project-owned files may add Deny or mandatory Ask but cannot create grants.
+Default-floor rows are inspectable and copyable but not editable.
+
+At widths below the content breakpoint, overview cards become one column and
+rule rows become labelled definition cards. Editing uses a full-screen sheet;
+there is no horizontally scrolling desktop table requirement. Every tab/filter
+is a native button, every row action is keyboard reachable, validation uses
+`aria-describedby`, save status uses one coarse live region, and color is never
+the only indicator of Allow/Ask/Deny.
+
+### 8.3 Visual hierarchy
+
+- Pending uses `warning` only for attention; high risk uses `danger`; ordinary
+  manual review keeps neutral surfaces. Do not paint every approval red.
+- Rule effects use text + icon (`✓ Allow`, `? Ask`, `⛔ Deny`) and subdued chips.
+- The default floor is visually quieter but clearly locked. Workspace rules are
+  the normal editing focus; global grants receive stronger scope warnings.
+- Keep the page dense and IDE-like: hairlines, opaque surfaces, one-column forms,
+  no dashboard gradients, oversized security illustrations, or celebratory
+  “autonomy” treatment.
+
+## 9. Do's and Don'ts
 
 **Don't** (each is a recognized AI-slop tell that was stripped out — don't
 re-add it):
@@ -230,6 +338,10 @@ re-add it):
 - Hero aurora / radial-gradient glows.
 - Side-tab accent stripes on bubbles, tool/think cards, sidebar rows, or rail steps.
 - Over-rounded corners (radius > 16px) and neon-saturated cyan.
+- A primary-UI global bypass, default-focused Allow, hidden Deny, or raw
+  secret-bearing commands in persisted audit/history.
+- A browser-evaluated duplicate of the extension policy or a generic endpoint
+  that accepts the safeguard config path.
 
 **Do:**
 
@@ -239,3 +351,5 @@ re-add it):
   deliberate identity, not the slop "single font everywhere" — the hierarchy
   compensates.)
 - Signal active/selected state with background + accent text, never a stripe.
+- Keep policy decisions extension-authoritative, config/workspace resolution
+  server-authoritative, and every permission response acknowledged/fail-closed.

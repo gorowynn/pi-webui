@@ -11,7 +11,7 @@
 ## Division of labor
 
 | Location | Holds | Update when… |
-|----------|-------|--------------|
+| --- | --- | --- |
 | [`../AGENTS.md`](../AGENTS.md) | What an agent needs to do its job: project shape, run/dev, conventions, the gotcha keyword index, smoke tests, **open work items**. **Auto-loaded by pi at startup.** Read this **first** every session. | You learn a convention or open/close a tracked task. |
 | [`../GOTCHAS.md`](../GOTCHAS.md) | Full gotcha/convention detail, kept out of the auto-load to save context. AGENTS.md links here by keyword. **Read the matching entry before editing the area it covers.** | You add a new gotcha (also add its keyword to the AGENTS.md index). |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | Running **history** (newest first, dated entries). | You finish a chunk of work worth recording. |
@@ -25,10 +25,13 @@ durable knowledge live only in a code comment or a chat transcript; move it here
 ## Index
 
 | File | Role |
-|------|------|
-| [`design.md`](design.md) | UI/UX spec — color palette, typography hierarchy, layout, code-block & status styling. **Source of truth for every visual decision.** |
-| [`improvements.md`](improvements.md) | Cross-cutting visual, performance, feature, and reliability audit with recommended implementation order. |
-| [`roadmap.md`](roadmap.md) | Candidate features (benefits, drawbacks, value/effort ranking). Source of truth for *what we might build next*. |
+| --- | --- |
+| [`design.md`](design.md) | UI/UX spec — palette, typography, layout, component styling, approval workflow, and the WebUI Permissions page. **Source of truth for every visual decision.** |
+| [`improvements.md`](improvements.md) | Current source- and primary-research-backed UI/UX, accessibility, adaptive-layout, permission-safety, JetBrains, and perceived-performance audit. |
+| [`security-review.md`](security-review.md) | Security and runtime-robustness review of the current working tree: rated findings, fault probes, recovery gaps, validation results, verified controls, and remediation order. |
+| [`pi-livecraft.md`](pi-livecraft.md) | Current post-adoption comparison with pi-livecraft: shipped overlap, verified gaps, residual candidates, and boundaries that must not be copied. |
+| [`plans.md`](plans.md) | Staged execution plan, file/test touchpoints, dependencies, and exit gates for the roadmap's Now/Next horizons. |
+| [`roadmap.md`](roadmap.md) | Prioritized product horizons, accepted outcomes, dependencies, conditional candidates, and explicit non-goals. Source of truth for *what we build next*. |
 
 ## Adding a new doc
 

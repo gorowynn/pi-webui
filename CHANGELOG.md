@@ -6,6 +6,427 @@
 
 ## Changelog
 
+### 2026-08-11 — fix(approvals): use full-page interaction modals
+
+- Removed in-card approval controls. Every blocking tool select, confirm, input,
+  editor, and ask-user interaction now opens in the full-page modal and emits a
+  visible warning notification; tool cards remain status-only.
+- `applyState()` now clears the activity row when authoritative state says idle,
+  preventing stale “thinking…”/tool status after a missed terminal event.
+
+### 2026-08-11 — fix(composer): restore action and approval controls
+
+- Added the missing `agent_start` switch break so streaming stays active and the
+  Stop/send-mode controls work until `agent_end`; made safeguard provenance
+  mutable so live mode updates no longer throw.
+- Composer overflow actions now auto-close only in the narrow popover, rather
+  than collapsing the always-inline wide toolbar. Confirm replies now include
+  pi RPC's required top-level `confirmed` field.
+- Added focused guards in `status-race.test.js`, `permission-ux.test.js`, and
+  `shell-contract.test.js`; all 27 non-integration Node tests pass.
+
+### 2026-08-10 — docs(security): record rated project review
+
+- Added [`docs/security-review.md`](docs/security-review.md): security-first review
+  of the current working tree with severity ratings, source evidence, reproduced
+  policy/path/Git failures, verified controls, and a remediation order.
+- Records the release-blocking npm package omission, permission-policy bypasses,
+  process/Git/browser boundaries, reachable markdown-it advisory, and test gaps.
+  Findings remain open; this entry records the review, not remediation.
+
+### 2026-08-10 — feat(containment): outside-workspace access is at least ask in every non-yolo mode
+
+- **Path tools** (read-class): `resolve` tracks whether the canonical path
+  escapes the workspace root; `buildVerdict` caps rule-allow at ask with a
+  new `outside-workspace` tier (`outsideRoot` flag + reason). `applyMode`
+  can't lift it: auto-approve only lifts `ordinary-ask`, and read-only's
+  read-class auto-allow skips the tier. write/edit outside root stay
+  hard-deny (stronger than ask). Grants (exact-selector approvals) and yolo
+  (explicit session override) still win.
+- **Bash**: new `partPathTokens` (quote-stripped path-like args per
+  subcommand) + `gateBash(…, isOutside)` marks the command `outside` when any
+  part touches an outside path; safeguard.ts blocks the auto-approve/read-only
+  mode-bypass for outside commands (falls through to the ask flow, tier
+  `outside-workspace` in the provenance + approval card). The explain endpoint
+  injects the same realpath-aware containment so the page can't diverge.
+- Named ceiling: no shell parser — `$(…)`-built / `$VAR`-prefixed paths are
+  invisible (GOTCHAS #21). Headless (`nonInteractive=allow`) still can't
+  prompt — that knob governs headless.
+
+### 2026-08-10 — feat(permissions): composer mode chip + in-page rule editor
+
+- **Mode chip** (`#mode-chip`) sits in the composer bar, always visible: shows
+  `default` / `auto-approve` / `read-only` / `⚠ yolo`, colored by posture
+  (muted / amber / red), click opens the permissions page. Persisted modes
+  poll via new `GET /api/permissions/mode` (piggybacked on `refreshStats`);
+  yolo is session-only so the extension now broadcasts it — safeguard.ts
+  emits `setStatus("safeguard", {mode})` on yolo engage and `session_start`,
+  app.js flips the chip from that (and from every blocking-select
+  provenance broadcast, which already carried mode).
+- **Rule editor** on the permissions page: the "effective policy" section is
+  now "rules" with an add row (tool + pattern + effect → user config via the
+  existing revision-checked PUT) and an `×` remove button on every
+  user-layer rule (floor + workspace rows stay locked; workspace layer is
+  tighten-only via its own file). Pure helpers `applyRule`/`removeRule` in
+  permissions-ux.js (unit-tested); a string tool rule converts to `{"*": …}`
+  form so defaults survive adding a pattern.
+- Fixed `buildLayerTree` action precedence: the displayed action for a rule
+  present in multiple layers was the LAST (lowest-priority) layer's — now the
+  highest-priority one (the effective action).
+- `perm-tools` datalist (referenced but never defined — explain input had no
+  suggestions) is now populated from the layer tree + known tools.
+
+### 2026-08-10 — ui(utility pages): settings + permissions are real in-shell pages; permission modal is full-screen
+
+- `#settings` and `#permissions` are no longer a right drawer / fixed overlay:
+  both are flex children of `body` that replace the center transcript/composer
+  column while open (`body.page-open` hides `#scroll-wrap`, `#todopanel`,
+  `footer`, `.activity`; the shell header stays) — implementing design.md §4
+  ("utility views reuse the shell and replace the center region"). Shared
+  chrome `.perm-head`/`.perm-body`; `#settings-back` removed. GOTCHAS #15.
+- The permission/approval modal (any `#modal .card.wide` — editable diff,
+  preview stack, U6 C9 flows only) is now a REAL full modal: opaque surface,
+  fills the viewport edge-to-edge, x button re-anchored inside. Non-permission
+  dialogs (usage/git/sessions/ask) keep the centered card.
+
+### 2026-08-10 — fix(permissions): Explain failed — module never loaded in browser
+
+- **Root cause**: `public/permissions-ux.js` was not in `server.js`'s `STATIC`
+  whitelist → the browser got a silent 404 and the script never ran
+  (`window.permissionsUx` undefined → `pu.explainView` threw on the Explain
+  click). Node tests passed because `require()` bypasses the HTTP surface.
+  Two latent landmines fixed in the same file while making it browser-safe:
+  bare `module.exports` (ReferenceError in the browser) → guarded dual-mode
+  export, and a top-level `const api` (collided with app.js's `function api`
+  in the shared global scope → SyntaxError killing app.js) → IIFE, matching
+  the `diff-view.js` house pattern. Verified with a fresh headless-Edge CDP
+  probe: `#permissions` page opens, `explainView` returns the verdict object,
+  zero console exceptions. Gotcha: GOTCHAS.md #20.
+
+### 2026-08-10 — fix(ui): left sidebar vanished (app.js TDZ abort)
+
+- **Root cause**: a section reorder put the top-level
+  `registerCommand("permissions", …)` call (`public/app.js`, permissions page
+  section) BEFORE the `const uiCommands = []` registry declaration (command-palette
+  section). The `ReferenceError: Cannot access 'uiCommands' before initialization`
+  at script evaluation aborted the whole file — `initWsbar` never ran, so
+  `body.ws-on` was never set and `#wsbar` stayed off-canvas (`translateX(-100%)`
+  drawer state in `w-mid`/`w-narrow`); the SSE `onopen` handler (attached earlier,
+  firing async) then also threw on the uninitialized `let noSwitch`.
+- **Fix**: moved the permissions registration into the "register built-in UI
+  commands" section, after the registry exists. Verified with a headless-Edge CDP
+  probe (no console exceptions, `ws-on` set, workspace + session rows render).
+  Gotcha documented: GOTCHAS.md #19.
+
+### 2026-08-10 — permissions: U6 policy engine, approval broker, modes, #permissions page
+
+- **Policy engine** (`extensions/pi_minimal_webui/policy-engine.js`, new, zero-dep
+  CommonJS — the SINGLE resolution implementation shared by the extension gate and
+  the server page/Explain): verdict `{action,tier,matchedRule,layer,reason}` with
+  provenance; precedence hard-deny → mandatory-ask → remembered-grant → ordinary-ask
+  → allow; layered config (shipped floor → `~/.pi/agent/safeguard.json` →
+  `<cwd>/.pi/safeguard.json`, workspace tighten-only — loosening rules rejected with
+  diagnostics); v2 schema (`version`/`revision`/`mode`/`sensitivePaths`/`grants`),
+  atomic revision-checked writes; canonical path resolution + `sensitivePaths`
+  mandatory-ask/deny on EVERY path-capable tool (grep/find/ls/glob too);
+  `applyMode` (default/auto-approve/read-only + session yolo).
+- **Bash classifier** (`extensions/pi_minimal_webui/bash-classifier.js`, new, pure):
+  quote-aware compound splitting on `&& || ; | &` + substitution/redirect/background
+  flags; a command is auto-allowable only when read-only AND every subcommand is
+  allow-ruled and none deny-ruled. **The 3 roadmap bypasses are closed even against
+  stale configs**: `git status && rm -rf ./src`, `echo $(cat ~/.ssh/id_rsa)`,
+  `git remote remove origin` all resolve gate.allow:false (verified live).
+  `echo` + mutating git verbs removed from the shipped floor; git recon allowlist
+  narrowed to status|log|diff|show|blame|ls-files|branch --show-current|remote -v.
+- **Modes** (user request): default / auto-approve (ordinary-ask → allow,
+  sensitive/deny stay) / read-only (read-class only, silent deny + notify,
+  coordination tools exempt) / **yolo** (everything allows, NO prompts,
+  session-scoped, confirm-gated, never persisted — config with `mode:"yolo"` is
+  rejected). "Allow always" now writes an exact-selector `grants` entry (the FR-9
+  compound gate is binding for rule-based allows, so grants are the explicit
+  bypass).
+- **Approval broker** (`broker.js`, new, pure): server-owned pending registrations
+  for every blocking extension-UI request (tool identity via the preceding
+  `tool_execution_start`); first-response-wins, stale/unknown ids rejected (410),
+  `approval_resolved` broadcast, cleared on pi exit/workspace switch, replayed via
+  `/api/snapshot` `pendingApprovals` so a reload re-renders the approval.
+- **Browser wire** (`public/app.js`): `toolCallId`-keyed args map replaces the
+  `curToolArgs` singleton in permission paths; version-1 marker
+  `{v:1, toolCallId, decision}` on every approval response (server validates
+  identity, strips the marker, forwards the unchanged payload); ack-before-close
+  (UI closes only on `approval_resolved`; 2s watchdog; Esc/backdrop = Deny via the
+  same path; stale marker keeps the UI with retry); snapshot replay of pending
+  approvals; the safeguard `setStatus` provenance context (tier/rule/layer/reason/
+  mode) is stashed, not shown in the statusbar.
+- **In-card approval** (`public/app.js` + `style.css`): the decision surface now
+  renders IN the tool card (risk banner + matched rule + layer + Review/Edit diff +
+  buttons; mandatory-ask offers only Allow once/Deny), bottom-sheet via
+  `body.w-narrow` at narrow widths (no media queries — U1 shell contract), modal
+  fallback for offscreen/reload; ≤50 decision receipts.
+- **`#permissions` page** (`public/index.html` + `app.js` + `permissions-ux.js`
+  dual-mode helpers): hash-routed, reachable from settings + command palette;
+  posture select (yolo confirm step), Explain form (same engine as the gate +
+  per-part bash breakdown + auto-allowable flag), effective policy layer tree with
+  per-rule layer badges, diagnostics, numbered session-grant revoke + clear-all,
+  redacted decision audit. Settings sidebar gains a mode select. Fixed
+  `/api/permissions` endpoints only (GET / PUT config / DELETE grants[:n] /
+  POST explain / GET audit) — browser never touches policy files.
+- **JetBrains** (`jetbrains/`): canonical workspace containment
+  (`WorkspaceContainment`, unit-tested) gates the native diff's filesystem reads;
+  mid-review file-change conflict flag on edited decisions; mode badge + YOLO
+  warning in the native top bar; requestId/toolCallId ride the bridge payload.
+- Tests: 7 new suites (~90 assertions) + gradle test task green
+  (`JAVA_HOME` must be ≥17; WebStorm JBR 21 used). Full suite green; rpc-sse
+  remains environmental. Live e2e verified: broker register → marker-validated
+  resolve → broadcast → 410s → audit; mode PUT/409/400 round trip; bypass
+  gate.allow:false.
+
+- `public/app.js` (fetchSnapshot race): the snapshot is a point-in-time bundle —
+  `get_state` is read on the server BEFORE the possibly-multi-MB transcript is
+  serialized. When a turn ended while the snapshot was in flight, the live SSE
+  stream consumed `agent_end` (Node's live buffer cleared), then the stale
+  snapshot applied + replayed the buffer — re-arming the activity bar with
+  `writing…` — and the finalize branch was skipped because the STALE
+  `isStreaming:true` said the turn was live. Nothing left could reset it: the
+  spinner + label stuck on "writing…" until a reconnect.
+- Fix: after applying the snapshot + replay, `fetchSnapshot` issues a fresh
+  `get_state` (`id: "snap-recheck"`); the response handler finalizes the turn
+  (via new shared `finalizeDeadTurn()`) only when pi is freshly idle AND no new
+  `agent_start` has fired since the capture (`agentStarts` counter — bumped on
+  EVERY agent_start, live or replay, so a new turn can never be clobbered). The
+  recheck deliberately does NOT `applyState()` — a stale `isStreaming:true`
+  captured by the check itself must not re-arm the spinner after the live
+  stream already reset it. The pre-existing `!piStreaming` dead-turn branch
+  now shares `finalizeDeadTurn()`.
+- `test/status-race.test.js` (new): source-level structure audit of the guard
+  - a state-machine simulation of both semantics — stale snapshot converges to
+  "ready"; a new turn during the recheck is untouched.
+
+### 2026-08-07 — a11y: loaded-session replay rendered into a detached feed (fix)
+
+- `public/app.js` + `public/index.html` (post-slice bug): the a11y feed
+  refactor made `#tfeed` a child of `<main id="transcript">`, but all
+  three history-clearing sites still called `setSafeHtml(transcript, "")`
+  — clearing `<main>` DESTROYED the feed element, so loaded/resumed
+  sessions rendered into a detached node and appeared blank (live chat
+  kept working: the feed existed until the first clear). Fixed:
+  `applyMessages`, the `workspace_changed` handler, and `resumeSession`
+  now clear `feedEl`; `applyMessages` reads `feedEl.lastChild` for
+  `data-mi`; the empty-state moved OUT of the feed (now a sibling of
+  `#tfeed`) so it survives clears. Regression guards added to
+  `test/a11y-contract.test.js` (no `setSafeHtml(transcript`, ≥3
+  feed-clears, `feedEl.lastChild`).
+
+### 2026-08-07 — a11y: tested contrast contract + native controls (U2/A4 slice)
+
+- `a11y-contrast.js` (new, Node-only): zero-dep WCAG relative-luminance /
+  contrast math, a theme-token scanner (bare `:root` + `[data-theme=…]`
+  blocks; media-nested blocks + comments stripped; color-mix/rgba/short-hex
+  ignored), `resizeStep` (splitter keyboard math), `statusTextForEvent`
+  (coarse-progress mapping).
+- `test/contrast.test.js` (new): 16-row pair table × both themes = 32
+  asserts ≥4.5:1. Paperlike `--muted`/`--secondary`/`--accent`/`--success`/
+  `--warning` darkened to pass (e.g. muted 3.04→4.84 on raised, accent
+  3.89→5.49); dark theme untouched (`:root` unchanged) and proven.
+- `test/a11y-contract.test.js` (new): source-level audit of the REAL
+  files — native disclosures/icon buttons with accessible names, a
+  hover→focus-twin auto-audit (zero violations), region labels, status /
+  busy wiring, per-control 24px touch rules.
+- `public/app.js`: tool-card heads converted from `<div role="button">` to
+  native `<button aria-expanded>` (the app's only role="button"); turns
+  render as `<article class="msg">` with `aria-labelledby` → `turn-N-role`
+  ids in a new `#tfeed` (`role="feed"`, kept inside `<main>`); tool
+  blocks and compaction markers are articles too; `#a11y-status`
+  (`role="status"`) announced at turn boundaries only (never per token);
+  `applyMessages` brackets the DOM mutation with `aria-busy`; the sdd
+  rail splitter is now focusable + arrow/Home/End-operable with live
+  `aria-valuenow` (pure `resizeStep`).
+- `public/style.css`: 24px touch floors (ws-x, ws-open, imgthumb-x,
+  ws-mini, set-x, sdd-close, toast-x, um-refresh), rail-resize 24px hit
+  zone via `::after` + `.sdd-rail` left-padding reservation,
+  `@media (hover: none)` keeps the handle visible, `scroll-padding-top`
+  under the sticky diff hunk labels, `.sr-only` clip class.
+- `public/index.html`: `#tfeed` feed wrapper, `#a11y-status`, `#input`
+  `aria-label="message composer"`, `#ws-new` `aria-label="new session"`.
+- Decisions: feed over log (log's implicit aria-live would announce every
+  streamed token); scroll-padding goes where sticky children actually
+  exist (inside diff boxes); palette listbox options are exempt from the
+  focus-twin rule (their `.sel` highlight shares the hover rule).
+
+### 2026-08-07 — diff(editable): Review/Edit split + versioned apply (U5/A5 slice)
+
+- `public/diff-view.js` (new, dual-mode): LCS row builder (`diffLines`/
+  `diffRows`, ported verbatim from app.js), monotonic gutter reserve
+  (`gutterReserveCh`, digits+1, never shrinks), `dirty`, `largeHunkExceeds`
+  (4M-cell guard), `lineCountOf`. Registered in the STATIC whitelist + load
+  order before app.js.
+- `workspace-file.js` (new, server-side): `versionOf` (sha256 hex) +
+  fs-injected `writeWorkspaceFileIfVersion` — hash must match, `null` =
+  create-only, missing field = 400, mismatch = 409 with the current version.
+- `server.js`: `/api/file` returns `version`; `/api/write` requires
+  `expectedVersion` — the apply-time read→write version closes the TOCTOU
+  window; CSRF/safePath/body-cap untouched.
+- `public/app.js`: the editable pane is now a Review/Edit split — Review
+  renders the aligned highlighted diff (read-only), Edit shows the REAL
+  textarea (visible text/caret/selection) + a debounced line-number gutter;
+  the transparent overlay plane is deleted and the SAME textarea element
+  persists across mode switches (undo/selection/scroll survive). No LCS
+  while typing: a 150ms coalesced recompute runs on Review-entry/Apply/
+  blur; >4M cells shows an explicit paused label instead of freezing. Apply
+  sends `expectedVersion`; a 409 opens an inline conflict banner (Reload /
+  Compare / Cancel). Dirty dot + Reset Proposal + Ctrl/Cmd+Enter apply +
+  file-named `aria-label`/`title`; stepper warns that a rebuild drops edits;
+  the approval-capture getter stays byte-identical
+  (`label | {label, oldFull, newFull}`); JetBrains wire contract untouched.
+- `public/style.css`: shared geometry vars on `.sx-host` (fixed-px
+  `--sx-lh: 17.4px`), `.sx-hdr` equalized at 36px, edit-mode gutter strip,
+  segmented Review/Edit toggle, conflict banner, paused state, editor
+  extent border. Global textarea cap excluded via `textarea:not(.sx-ta)`
+  (see the un-cap entry below).
+- Tests: `test/diff-view.test.js` (47), `test/workspace-file.test.js` (29),
+  `test/diff-contract.test.js` (12, red-first) — all green; full existing
+  suite green; HTTP wire smoke verified the version protocol end-to-end.
+
+### 2026-08-07 — diff(editable): un-cap the diff editor (global textarea rule)
+
+- `public/style.css` (browser spot-check round 3): the composer's generic
+  `textarea { min-height: 48px; max-height: 200px }` rule applied to the diff
+  editor too — nothing overrode `max-height`, so `.sx-ta` was clamped to
+  exactly 200px (~11 lines) regardless of the 45vh pane. This explains all
+  earlier symptoms (text in the upper third, gutter numbers below the text
+  field). Selector narrowed to `textarea:not(.sx-ta)` — the same exclusion
+  idiom the `#modal textarea:not(.sx-ta)` rule already used; the composer
+  and modal inputs are unaffected, and the transcript diff editor (base
+  `height: 300px`) is freed from the cap as well. The pre-A5 overlay design
+  masked the cap (transparent textarea).
+
+### 2026-08-07 — diff(editable): floor the modal edit-pane height
+
+- `public/style.css` (browser spot-check round 2 of the U5 editable-diff
+  slice): the permission modal's flex chain is content-driven — the
+  `max-height: 92vh` clamp only resolves when the diff overflows, so short
+  diffs sized the edit pane to the textarea's intrinsic 2-row height. Fixed
+  with `#modal .sx-eedit { min-height: 45vh }` (visible only in Edit mode;
+  Review stays content-sized) **plus** a deterministic `flex: 1 1 45vh`
+  basis on `#modal .sx-ta` — the auto basis resolved to 2 rows and flex-grow
+  had no free space in the content-driven chain; the explicit basis never
+  depends on the chain resolving, and grow still fills the pane when a tall
+  diff makes the chain definite.
+- `public/style.css`: edit-mode textarea now draws a hairline border
+  (`.sx-host[data-mode="edit"] .sx-ta`) so the editor's extent is visible
+  instead of reading as dead space below the text.
+
+### 2026-08-07 — diff(editable): equal header heights + fill-height edit pane
+
+- `public/style.css` (browser spot-check round 1 of the U5 editable-diff
+  slice): `.sx-hdr` gets `min-height: 36px` — the new column's header carries
+  the 24px Review/Edit toggle + Apply and ran ~12px taller than the bare
+  `− original` header, offsetting the two column bodies; both headers now
+  clamp to the same height.
+- `public/style.css`: `.sx-eedit` becomes `flex-direction: column` — it was a
+  row flex, so in the approval modal the `flex:1 1 auto; height:auto`
+  textarea only stretched horizontally and collapsed to its ~2-row intrinsic
+  height (~34px, gutter clipped to match); the editor now fills the modal
+  column vertically.
+
+### 2026-08-07 — shell(context): move the ctx readout onto the pressure meter
+
+- `public/{index.html,app.js,style.css}`: the context meter (`#ctx-meter`,
+  footer top edge) now carries the numeric readout `percent% (used/max)` in a
+  muted mono label (danger-tinted when hot); the statusbar `ctx` readout
+  (`sb-ctx`) was removed from the primary group — the meter is now the single
+  context display. Supersedes FR-10.4's "sb-ctx remains" clause.
+
+### 2026-08-07 — shell(adaptive): widen the transcript column to 1200px
+
+- `public/style.css`: transcript content cap 900 → 1200px (the 900px cap bound
+  even at 1440 with both rails open, where the content area is ~1112px);
+  edge-to-edge on ultrawide is still avoided, now centered at 1200px.
+
+### 2026-08-07 — docs(security): specify permission policy, broker, and WebUI editor
+
+- **Verified defects:** record that shipped safe-command prefix rules can
+  auto-allow compound/substitution/redirection and mutating Git commands;
+  pending extension dialogs disappear across reload; permission POSTs close the
+  modal before acknowledgement; remembered grants are global/order-sensitive;
+  and the native bridge accepts an unrestricted browser path.
+- **Roadmap/plan (`docs/{roadmap,plans}.md`):** add Now outcome U6 and Phase A6
+  for a tested pure policy engine, conservative shell/path handling, versioned
+  workspace-scoped policy, fail-closed headless behavior, a `toolCallId`-keyed
+  protocol, server pending-request broker, acknowledged responses, timeout/
+  abort/multi-tab convergence, and JetBrains containment/lifecycle hardening.
+- **Permissions page (`docs/design.md`):** specify a dedicated same-shell
+  `#permissions` view opened from Settings, Alt+K, and the rail badge. It owns
+  structured effective-rule editing, active grants/revoke, pending links,
+  redacted audit, Explain, and a validated revision-safe advanced JSON view;
+  fixed APIs keep config/workspace resolution server-authoritative.
+- **Research/comparison (`docs/{improvements,pi-livecraft}.md`):** add the
+  source-backed audit and adopt only Livecraft's `pendingUi` refresh recovery +
+  acknowledged response pattern, not its manager/supervisor process model.
+  Primary comparisons: Pi extension/RPC docs, VS Code approvals, Cline Auto
+  Approve, and Claude Code command/path permission semantics. No runtime code
+  changed.
+
+### 2026-08-07 — docs(roadmap): replace the stale backlog with an executable sequence
+
+- **Roadmap (`docs/roadmap.md`):** remove shipped PWA, highlighting, themes,
+  Git/analysis foundations, images, subagents, and reconnect work from the live
+  backlog; replace the old numbered list with Now/Next/Later horizons, stable
+  outcome IDs, dependencies, explicit non-goals, and conditional security/
+  checkpoint/context-pruning gates.
+- **Action plan (`docs/plans.md`):** replace completed O3/O5/M1 implementation
+  history with Phases A–F covering correctness/accessibility, the workspace-tools
+  rail, conversation/change/session workflows, context/templates/JetBrains,
+  long-history performance, validation matrices, and phase exit criteria.
+- **Order:** adaptive/contrast/draft/live-state correctness must pass before the
+  rail; conversation and change-review contracts precede context/IDE work;
+  incremental history follows stable turn semantics. Remote auth, checkpoints,
+  directory selection, and compaction pruning require separate specifications.
+- **Index:** add the action plan to `docs/README.md` and clarify the roadmap as
+  the source of truth for accepted product outcomes.
+- **Follow-up — editable diff (`docs/{roadmap,plans}.md`):** add Now item U5 and
+  Phase A5 after confirming the web editor's transparent textarea is offset by
+  unmatched vertical padding and cannot track diff-only deletion placeholders.
+  Plan a shared-geometry stopgap, explicit Review/Edit rendering, conflict-safe
+  hash/version writes, debounced large-hunk updates, dirty/reset/keyboard state,
+  and a later unified/intraline/navigation review pass. No runtime code changed.
+
+### 2026-08-07 — docs(ui): rebaseline UI-improvement research
+
+- **Research:** inspect the live UI at 1440×1000 and 480×900, current
+  HTML/CSS/rendering paths, paperlike/dark contrast ratios, and the JetBrains
+  JCEF bridge; compare primary guidance from VS Code/Cline, WAI-ARIA, WCAG 2.2,
+  GitHub Primer, web.dev, and the IntelliJ Platform SDK.
+- **Audit (`docs/improvements.md`):** replace the stale July cross-cutting list
+  with a current workbench model, verified issues, ranked delivery tranches,
+  accessibility acceptance criteria, long-session rendering plan, and native
+  JetBrains integration opportunities.
+- **Key findings:** narrow sidebar/composer rules fail in the actual cascade;
+  status metadata horizontally overflows even at desktop width with the sidebar
+  open; paperlike small-text pairs measure as low as 3.04:1; status is
+  duplicated; the empty state is CSS-only; transcript/tool/splitter semantics
+  are incomplete; drafts and Improve are destructive under failures/races.
+- **Design/index:** correct `docs/design.md`'s obsolete paperlike contrast claim
+  and refresh the audit's role in `docs/README.md`. No runtime code changed.
+
+### 2026-08-07 — docs(pi-livecraft): consolidate the post-adoption audit
+
+- **Why:** the four original pi-livecraft documents described a pre-port target
+  and implementation plan, but Phases 0–5 have shipped; keeping those snapshots
+  as current docs obscured the smaller set of verified residual gaps.
+- **What (`docs/pi-livecraft.md`):** one current audit now records shipped
+  overlap, source-backed correctness findings, ranked UI/UX and feature
+  candidates, the zero-build/process/security boundaries that still reject a
+  port, and a file-by-file source map.
+- **Fresh findings:** the generic right rail is only partially realized (SDD is
+  persistent while Analysis/Git remain modal), live analysis can use stale
+  bootstrap messages, the main Pi decoder silently drops session records over
+  8 MiB, narrow workspace rules lose the CSS cascade, Improve can overwrite a
+  newer draft, and the slash palette retains rebuild-on-hover interaction.
+- **Cleanup:** remove the superseded architecture, UI, rendering, and action-plan
+  documents; add the consolidated audit to `docs/README.md`. Historical detail
+  remains available in Git.
+
 ### 2026-08-06 — fix(windows): stop local git.js from shadowing Git for Windows
 
 - **Root cause:** Windows searches the process working directory before `PATH`
@@ -1566,7 +1987,7 @@ Five reported bugs:
 
 - `docs/todo.md` was stale (line-count claims and the "~11 pieces" mutable-state
   count had drifted; all P1/P2 items were long done) and redundant — its two open
-  P3 items were already listed in [Open work](#open-work). Removed it; `docs/`
+  P3 items were already listed as open work in [`AGENTS.md`](AGENTS.md). Removed it; `docs/`
   now holds durable specs only (`design.md`, `README.md`). Open work is tracked
   solely here. Also refreshed stale line-counts in the file map.
 
