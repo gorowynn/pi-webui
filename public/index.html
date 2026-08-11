@@ -197,70 +197,77 @@
 				</button>
 			</div>
 			<div class="perm-body">
-			<section class="set-sec">
-				<h4>model &amp; behavior</h4>
-				<label class="set-row"
-					>model
-					<span class="set-inline"
-						><select id="model" title="model"></select
-						><button id="models-btn" title="reload models">
-							↻
-						</button></span
+				<section class="set-sec">
+					<h4>model &amp; behavior</h4>
+					<label class="set-row"
+						>model
+						<span class="set-inline"
+							><select id="model" title="model"></select
+							><button id="models-btn" title="reload models">
+								↻
+							</button></span
+						>
+					</label>
+					<label class="set-row"
+						>thinking
+						<select id="think-sel" title="thinking level"></select
+					></label>
+					<label class="set-row"
+						>ponytail
+						<select id="pony-sel" title="ponytail mode"></select
+					></label>
+				</section>
+				<section class="set-sec">
+					<h4>appearance</h4>
+					<label class="set-row"
+						>theme
+						<select id="theme-sel" title="color &amp; shape theme">
+							<option value="dark">dark</option>
+							<option value="paperlike">paperlike</option>
+						</select></label
 					>
-				</label>
-				<label class="set-row"
-					>thinking
-					<select id="think-sel" title="thinking level"></select
-				></label>
-				<label class="set-row"
-					>ponytail
-					<select id="pony-sel" title="ponytail mode"></select
-				></label>
-			</section>
-			<section class="set-sec">
-				<h4>appearance</h4>
-				<label class="set-row"
-					>theme
-					<select id="theme-sel" title="color &amp; shape theme">
-						<option value="dark">dark</option>
-						<option value="paperlike">paperlike</option>
-					</select></label
-				>
-			</section>
-			<section class="set-sec">
-				<h4>permissions</h4>
-				<label class="set-row"
-					>mode
-					<select id="perm-mode" title="permission posture">
-						<option value="default">default</option>
-						<option value="auto-approve">auto-approve</option>
-						<option value="read-only">read-only</option>
-					</select></label
-				>
-				<button id="perm-page-btn" class="set-row-btn" type="button">
-					open permissions page
-				</button>
-			</section>
-			<section class="set-sec">
-				<h4>developer</h4>
-				<label class="set-row"
-					>subagent view
-					<select id="sa-density" title="subagent live-view density">
-						<option value="full">full</option>
-						<option value="compact">compact</option>
-					</select>
-				</label>
-			</section>
-			<section class="set-sec">
-				<h4>server</h4>
-				<p class="set-hint">
-					stop the webui server + its pi process. relaunch (pi-webui
-					or /webui) to start again.
-				</p>
-				<button id="stop-btn" class="set-stop" type="button">
-					stop webui
-				</button>
-			</section>
+				</section>
+				<section class="set-sec">
+					<h4>permissions</h4>
+					<label class="set-row"
+						>mode
+						<select id="perm-mode" title="permission posture">
+							<option value="default">default</option>
+							<option value="auto-approve">auto-approve</option>
+							<option value="read-only">read-only</option>
+						</select></label
+					>
+					<button
+						id="perm-page-btn"
+						class="set-row-btn"
+						type="button"
+					>
+						open permissions page
+					</button>
+				</section>
+				<section class="set-sec">
+					<h4>developer</h4>
+					<label class="set-row"
+						>subagent view
+						<select
+							id="sa-density"
+							title="subagent live-view density"
+						>
+							<option value="full">full</option>
+							<option value="compact">compact</option>
+						</select>
+					</label>
+				</section>
+				<section class="set-sec">
+					<h4>server</h4>
+					<p class="set-hint">
+						stop the webui server + its pi process. relaunch
+						(pi-webui or /webui) to start again.
+					</p>
+					<button id="stop-btn" class="set-stop" type="button">
+						stop webui
+					</button>
+				</section>
 			</div>
 		</section>
 
@@ -342,8 +349,8 @@
 					<p class="set-hint">
 						add or remove rules in your global config
 						(<code>~/.pi/agent/safeguard.json</code>). pattern:
-						<code>re:…</code> for regex, a glob for paths; empty = tool
-						default.
+						<code>re:…</code> for regex, a glob for paths; empty =
+						tool default.
 					</p>
 					<div class="perm-rule-row">
 						<input
@@ -360,7 +367,9 @@
 							<option value="ask">ask</option>
 							<option value="deny">deny</option>
 						</select>
-						<button id="perm-rule-add" type="button">add rule</button>
+						<button id="perm-rule-add" type="button">
+							add rule
+						</button>
 					</div>
 					<datalist id="perm-tools"></datalist>
 					<div id="perm-layers" class="perm-layers"></div>
@@ -543,8 +552,8 @@
 		<script src="composer-images.js"></script>
 		<script src="tool-presentation.js"></script>
 		<script src="diff-view.js"></script>
-<script src="permissions-ux.js"></script>
-<script src="a11y-contrast.js"></script>
-<script src="app.js"></script>
+		<script src="permissions-ux.js"></script>
+		<script src="a11y-contrast.js"></script>
+		<script src="app.js"></script>
 	</body>
 </html>

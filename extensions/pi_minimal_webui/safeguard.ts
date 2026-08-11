@@ -337,8 +337,7 @@ export default function (pi: ExtensionAPI) {
 			const cls = bashCls.classify(selector);
 			const gate = bashCls.gateBash(
 				selector,
-				(part: string) =>
-					engine.resolve("bash", part, layers, engineOpts),
+				(part: string) => engine.resolve("bash", part, layers, engineOpts),
 				isOutsidePart,
 			);
 			bash = { parts: cls.parts, gate };
@@ -551,10 +550,7 @@ export default function (pi: ExtensionAPI) {
 				// broadcast so the webui's composer chip shows yolo (it can't be
 				// read from config — yolo is session-only state, FR-12)
 				try {
-					ctx.ui.setStatus?.(
-						"safeguard",
-						JSON.stringify({ mode: "yolo" }),
-					);
+					ctx.ui.setStatus?.("safeguard", JSON.stringify({ mode: "yolo" }));
 				} catch {
 					/* best-effort */
 				}

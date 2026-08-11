@@ -1748,6 +1748,7 @@ body.w-narrow.ctx-hot #compact {
 #modal-wrap {
 	position: relative;
 	width: min(640px, 94vw);
+	max-width: 100%; /* never overflow a shrunken chat-area modal (w-wide rails) */
 	padding-bottom: env(safe-area-inset-bottom); /* spec FR-9 */
 }
 /* ponytail: blocking tool interactions use .card.wide and are REAL full-page
@@ -1758,9 +1759,9 @@ body.w-narrow.ctx-hot #compact {
 	background: var(--surface, #0d1117);
 }
 #modal:has(.card.wide) #modal-wrap {
-	width: 100vw;
+	width: 100%;
 	max-width: none;
-	height: 100vh;
+	height: 100%;
 	max-height: none;
 	padding: 0;
 }
@@ -1771,9 +1772,25 @@ body.w-narrow.ctx-hot #compact {
 	border-radius: 0;
 }
 #modal:has(.card.wide) .modal-x {
-	position: fixed;
+	position: absolute;
 	top: 10px;
 	right: 14px;
+}
+/* w-wide push model: modals cover the CHAT AREA only — the sidebars/rail stay
+   visible + interactive (mirrors the body margin rules below). Drawer modes
+   (w-mid/w-narrow) keep the full-viewport overlay: their sidebars are transient
+   scrim overlays, not layout siblings. */
+body.w-wide.ws-on #modal {
+	left: var(--wsbar-w);
+}
+body.w-wide.sdd-on #modal {
+	right: 88px;
+}
+body.w-wide.sdd-on.sdd-open #modal {
+	right: min(
+		var(--rail-width, min(400px, 58vw)),
+		calc(100vw - var(--wsbar-w, 0px) - 560px)
+	);
 }
 #modal .card {
 	background: var(--surface);

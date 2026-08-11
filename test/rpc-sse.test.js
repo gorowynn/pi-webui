@@ -8,14 +8,11 @@ const PORT = parseInt(process.env.PORT || "4401", 10);
 
 function get(path) {
 	return new Promise((resolve, reject) => {
-		const req = http.get(
-			{ host: "127.0.0.1", port: PORT, path },
-			(res) => {
-				let body = "";
-				res.on("data", (c) => (body += c));
-				res.on("end", () => resolve({ status: res.statusCode, body }));
-			},
-		);
+		const req = http.get({ host: "127.0.0.1", port: PORT, path }, (res) => {
+			let body = "";
+			res.on("data", (c) => (body += c));
+			res.on("end", () => resolve({ status: res.statusCode, body }));
+		});
 		req.on("error", reject);
 		req.setTimeout(15000, () => req.destroy(new Error("timeout")));
 	});
@@ -109,7 +106,9 @@ function sseCollect(predicate) {
 	}
 
 	// 1. fire-and-forget /api/cmd get_state — its response must arrive on SSE.
-	const sseP = sseCollect((arr) => arr.some((p) => p.id === "ff-state" && p.type === "response"));
+	const sseP = sseCollect((arr) =>
+		arr.some((p) => p.id === "ff-state" && p.type === "response"),
+	);
 	await post("/api/cmd", { type: "get_state", id: "ff-state" });
 	const sse = await sseP;
 	if (sse.some((p) => p.id === "ff-state"))
@@ -121,17 +120,32 @@ function sseCollect(predicate) {
 	const snapP = sseCollect((arr) => arr.some((p) => p.id === "snap-state"));
 	await get("/api/snapshot");
 	const snapSse = await snapP;
-	const snapIds = new Set(snapSse.filter((p) => p.type === "response").map((p) => p.id));
+	const snapIds = new Set(
+		snapSse.filter((p) => p.type === "response").map((p) => p.id),
+	);
 	if (snapIds.has("snap-state"))
-		ok("awaitable /api/snapshot responses are also broadcast on SSE (additive)");
-	else throw new Error("FAIL: snapshot responses not broadcast (additivity broken)");
+		ok(
+			"awaitable /api/snapshot responses are also broadcast on SSE (additive)",
+		);
+	else
+		throw new Error(
+			"FAIL: snapshot responses not broadcast (additivity broken)",
+		);
 
 	// 3. /api/rpc returns the payload directly AND it was broadcast (both).
 	const rpc = await post("/api/rpc", { type: "get_state", id: "rpc-direct" });
 	const rpcObj = JSON.parse(rpc.body);
-	if (rpcObj.ok && rpcObj.id === "rpc-direct" && rpcObj.data && rpcObj.data.model)
+	if (
+		rpcObj.ok &&
+		rpcObj.id === "rpc-direct" &&
+		rpcObj.data &&
+		rpcObj.data.model
+	)
 		ok("/api/rpc resolves with the {data} payload directly");
-	else throw new Error("FAIL: /api/rpc payload malformed: " + rpc.body.slice(0, 200));
+	else
+		throw new Error(
+			"FAIL: /api/rpc payload malformed: " + rpc.body.slice(0, 200),
+		);
 
 	// 4. a direct /api/rpc call's response is ALSO broadcast on SSE (additivity
 	//    holds for the awaitable path, not just snapshot). The strict per-call

@@ -3566,7 +3566,9 @@ const a11yStatus = $("a11y-status");
 function announceStatus(evt) {
 	// coarse progress only — the pure mapping (a11y-contrast.statusTextForEvent)
 	// returns null for every streaming event, so this never fires per token
-	const txt = statusTextForEvent(evt);
+	const a11y = window.a11yContrast;
+	const txt =
+		a11y && a11y.statusTextForEvent ? a11y.statusTextForEvent(evt) : null;
 	if (txt && a11yStatus) a11yStatus.textContent = txt;
 }
 function handle(payload) {
@@ -6403,12 +6405,11 @@ function initRailResize() {
 		e.preventDefault();
 		const mx = railMaxWidth();
 		const cur = Math.max(88, Math.min(mx, bar.offsetWidth));
-		const pct = resizeStep(
-			((cur - 88) / Math.max(1, mx - 88)) * 100,
-			e.key,
-			0,
-			100,
-		);
+		const a11y = window.a11yContrast;
+		const step = a11y && a11y.resizeStep ? a11y.resizeStep : null;
+		const pct = step
+			? step(((cur - 88) / Math.max(1, mx - 88)) * 100, e.key, 0, 100)
+			: ((cur - 88) / Math.max(1, mx - 88)) * 100;
 		const w = 88 + (pct / 100) * (mx - 88);
 		applyWidth(w);
 		clampRailWidth();

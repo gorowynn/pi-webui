@@ -1109,9 +1109,7 @@ const server = http.createServer(async (req, res) => {
 		// extension's setStatus broadcast instead).
 		try {
 			res.writeHead(200, { "Content-Type": "application/json" });
-			return res.end(
-				JSON.stringify({ ok: true, mode: effectiveMode() }),
-			);
+			return res.end(JSON.stringify({ ok: true, mode: effectiveMode() }));
 		} catch (e) {
 			res.writeHead(500, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: false, error: e.message }));
@@ -1206,7 +1204,8 @@ const server = http.createServer(async (req, res) => {
 					let p = t;
 					if (p === "~" || p.startsWith("~/"))
 						p = os.homedir() + p.slice(1);
-					else if (p.startsWith("$HOME")) p = os.homedir() + p.slice(5);
+					else if (p.startsWith("$HOME"))
+						p = os.homedir() + p.slice(5);
 					else if (p.startsWith("$PWD")) p = PI_CWD + p.slice(4);
 					const abs = path.isAbsolute(p) ? p : path.join(PI_CWD, p);
 					let canon = abs;
@@ -1231,13 +1230,13 @@ const server = http.createServer(async (req, res) => {
 					tool === "bash"
 						? bashCls.gateBash(
 								selector,
-							(part) =>
-								policyEngine.resolve(
-									"bash",
-									part,
-									layers,
-									opts,
-								),
+								(part) =>
+									policyEngine.resolve(
+										"bash",
+										part,
+										layers,
+										opts,
+									),
 								isOutsidePart,
 							)
 						: null,
