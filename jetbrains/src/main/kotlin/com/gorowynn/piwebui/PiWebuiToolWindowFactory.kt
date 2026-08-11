@@ -18,7 +18,10 @@ import org.cef.handler.CefLoadHandlerAdapter
 import javax.swing.JLabel
 
 class PiWebuiToolWindowFactory : ToolWindowFactory {
-    override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
+    override fun createToolWindowContent(
+        project: Project,
+        toolWindow: ToolWindow,
+    ) {
         val panel = SimpleToolWindowPanel(/* vertical = */ true, /* borderless = */ true)
         val url = PiWebuiSettings.url
         val content = ContentFactory.getInstance().createContent(panel, "", /* isLockable = */ false)
@@ -42,7 +45,10 @@ class PiWebuiToolWindowFactory : ToolWindowFactory {
      *  we open the IDE's native diff as the approval gate and resolve with one of
      *  safeguard's option labels. The webui posts that label via
      *  extension_ui_response, so safeguard.ts (the security gate) is untouched. */
-    private fun wireDiffBridge(project: Project, browser: JBCefBrowser) {
+    private fun wireDiffBridge(
+        project: Project,
+        browser: JBCefBrowser,
+    ) {
         val openDiff = JBCefJSQuery.create(browser)
         // IDE identity for the webui's "ide connected" badge (read on EDT here;
         // reused on every onLoadEnd inject — ApplicationInfo won't change).
@@ -55,11 +61,12 @@ class PiWebuiToolWindowFactory : ToolWindowFactory {
             // fail-closed Deny on tab close / open error). Never left pending.
             ApplicationManager.getApplication().invokeLater {
                 try {
-                    val payload = try {
-                        Gson().fromJson(json, DiffPayload::class.java)
-                    } catch (_: Exception) {
-                        DiffPayload()
-                    }
+                    val payload =
+                        try {
+                            Gson().fromJson(json, DiffPayload::class.java)
+                        } catch (_: Exception) {
+                            DiffPayload()
+                        }
                     val onDecide: (Any) -> Unit = { value ->
                         val js = "window.__piDiffResolve(" + Gson().toJson(value) + ");"
                         runCatching { browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url, 0) }
@@ -80,21 +87,28 @@ class PiWebuiToolWindowFactory : ToolWindowFactory {
         // end. (The cefQuery binding that JBCefJSQuery.inject emits persists across
         // loads; only our wrapper function needs re-installing.) JBCefBrowser →
         // JBCefClient → raw CefClient; addLoadHandler hooks onLoadEnd for the inject.
-        browser.jbCefClient.cefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
-            override fun onLoadEnd(b: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
-                val inject = """
-                    window.piWebuiIdeInfo = { name: $ideName, version: $ideVer };
-                    if (window.piWebuiIdeStatus) window.piWebuiIdeStatus(window.piWebuiIdeInfo);
-                    window.piWebuiOpenDiff = function(payload) {
-                      return new Promise(function(resolve) {
-                        window.__piDiffResolve = resolve;
-                        ${openDiff.inject("JSON.stringify(payload)")};
-                      });
-                    };
-                """.trimIndent()
-                b?.executeJavaScript(inject, b.url, 0)
-            }
-        })
+        browser.jbCefClient.cefClient.addLoadHandler(
+            object : CefLoadHandlerAdapter() {
+                override fun onLoadEnd(
+                    b: CefBrowser?,
+                    frame: CefFrame?,
+                    httpStatusCode: Int,
+                ) {
+                    val inject =
+                        """
+                        window.piWebuiIdeInfo = { name: $ideName, version: $ideVer };
+                        if (window.piWebuiIdeStatus) window.piWebuiIdeStatus(window.piWebuiIdeInfo);
+                        window.piWebuiOpenDiff = function(payload) {
+                          return new Promise(function(resolve) {
+                            window.__piDiffResolve = resolve;
+                            ${openDiff.inject("JSON.stringify(payload)")};
+                          });
+                        };
+                        """.trimIndent()
+                    b?.executeJavaScript(inject, b.url, 0)
+                }
+            },
+        )
         // ponytail: TODO dispose `openDiff` and remove this load handler on tool-window
         // close (both currently outlive the browser — fine for one long-lived window).
     }
@@ -116,6 +130,14 @@ data class DiffPayload(
     var content: String = "",
     var leftText: String = "",
     var rightText: String = "",
+    // U6 C11 (FR-39/41): broker identity + active mode ride the payload so the
+    // native tab can key decisions by request id and show the gate's posture.
+    var requestId: String = "",
+    var toolCallId: String = "",
+    var mode: String = "",
 )
 
-data class EditHunk(var oldText: String = "", var newText: String = "")
+data class EditHunk(
+    var oldText: String = "",
+    var newText: String = "",
+)

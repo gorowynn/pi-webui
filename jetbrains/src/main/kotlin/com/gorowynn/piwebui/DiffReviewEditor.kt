@@ -55,8 +55,8 @@ import javax.swing.JPanel
 class DiffReviewEditor(
     private val proj: Project,
     private val file: DiffReviewFile,
-) : UserDataHolderBase(), FileEditor {
-
+) : UserDataHolderBase(),
+    FileEditor {
     private val diffDisp = Disposer.newDisposable()
     private var built: JComponent? = null
 
@@ -74,11 +74,12 @@ class DiffReviewEditor(
         origRight = right
         val factory = DiffContentFactory.getInstance()
         rightContent = factory.createEditable(proj, right, fileType) // editable right pane
-        val request = SimpleDiffRequest(
-            "Approve change — ${file.payload.filename}",
-            listOf(factory.create(proj, left, fileType), rightContent!!),
-            listOf("Current", "Proposed (from pi) — editable"),
-        )
+        val request =
+            SimpleDiffRequest(
+                "Approve change — ${file.payload.filename}",
+                listOf(factory.create(proj, left, fileType), rightContent!!),
+                listOf("Current", "Proposed (from pi) — editable"),
+            )
         val panel: DiffRequestPanel =
             DiffManager.getInstance().createRequestPanel(proj, diffDisp, null)
         panel.setRequest(request)
@@ -86,12 +87,25 @@ class DiffReviewEditor(
 
         val bar = JPanel(BorderLayout())
         bar.border = JBUI.Borders.empty(8)
-        bar.add(JLabel("Approve pi's change to ${file.payload.filename}?"), BorderLayout.WEST)
+        // U6 C11 (FR-41): the active permission mode rides the bridge payload
+        // (app.js sends pendingApproval.provenance.mode) so the gate shows its
+        // own posture; yolo gets a warning badge.
+        val modeLabel =
+            when (file.payload.mode) {
+                "yolo" -> "⚠ YOLO ACTIVE — all actions auto-allowed"
+                "", "default" -> "mode: default"
+                else -> "mode: ${file.payload.mode}"
+            }
+        bar.add(JLabel("Approve pi's change to ${file.payload.filename}? · $modeLabel"), BorderLayout.WEST)
         val buttons = JPanel()
         for (label in listOf(ALLOW_ONCE, ALLOW_SESSION, ALLOW_ALWAYS, DENY)) {
-            buttons.add(JButton(object : AbstractAction(label) {
-                override fun actionPerformed(e: ActionEvent) = decideAndClose(label)
-            }))
+            buttons.add(
+                JButton(
+                    object : AbstractAction(label) {
+                        override fun actionPerformed(e: ActionEvent) = decideAndClose(label)
+                    },
+                ),
+            )
         }
         bar.add(buttons, BorderLayout.EAST)
 
@@ -106,12 +120,30 @@ class DiffReviewEditor(
      * didn't edit, or `{label, oldFull, newFull}` when they did (read back from
      * the editable right pane). safeguard mutates pi's tool input with the
      * edited text so pi applies the user's version.
+     *
+     * U6 C11 (FR-40): when the user EDITED while the file changed on disk
+     * (leftText no longer matches the current document), the object carries
+     * `conflict: true` so the webui can warn that the base may be stale. An
+     * edit-less decision ships the bare label — pi's own edit tool re-reads the
+     * file and applies its conflict handling.
      */
     private fun resolveValue(label: String): Any {
         val edited = rightContent?.document?.text
-        return if (edited != null && edited != origRight)
-            mapOf("label" to label, "oldFull" to leftText, "newFull" to edited)
-        else label
+        val conflict =
+            file.payload.path.isNotBlank() &&
+                runCatching {
+                    val vf = resolveVirtualFile(proj, file.payload)
+                    vf != null && readCurrentText(vf) != leftText
+                }.getOrDefault(false)
+        return when {
+            edited != null && edited != origRight -> {
+                mapOf("label" to label, "oldFull" to leftText, "newFull" to edited, "conflict" to conflict)
+            }
+
+            else -> {
+                label
+            }
+        }
     }
 
     /** Record the decision (idempotent — resolves the JS promise once), then close this tab. */
@@ -125,10 +157,15 @@ class DiffReviewEditor(
     override fun getPreferredFocusedComponent(): JComponent? = built
 
     override fun getName(): String = file.payload.filename + " (pi change)"
+
     override fun setState(state: FileEditorState) {}
+
     override fun isModified(): Boolean = false
+
     override fun isValid(): Boolean = true
+
     override fun addPropertyChangeListener(listener: PropertyChangeListener) {}
+
     override fun removePropertyChangeListener(listener: PropertyChangeListener) {}
 
     override fun dispose() {
@@ -154,6 +191,11 @@ class DiffReviewFile(
     val payload: DiffPayload,
     private val onDecide: (Any) -> Unit,
 ) : LightVirtualFile(payload.filename + " — pi change") {
+    // U6 C11 (FR-39): the broker identity rides the payload so resolvers can
+    // key decisions by request id; the webui adds the marker ({v, toolCallId,
+    // decision}) to the extension_ui_response — the broker validates there.
+    val requestId: String get() = payload.requestId
+    val toolCallId: String get() = payload.toolCallId
 
     @Volatile private var decided = false
 
@@ -175,45 +217,74 @@ class DiffReviewFile(
  * [DumbAware] keeps the gate working during indexing (otherwise openFile would
  * be skipped → the JS promise would hang → pi's approval latch stalls).
  */
-class DiffReviewEditorProvider : FileEditorProvider, DumbAware {
-    override fun accept(project: Project, file: VirtualFile): Boolean = file is DiffReviewFile
-    override fun createEditor(project: Project, file: VirtualFile): FileEditor =
-        DiffReviewEditor(project, file as DiffReviewFile)
+class DiffReviewEditorProvider :
+    FileEditorProvider,
+    DumbAware {
+    override fun accept(
+        project: Project,
+        file: VirtualFile,
+    ): Boolean = file is DiffReviewFile
+
+    override fun createEditor(
+        project: Project,
+        file: VirtualFile,
+    ): FileEditor = DiffReviewEditor(project, file as DiffReviewFile)
+
     override fun getPolicy(): FileEditorPolicy = FileEditorPolicy.HIDE_DEFAULT_EDITOR
+
     override fun getEditorTypeId(): String = "pi-webui-diff-review"
 }
 
 // ---- diff content resolution ----
 
-private data class Resolved(val left: String, val right: String, val type: FileType)
+private data class Resolved(
+    val left: String,
+    val right: String,
+    val type: FileType,
+)
 
-private fun resolveContents(proj: Project, payload: DiffPayload): Resolved {
+private fun resolveContents(
+    proj: Project,
+    payload: DiffPayload,
+): Resolved {
     val vf = resolveVirtualFile(proj, payload)
     if (vf != null) {
         val left = readCurrentText(vf)
-        val right = when (payload.op) {
-            "write" -> payload.content
-            "edit" -> applyEdits(left, payload.edits)
-            else -> payload.rightText
-        }
+        val right =
+            when (payload.op) {
+                "write" -> payload.content
+                "edit" -> applyEdits(left, payload.edits)
+                else -> payload.rightText
+            }
         return Resolved(left, right, vf.fileType)
     }
     return Resolved(payload.leftText, payload.rightText, FileTypes.PLAIN_TEXT)
 }
 
-private fun resolveVirtualFile(proj: Project, payload: DiffPayload): VirtualFile? {
+private fun resolveVirtualFile(
+    proj: Project,
+    payload: DiffPayload,
+): VirtualFile? {
     val raw = payload.path.takeIf { it.isNotBlank() } ?: return null
+    val base = proj.basePath ?: return null
     val io = java.io.File(raw)
-    val candidate = if (io.isAbsolute) io else java.io.File(proj.basePath ?: return null, raw)
+    val candidate = if (io.isAbsolute) io else java.io.File(base, raw)
+    // U6 C11 (FR-38): canonical containment — after symlink/.. resolution the
+    // target must live under the project root. Outside → null: no IDE-filesystem
+    // read of out-of-project files; resolveContents falls back to the webui's
+    // own payload text (the webui diff remains the gate for those).
+    if (!WorkspaceContainment.isInside(java.io.File(base), candidate)) return null
     return LocalFileSystem.getInstance().findFileByIoFile(candidate)
 }
 
 /** Open editor's text (unsaved edits included) when loaded; else VFS content. */
-private fun readCurrentText(vf: VirtualFile): String =
-    FileDocumentManager.getInstance().getDocument(vf)?.text ?: VfsUtil.loadText(vf) ?: ""
+private fun readCurrentText(vf: VirtualFile): String = FileDocumentManager.getInstance().getDocument(vf)?.text ?: VfsUtil.loadText(vf) ?: ""
 
 /** Mirror app.js: first-occurrence replace per hunk (display-only preview). */
-private fun applyEdits(text: String, edits: List<EditHunk>): String {
+private fun applyEdits(
+    text: String,
+    edits: List<EditHunk>,
+): String {
     var t = text
     for (e in edits) t = t.replaceFirst(e.oldText, e.newText)
     return t
