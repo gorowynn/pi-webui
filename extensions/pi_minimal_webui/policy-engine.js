@@ -26,6 +26,11 @@ const MAYBE_PATH = new Set(["grep", "find", "ls", "glob"]);
 /** @deprecated kept for compat — use isPathSelector(). */
 const PATH_TOOLS = ALWAYS_PATH;
 
+// bash-sensitive (FR-7/bash): token-level sensitive-path checks need the
+// shared classifier (partPathTokens/partCanonTokens). One-way dep —
+// bash-classifier.js requires nothing, so no cycle.
+const bashCls = require("./bash-classifier.js");
+
 /**
  * Is this selector path-capable? (C3/FR-7) read/write/edit always; the recon
  * tools only when the selector actually looks like a path (leading ./~/\ or a
@@ -160,6 +165,27 @@ function buildVerdict(action, matchedRule, layer, toolName, selector, opts) {
 }
 
 /**
+ * FR-7/bash: sensitive override for BASH selectors. Path tokens of every
+ * compound subcommand are canonicalized (partCanonTokens — homedir/cwd/
+ * realpath injected via opts) and matched against sensitivePaths, so
+ * `cat .env` / `grep -r KEY .env.local` get the same mandatory-ask/deny as
+ * the `read` tool. Strictest wins (deny > ask > none). Pure: real-fs
+ * resolution comes from opts, same shape as resolve().
+ */
+function bashSensitiveFor(selector, sensitivePaths, opts = {}) {
+	if (!Array.isArray(sensitivePaths) || !sensitivePaths.length) return null;
+	let out = null;
+	for (const part of bashCls.classify(String(selector ?? "")).parts) {
+		for (const canon of bashCls.partCanonTokens(part.cmd, opts)) {
+			const s = sensitiveFor(part.cmd, canon, sensitivePaths);
+			if (s === "deny") return "deny";
+			if (s === "ask") out = "ask";
+		}
+	}
+	return out;
+}
+
+/**
  * Resolve a tool call to a verdict.
  *
  * @param {string} toolName
@@ -226,11 +252,17 @@ function resolve(toolName, selector, layers, opts = {}) {
 	}
 	// FR-7: sensitive override computed once per resolution (path tools only).
 	// SEC-04a: for JSON recon selectors, sensitive matching runs per field.
+	// bash: selectors aren't path-shaped, so the gate injects the precomputed
+	// bashSensitive override (FR-7/bash) — token-level .env/key protection.
 	const sens = isPath
 		? jsonPaths && jsonPaths.length
 			? jsonSensitiveFor(jsonPaths, opts)
 			: sensitiveFor(selector, canon, opts.sensitivePaths)
-		: null;
+		: toolName === "bash" && opts.bashSensitive != null
+			? typeof opts.bashSensitive === "function"
+				? opts.bashSensitive()
+				: opts.bashSensitive
+			: null;
 	const o2 = sens
 		? { ...opts, sensitive: () => sens, outsideRoot }
 		: { ...opts, outsideRoot };
@@ -927,6 +959,7 @@ module.exports.isPathSelector = isPathSelector;
 module.exports.canonicalize = canonicalize;
 module.exports.isUnderRoot = isUnderRoot;
 module.exports.sensitiveFor = sensitiveFor;
+module.exports.bashSensitiveFor = bashSensitiveFor;
 
 // ---------------------------------------------------------------------------
 // C5 — permission modes (FR-12..FR-16). The mode transforms the RESOLVED

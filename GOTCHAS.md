@@ -196,7 +196,8 @@ keyword to the index in `AGENTS.md`.
     Step logs: `output-<i>.log` when the run mode writes one, ELSE the child
     transcript in the PROJECT-LOCAL `<run cwd>/.pi-subagents/artifacts/
     <childRunId>_<agent>_<i>_transcript.jsonl` (correlated by the child run id in the step's
-    `sessionFile` `…\<childRunId>un-0\session.jsonl` = artifact filename
+    `sessionFile` `…\<childRunId>
+un-0\session.jsonl` = artifact filename
     prefix — DETERMINISTIC; ts-proximity is only the fallback, it
     cross-matches same-agent children spawned near-simultaneously; regex-extract
     the first record `ts` — fork-context prompts make line 1 exceed any
@@ -228,3 +229,31 @@ keyword to the index in `AGENTS.md`.
     (parity). Hash-close guards: each page only clears its OWN hash (closing
     fleet mid-navigation to #permissions must not wipe that route). New
     `public/*.js` module rule (#20/#11) applied to `subagents-ux.js`.
+
+23. **Bash selectors get sensitive-path protection via tokens, not paths.** FR-7
+    sensitivePaths used to apply ONLY to path selectors (read/write/edit +
+    path-shaped grep/find/ls/glob) — a bash command like `cat .env` or
+    `grep -r KEY .env.local` matched the verb allow-regexes and sailed through
+    auto-approve/read-only unguarded. The gate now computes a per-call
+    `bashSensitive` override: `bash-classifier.js partCanonTokens` (expand
+    `~`/`$HOME`/`$PWD`, cwd-join, realpath — the logic that used to live
+    duplicated as `isOutsidePart` in `safeguard.ts` AND the `server.js` explain
+    route, both now one-liners over it) feeds `policy-engine.js
+    bashSensitiveFor`, and `resolve()` honours `opts.bashSensitive` for bash
+    selectors (also wired into `/api/permissions/explain` so the page can't
+    diverge). Effect: `.env`/`.pem`/key patterns inside the workspace get the
+    same mandatory-ask/hard-deny as the `read` tool; deny beats ask; a
+    sensitive hit anywhere in a compound blocks the WHOLE command (gate.allow
+    false in every mode except yolo). Benign recon (`grep x public/style.css`)
+    resolves null and auto-allows exactly as before.
+
+    **Config foot-gun: a user bash table with `"*": "ask"` and no verb
+    allowlist SHADOWS the floor's read-only verb regexes at the PER-PART gate.**
+    Layers resolve user-first, and the user table's own `*` catches every part
+    before the default layer's `re:^(cat|grep|…|cd)(\s|$)` allows are ever
+    consulted — so `cd … && grep …` asks in auto-approve even rooted in the
+    workspace. The floor⊕user key-union keeps the KEYS, but layer order wins.
+    Safe (ask only, never loosens), but prompts. Migration: a v1-era user bash
+    table should adopt the floor's anchored verb regexes (see
+    `DEFAULT_CONFIG.bash` in `policy-engine.js`); the user config at
+    `~/.pi/agent/safeguard.json` (rev 5) is migrated — don't regress it.

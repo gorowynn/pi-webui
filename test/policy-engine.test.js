@@ -317,7 +317,11 @@ const layers = [
 	const gOk = gateBash("cd D:/work/repo && git status", (part) =>
 		resolve("bash", part, effective, idr),
 	);
-	assert.equal(gOk.allow, true, "cd <cwd> && git status auto-allows end-to-end");
+	assert.equal(
+		gOk.allow,
+		true,
+		"cd <cwd> && git status auto-allows end-to-end",
+	);
 	const gNpm = gateBash("cd D:/work/repo && npm test", (part) =>
 		resolve("bash", part, effective, idr),
 	);
@@ -1693,5 +1697,138 @@ console.log(
 	assert.equal(wsGrant.tier, "outside-workspace");
 	ok(
 		"FR-6: outside-root reads cap at ask in every non-yolo mode; write/edit hard-deny",
+	);
+}
+
+// ---------------------------------------------------------------------------
+// C3b — bash-sensitive override (FR-7/bash): sensitivePaths applied to bash
+// path tokens, closing the `cat .env` / `grep -r KEY .env` bypass.
+// ---------------------------------------------------------------------------
+{
+	const {
+		bashSensitiveFor,
+		sensitiveFor,
+	} = require("../extensions/pi_minimal_webui/policy-engine.js");
+	const {
+		partCanonTokens,
+		classify,
+		gateBash,
+	} = require("../extensions/pi_minimal_webui/bash-classifier.js");
+	const SENS = [
+		{ pattern: "**/.env*", action: "ask" },
+		{ pattern: "**/*.key", action: "deny" },
+	];
+	// realpath returns null → literal join stays (deterministic, no real fs)
+	const ROPTS = { cwd: "/proj", homedir: "/home/u", realpath: () => null };
+
+	// partCanonTokens: expansion + join (mirrors the old isOutsidePart)
+	assert.deepEqual(partCanonTokens("cat .env", ROPTS), ["/proj/.env"]);
+	assert.deepEqual(partCanonTokens("cat ~/.ssh/id_rsa", ROPTS), [
+		"/home/u/.ssh/id_rsa",
+	]);
+	assert.deepEqual(partCanonTokens("grep x $PWD/.env", ROPTS), ["/proj/.env"]);
+	assert.deepEqual(partCanonTokens("grep x public/style.css", ROPTS), [
+		"/proj/public/style.css",
+	]);
+	assert.deepEqual(
+		partCanonTokens("ls D:/Repository/pi-webui", {
+			cwd: "D:Repository",
+			homedir: "/home/u",
+			realpath: () => null,
+		}),
+		["D:/Repository/pi-webui"],
+	);
+	assert.deepEqual(partCanonTokens("git status", ROPTS), []);
+	ok(
+		"partCanonTokens: ~/$HOME/$PWD expansion, cwd join, drive absolutes, zero tokens for plain verbs",
+	);
+
+	// bashSensitiveFor: strictest across every compound part
+	assert.equal(bashSensitiveFor("cat .env", SENS, ROPTS), "ask");
+	assert.equal(
+		bashSensitiveFor("echo hi && cat .env.local", SENS, ROPTS),
+		"ask",
+	);
+	assert.equal(
+		bashSensitiveFor("grep -r KEY ~/.ssh/keys/app.key", SENS, ROPTS),
+		"deny",
+	);
+	assert.equal(
+		bashSensitiveFor("grep -n turn-usage public/style.css", SENS, ROPTS),
+		null,
+	);
+	assert.equal(bashSensitiveFor("git status", SENS, ROPTS), null);
+	assert.equal(bashSensitiveFor("cat .env", null, ROPTS), null);
+	ok(
+		"bashSensitiveFor: token-level sensitive matching, deny wins, benign commands stay null",
+	);
+
+	// resolve() honours opts.bashSensitive for bash selectors
+	const allowCfg = [{ name: "user", cfg: { bash: { "*": "allow" } } }];
+	const askV = resolve("bash", "cat .env", allowCfg, {
+		...ROPTS,
+		bashSensitive: "ask",
+	});
+	assert.equal(askV.action, "ask");
+	assert.equal(askV.tier, "mandatory-ask");
+	const denyV = resolve("bash", "cat .env", allowCfg, {
+		...ROPTS,
+		bashSensitive: "deny",
+	});
+	assert.equal(denyV.action, "deny");
+	assert.equal(denyV.tier, "hard-deny");
+	// mandatory-ask stays non-grantable even with a grant hook
+	const grantV = resolve("bash", "cat .env", allowCfg, {
+		...ROPTS,
+		bashSensitive: "ask",
+		hasGrant: (k) => k === "bash\u0000cat .env",
+	});
+	assert.equal(grantV.action, "ask");
+	assert.equal(grantV.tier, "mandatory-ask");
+	ok(
+		"resolve: bash sensitive → mandatory-ask / hard-deny, grant cannot lift it",
+	);
+
+	// full gate + auto-approve integration: .env forces ask, benign stays silent
+	const resolveWith = (cmd, sens) =>
+		resolve("bash", cmd, allowCfg, { ...ROPTS, bashSensitive: sens });
+	const gSensitive = gateBash(
+		"cat .env",
+		(p) => resolveWith(p, "ask"),
+		() => false,
+	);
+	assert.equal(gSensitive.allow, false);
+	const effSensitive = applyMode(
+		resolve("bash", "cat .env", allowCfg, { ...ROPTS, bashSensitive: "ask" }),
+		"auto-approve",
+		{
+			toolName: "bash",
+			bashClassify: classify("cat .env"),
+			bashGate: gSensitive,
+		},
+	);
+	assert.equal(effSensitive.action, "ask");
+	assert.equal(effSensitive.tier, "mandatory-ask");
+	const gBenign = gateBash(
+		"grep -n x public/style.css",
+		(p) => resolveWith(p, null),
+		() => false,
+	);
+	assert.equal(gBenign.allow, true);
+	const effBenign = applyMode(
+		resolve("bash", "grep -n x public/style.css", allowCfg, {
+			...ROPTS,
+			bashSensitive: null,
+		}),
+		"auto-approve",
+		{
+			toolName: "bash",
+			bashClassify: classify("grep -n x public/style.css"),
+			bashGate: gBenign,
+		},
+	);
+	assert.equal(effBenign.action, "allow");
+	ok(
+		"FR-7/bash: `.env` compounds stay ask in auto-approve; benign recon still auto-allows",
 	);
 }

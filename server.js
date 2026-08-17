@@ -131,6 +131,10 @@ const STATIC = {
 		file: "permissions-ux.js",
 		type: "text/javascript; charset=utf-8",
 	},
+	"/rail.js": {
+		file: "rail.js",
+		type: "text/javascript; charset=utf-8",
+	},
 	"/subagents-ux.js": {
 		file: "subagents-ux.js",
 		type: "text/javascript; charset=utf-8",
@@ -1225,26 +1229,30 @@ const server = http.createServer(async (req, res) => {
 				realpath: fs.realpathSync,
 				cwd: PI_CWD,
 				workspaceRoot: PI_CWD,
+				// FR-7/bash (same as the gate): token-level sensitive override so
+				// `cat .env` explains as mandatory-ask/hard-deny, not allow
+				bashSensitive:
+					tool === "bash"
+						? policyEngine.bashSensitiveFor(
+								selector,
+								effective.sensitivePaths,
+								{
+									cwd: PI_CWD,
+									homedir: os.homedir(),
+									realpath: fs.realpathSync,
+								},
+							)
+						: undefined,
 			};
 			const verdict = policyEngine.resolve(tool, selector, layers, opts);
 			// same containment the gate applies to bash (FR-6): path args
 			// escaping PI_CWD mark the command outside → the verdict asks
 			const isOutsidePart = (part) => {
-				for (const t of bashCls.partPathTokens(part)) {
-					let p = t;
-					if (p === "~" || p.startsWith("~/"))
-						p = os.homedir() + p.slice(1);
-					else if (p.startsWith("$HOME"))
-						p = os.homedir() + p.slice(5);
-					else if (p.startsWith("$PWD")) p = PI_CWD + p.slice(4);
-					const abs = path.isAbsolute(p) ? p : path.join(PI_CWD, p);
-					let canon = abs;
-					try {
-						const r = fs.realpathSync(abs);
-						if (r) canon = r;
-					} catch {
-						/* target may not exist yet — literal join stays */
-					}
+				for (const canon of bashCls.partCanonTokens(part, {
+					cwd: PI_CWD,
+					homedir: os.homedir(),
+					realpath: fs.realpathSync,
+				})) {
 					if (!policyEngine.isUnderRoot(canon, PI_CWD)) return true;
 				}
 				return false;

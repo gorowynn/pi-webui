@@ -38,7 +38,7 @@ import {
 	renameSync,
 	realpathSync,
 } from "node:fs";
-import { join, isAbsolute } from "node:path";
+import { join } from "node:path";
 import { homedir } from "node:os";
 // Shared policy engine + classifier (CommonJS; jiti default-imports the
 // exports object). THE single resolution implementation.
@@ -293,22 +293,14 @@ function saveAllowAlways(
  * → it asks in every non-yolo mode (see the tool_call gate).
  */
 function isOutsidePart(part: string): boolean {
-	for (const t of bashCls.partPathTokens(part)) {
-		let p = t;
-		if (p === "~" || p.startsWith("~/")) p = homedir() + p.slice(1);
-		else if (p.startsWith("$HOME")) p = homedir() + p.slice("$HOME".length);
-		else if (p.startsWith("$PWD")) p = process.cwd() + p.slice("$PWD".length);
-		const abs = isAbsolute(p) ? p : join(process.cwd(), p);
-		let canon = abs;
-		try {
-			const r = realpathSync(abs);
-			if (r) canon = r;
-		} catch {
-			/* target may not exist yet — literal join stays */
-		}
-		if (!engine.isUnderRoot(canon, process.cwd())) return true;
-	}
-	return false;
+	const opts = {
+		cwd: process.cwd(),
+		homedir: homedir(),
+		realpath: realpathSync,
+	};
+	return bashCls
+		.partCanonTokens(part, opts)
+		.some((canon) => !engine.isUnderRoot(canon, process.cwd()));
 }
 
 export default function (pi: ExtensionAPI) {
@@ -361,6 +353,25 @@ export default function (pi: ExtensionAPI) {
 			? "yolo"
 			: ((effective.mode as string) ?? "default");
 		const key = engine.makeKey(event.toolName, selector);
+		// FR-7/bash: token-level sensitive-path override for bash selectors
+		// (computed once per call — resolve() uses it for the whole command AND
+		// every gateBash part, so `cat .env` / `grep -r KEY .env` resolve
+		// mandatory-ask/hard-deny like the read tool).
+		const bashSensitive =
+			event.toolName === "bash"
+				? engine.bashSensitiveFor(
+						selector,
+						effective.sensitivePaths as Array<{
+							pattern: string;
+							action: Action;
+						}>,
+						{
+							cwd: process.cwd(),
+							homedir: homedir(),
+							realpath: realpathSync,
+						},
+					)
+				: null;
 		const engineOpts = {
 			hasGrant: (k: string) =>
 				sessionAllow.has(k) ||
@@ -373,6 +384,7 @@ export default function (pi: ExtensionAPI) {
 			realpath: realpathSync,
 			cwd: process.cwd(),
 			workspaceRoot: process.cwd(),
+			bashSensitive,
 		};
 		const verdict = engine.resolve(
 			event.toolName,

@@ -90,7 +90,9 @@ Folder name is a legacy TODO — no second webui here, only the ask-bridge tool
   tables union per key floor⊕user** — a user's existing table must not
   wholesale-shadow floor allows/denies); v2 schema with
   `revision`/`mode`/`sensitivePaths`/`grants`; canonical paths + sensitive-path
-  mandatory-ask/deny on every path tool; outside-workspace access capped at
+  mandatory-ask/deny on every path tool **and every bash selector's path tokens**
+  (GOTCHAS #23 — `bashSensitiveFor` + `partCanonTokens`: `cat .env` can't ride
+  the verb allowlists); outside-workspace access capped at
   ask in every non-yolo mode (path tools + bash parts, FR-6); `applyMode`
   (default/auto-approve/read-only/session-yolo); compound-bash classification
   - FR-9 per-subcommand gating; read-only recon verbs allow-ruled by VERB in

@@ -4,6 +4,21 @@
 > orientation doc stays lean. One entry per meaningful chunk of work:
 > `### YYYY-MM-DD — <area>: <one-line summary>` then bullet detail (what + why + file).
 
+### 2026-08-17 — feat(safeguard): bash-sensitive path protection (closes `cat .env` bypass)
+
+FR-7 sensitivePaths applied only to path selectors — bash selectors matched the
+verb allow-regexes, so `cat .env` / `grep -r KEY .env.local` auto-allowed in
+auto-approve (and even default) mode. The gate now computes a per-call
+`bashSensitive` override: `bash-classifier.js partCanonTokens` (expansion +
+join + realpath, centralising the previously duplicated `isOutsidePart` logic)
+feeds `policy-engine.js bashSensitiveFor`; `resolve()` honours
+`opts.bashSensitive` for bash and `/api/permissions/explain` mirrors it.
+Sensitive tokens inside the workspace now produce the same mandatory-ask /
+hard-deny as the `read` tool; a hit on ANY compound part blocks the whole
+command in every non-yolo mode. Benign recon stays silent. Also uninstalled
+`@gotgenes/pi-permission-system` (an independent bash-ask gate that overrode
+the webui auto-approve; see GOTCHAS #23).
+
 ### 2026-08-15 — feat(subagents): async fleet page + notices (pi-subagents plugin support)
 
 The pi-subagents plugin's background side was invisible in the webui: its

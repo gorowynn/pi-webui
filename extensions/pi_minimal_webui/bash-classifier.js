@@ -398,7 +398,7 @@ function gateBash(command, resolvePart, isOutside) {
  * Path-like tokens in a part (after env-prefix stripping): the args that
  * claim a filesystem path — leading `.` `~` `/` `\`, a drive letter, or
  * `$HOME`/`$PWD`-prefixed. Pure: real-fs resolution (homedir expansion,
- * realpath, cwd join) is the caller's job — gateBash's injected isOutside.
+ * realpath, cwd join) is the caller's job — partCanonTokens does that.
  * ponytail: no shell parser — `$(…)`-built and `$VAR`-prefixed paths are
  * invisible by design (named ceiling; add a real parser if that matters).
  */
@@ -422,10 +422,49 @@ function partPathTokens(part) {
 	return out;
 }
 
+/**
+ * Canonical path tokens of a subcommand (FR-6/FR-7 shared expansion): expand
+ * `~`/`$HOME`/`$PWD`, resolve relative tokens against cwd, realpath existing
+ * targets (symlink escape) with a literal-join fallback for not-yet-existing
+ * ones. Pure — `opts = { cwd, homedir, realpath }` injected by the caller
+ * (safeguard.ts and server.js both use this; was duplicated as isOutsidePart
+ * until the bash-sensitive fix centralised it).
+ */
+function partCanonTokens(part, opts = {}) {
+	const cwd = opts.cwd ?? "";
+	const home = opts.homedir ?? "";
+	const real = opts.realpath;
+	const out = [];
+	for (const t of partPathTokens(part)) {
+		let p = t;
+		if (p === "~" || p.startsWith("~/")) p = home + p.slice(1);
+		else if (p.startsWith("$HOME")) p = home + p.slice("$HOME".length);
+		else if (p.startsWith("$PWD")) p = cwd + p.slice("$PWD".length);
+		// manual isAbsolute (drive letter / leading separator) — no node:path
+		// dependency in this zero-dep module
+		let abs = p;
+		if (!/^[a-zA-Z]:[\\/]/.test(p) && !/^[\\/]/.test(p)) {
+			abs = cwd ? cwd.replace(/[\\/]+$/, "") + "/" + p : p;
+		}
+		let canon = abs;
+		if (typeof real === "function") {
+			try {
+				const r = real(abs);
+				if (r) canon = r;
+			} catch {
+				/* target may not exist yet — literal join stays */
+			}
+		}
+		out.push(canon);
+	}
+	return out;
+}
+
 module.exports = {
 	classify,
 	gateBash,
 	classifyPart,
 	reasonFor,
 	partPathTokens,
+	partCanonTokens,
 };
