@@ -306,6 +306,22 @@ const layers = [
 		const g = gateBash(cmd, (part) => resolve("bash", part, effective, idr));
 		assert.equal(g.allow, false, `gate refuses the mutation: ${cmd}`);
 	}
+	// `cd` compounds (seen live): cd is allow-ruled by verb AND read-only, so
+	// `cd <cwd> && git status` auto-allows; `cd /outside …` caps at ask via the
+	// outside flag (checked in bash-classifier tests), `cd && npm` still gates.
+	assert.equal(
+		resolve("bash", "cd D:/work/repo", effective, idr).action,
+		"allow",
+		"cd allow-ruled by verb",
+	);
+	const gOk = gateBash("cd D:/work/repo && git status", (part) =>
+		resolve("bash", part, effective, idr),
+	);
+	assert.equal(gOk.allow, true, "cd <cwd> && git status auto-allows end-to-end");
+	const gNpm = gateBash("cd D:/work/repo && npm test", (part) =>
+		resolve("bash", part, effective, idr),
+	);
+	assert.equal(gNpm.allow, false, "cd && npm still asks (npm not allow-ruled)");
 	ok(
 		"floor: recon verbs allow-ruled; mutations still gate-blocked (# SEC-02a)",
 	);

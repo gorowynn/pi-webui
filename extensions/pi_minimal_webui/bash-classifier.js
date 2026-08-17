@@ -49,6 +49,10 @@ const READONLY = new Set([
 	"uname",
 	"uptime",
 	"echo",
+	// `cd` never touches the disk (chdir only); its path ARGUMENT is still
+	// containment-checked via partPathTokens → isOutside (`cd /outside && …`
+	// flags outside → ask, FR-6)
+	"cd",
 ]);
 
 /** Version/help probes — read-only in effect (kept from the v1 allowlist). */

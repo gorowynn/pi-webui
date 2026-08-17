@@ -528,7 +528,7 @@ const DEFAULT_CONFIG = {
 	// never ride these rules (gate.allow=false - ask in every mode).
 	bash: {
 		"*": "ask",
-		"re:^(cat|head|tail|less|more|grep|egrep|fgrep|wc|uniq|cut|tr|diff|cmp|file|stat|du|df|which|whereis|type|printenv|date|whoami|id|hostname|uname|uptime|sed|awk|find|sort|env)(\\s|$)":
+		"re:^(cat|head|tail|less|more|grep|egrep|fgrep|wc|uniq|cut|tr|diff|cmp|file|stat|du|df|which|whereis|type|printenv|date|whoami|id|hostname|uname|uptime|sed|awk|find|sort|env|cd)(\\s|$)":
 			"allow",
 		"re:^git (status|log|diff|show|blame|ls-files)(\\s|$)": "allow",
 		"re:^git branch --show-current(\\s|$)": "allow",

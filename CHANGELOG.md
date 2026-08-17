@@ -71,9 +71,16 @@ already covered.
 - **Transcript correlation is deterministic now** (found live): parallel
   same-agent children spawned ~100 ms apart cross-matched under ts-proximity
   (step 1 showed its sibling's log). The child run id in the step's
-  `sessionFile` (`…\<childRunId>un-0\session.jsonl`) matches the artifact
+  `sessionFile` (`…\<childRunId>
+un-0\session.jsonl`) matches the artifact
   filename prefix exactly; ts-proximity remains only as fallback.
   subagents.js: 37 tests.
+- **`cd` compounds stop prompting** (found live): `cd <cwd> && git status`
+  always asked because `cd` was in neither the classifier's read-only set
+  nor the floor's verb-allow regex. `cd` is read-only (chdir never touches
+  the disk) and its path argument stays containment-checked —
+  `cd <outside> && ls` still flags outside → ask, `cd <cwd> && npm test`
+  still asks (npm isn't read-only).
 - Palette: "subagent fleet" command. Tests: `test/subagents.test.js` (24 —
   listing/ids/stop/steer/log-tail/roots; test temp dirs use a non-matching
   prefix + self-cleanup so they never pollute the real scan) and

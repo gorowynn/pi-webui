@@ -340,6 +340,40 @@ const {
 }
 
 {
+	// `cd` compounds (seen live: agent habitually runs `cd <cwd> && …`).
+	// cd classifies read-only (chdir never touches the disk), so an all-readonly
+	// allow-ruled compound auto-allows — and the cd ARGUMENT stays containment-
+	// checked by partPathTokens → isOutside.
+	const CWD = "D:/work/repo";
+	const inside = gateBash(
+		`cd ${CWD} && git status`,
+		() => ({ action: "allow" }),
+		(part) => part.startsWith("cd /outside"),
+	);
+	assert.equal(inside.allow, true, "cd <cwd> && git status auto-allows");
+	assert.equal(inside.outside, false);
+
+	const out = gateBash(
+		"cd /outside && ls",
+		() => ({ action: "allow" }),
+		(part) => part.startsWith("cd /outside"),
+	);
+	assert.equal(out.allow, false, "cd outside still asks");
+	assert.equal(out.outside, true);
+
+	const npm = gateBash(
+		`cd ${CWD} && npm test`,
+		() => ({ action: "allow" }),
+		() => false,
+	);
+	assert.equal(npm.allow, false, "cd <cwd> && npm still asks (npm not readonly)");
+	assert.ok(npm.classify.parts[1].readonly === false);
+
+	assert.equal(classifyPart(`cd ${CWD}`), true, "bare cd classifies readonly");
+	ok("cd compounds: allow inside, outside-flagged, non-readonly sibling asks");
+}
+
+{
 	// fully allow-ruled readonly compound inside → auto-allowable
 	const inside = gateBash(
 		"cat src/x.txt",
