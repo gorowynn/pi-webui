@@ -366,7 +366,11 @@ const {
 		() => ({ action: "allow" }),
 		() => false,
 	);
-	assert.equal(npm.allow, false, "cd <cwd> && npm still asks (npm not readonly)");
+	assert.equal(
+		npm.allow,
+		false,
+		"cd <cwd> && npm still asks (npm not readonly)",
+	);
 	assert.ok(npm.classify.parts[1].readonly === false);
 
 	assert.equal(classifyPart(`cd ${CWD}`), true, "bare cd classifies readonly");

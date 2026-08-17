@@ -188,7 +188,7 @@ const ICON_BUTTONS = [
 	"ws-x",
 	"ws-mini",
 	"set-x",
-	"sdd-close",
+	"tools-close",
 	"toast-x",
 	"um-refresh",
 ];
@@ -231,14 +231,38 @@ for (const [needle, label] of [
 	['role="feed" aria-label="conversation"', "conversation feed"],
 	['aria-label="message composer"', "composer input"],
 	['aria-label="workspaces and sessions"', "wsbar"],
-	['aria-label="spec-driven development phases"', "sddbar"],
+	['aria-label="workspace tools"', "toolsbar"],
 	['aria-label="slash commands"', "palette"],
 	['aria-label="pi dialog"', "modal"],
 ]) {
 	assert.ok(html.includes(needle), `index.html labels ${label}`);
 }
 
-// ---- FR-8: turns are semantic articles in a feed ------------------------------
+// ---- W1 FR-5: tools rail is a tablist; panel is its tabpanel -----------------
+assert.ok(
+	html.includes('id="tools-rail"') && html.includes('role="tablist"'),
+	"tools rail carries role=tablist",
+);
+assert.ok(
+	html.includes('role="tabpanel"'),
+	"tools panel carries role=tabpanel",
+);
+assert.ok(
+	app.includes('"tab"') && app.includes("aria-selected"),
+	"rail tabs created with role=tab + aria-selected",
+);
+// NB: substring 'roving' matches "approving" — assert the real handler symbol
+assert.ok(
+	app.includes("function initRailTabs") && app.includes("document.activeElement"),
+	"roving tabindex handler exists (initRailTabs)",
+);
+for (const key of ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"]) {
+	assert.ok(app.includes(`e.key === "${key}"`), `rail tabs handle ${key}`);
+}
+assert.ok(
+	app.includes('e.key === "Esc"') && app.includes("closeSddPane()"),
+	"Esc closes the tools panel",
+);
 
 assert.ok(app.includes('role="feed"'), "transcript feed wrapper exists");
 assert.ok(
@@ -406,7 +430,7 @@ const SIZE_RULES = [
 	["ws-x", "width: 24px"],
 	["ws-mini", "min-height: 24px"],
 	["set-x", "min-width: 24px"],
-	["sdd-close", "min-width: 24px"],
+	["tools-close", "min-width: 24px"],
 	["toast-x", "min-width: 24px"],
 	["um-refresh", "min-height: 24px"],
 	["imgthumb-x", "min-width: 24px"],
@@ -426,7 +450,8 @@ for (const [cls, rule] of SIZE_RULES) {
 }
 // rail-resize: 6px visual strip, 24px hit zone via ::after + reserved rail padding
 assert.ok(
-	css.includes("#sddbar > .rail-resize::after") && css.includes("width: 24px;"),
+	css.includes("#toolsbar > .rail-resize::after") &&
+		css.includes("width: 24px;"),
 	"rail-resize has a 24px hit area",
 );
 assert.ok(

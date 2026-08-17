@@ -1831,24 +1831,6 @@ function inPeakHours() {
 // Compact cards keep all three windows visible in the narrow header (Codex has
 // two, OpenCode Go has three). Each quota bar owns the reset text directly
 // beneath it, so their values can't mix.
-function renderUsageInline(bars) {
-	return bars
-		.slice(0, 3)
-		.map((bar) => {
-			const pct = pctOf(bar);
-			const cls = pct >= 90 ? "hi" : pct >= 70 ? "mid" : "lo";
-			const val = quotaValue(bar);
-			const remain = bar.reset ? bar.reset - Date.now() : null;
-			const reset = remain != null ? `reset in ${fmtDur(remain)}` : "";
-			return (
-				`<div class="ub-window" title="${esc(bar.label)}: ${esc(val)}${reset ? `; ${reset}` : ""}">` +
-				`<div class="ub-head"><span class="ub-lbl">${esc(bar.label)}</span><span class="ub-val">${esc(val)}</span></div>` +
-				`<span class="ub-track"><span class="ub-fill ${cls}" style="width:${pct}%"></span></span>` +
-				`<span class="ub-reset">${esc(reset)}</span></div>`
-			);
-		})
-		.join("");
-}
 function usageKeyForm() {
 	return (
 		`<p class="um-hint">Enter your z.ai API key. It's stored only in this browser ` +
@@ -1952,29 +1934,35 @@ async function renderUsage(provider) {
 		`<details class="um-raw"><summary>raw response</summary><pre>${esc(raw)}</pre></details>`
 	);
 }
-async function showUsage() {
+// W1 chunk 7: rail panel render for the quotas widget — same inner HTML +
+// form wiring as the modal, gen-stamped fetch (FR-8).
+async function quotasRender(el, g) {
 	const provider = currentProvider;
-	const title = `${usageProviderLabel(provider)} usage`;
-	showModal(`<h3>${esc(title)}</h3><p class="um-hint">loading\u2026</p>`, true);
+	setSafeHtml(el, '<p class="um-hint">loading…</p>');
 	let inner;
 	try {
 		inner = await renderUsage(provider);
 	} catch (e) {
-		inner = `<p class="um-err">\u26a0 ${esc(e.message)}</p>`;
+		inner = `<p class="um-err">⚠ ${esc(e.message)}</p>`;
 	}
-	if (provider !== currentProvider) return showUsage();
-	setSafeHtml(card, `<h3>${esc(title)}</h3>` + inner);
-	const rb = card.querySelector("#um-refresh");
-	if (rb) rb.onclick = showUsage;
-	const form = card.querySelector("#um-key-form");
+	if (railGen.stale(g)) return;
+	setSafeHtml(
+		el,
+		`<h3>${esc(usageProviderLabel(provider))} usage</h3>` + inner,
+	);
+	wireUsageForms(el);
+}
+function wireUsageForms(container) {
+	const rb = container.querySelector("#um-refresh");
+	if (rb) rb.onclick = refreshUsageBar;
+	const form = container.querySelector("#um-key-form");
 	if (form)
 		form.onsubmit = (e) => {
 			e.preventDefault();
 			localStorage.setItem(ZAI_KEY, $("um-key").value.trim());
 			refreshUsageBar();
-			showUsage();
 		};
-	const goForm = card.querySelector("#um-go-form");
+	const goForm = container.querySelector("#um-go-form");
 	if (goForm)
 		goForm.onsubmit = (e) => {
 			e.preventDefault();
@@ -1986,27 +1974,23 @@ async function showUsage() {
 				}),
 			);
 			refreshUsageBar();
-			showUsage();
 		};
 }
 
-// ---- usage bar: matches the active model provider ----
-const usageBar = $("usagebar");
-function renderSessionUsageInline(provider) {
-	const total = sessionUsage && sessionUsage.total;
-	return `<div class="ub-row"><span class="ub-lbl">${esc(usageProviderLabel(provider))}</span><span class="ub-val">${typeof total === "number" ? `${fmtTokens(total)} tokens` : "loading…"}</span></div>`;
-}
+// ---- quota state (W1: header usage bar moved fully into the rail) ----
+// refreshUsageBar is the single entry — model switches, the 60s poll and the
+// quota-key forms all re-drive the rail: tab badge (pct of the tightest
+// window) and, when the Quotas panel is open, its body. No header element.
 async function refreshUsageBar() {
 	const provider = currentProvider;
 	if (!provider) {
-		usageBar.style.display = "none";
+		quotaBadgePct = null;
+		renderRail(false);
 		return;
 	}
 	if (usageViewKind(provider) === "session") {
-		setSafeHtml(usageBar, renderSessionUsageInline(provider));
-		usageBar.style.display = "flex";
-		usageBar.classList.remove("peak");
-		usageBar.title = `${usageProviderLabel(provider)} session usage — click for details`;
+		quotaBadgePct = null;
+		renderRail(false);
 		return;
 	}
 	let u;
@@ -2017,42 +2001,19 @@ async function refreshUsageBar() {
 	}
 	if (provider !== currentProvider) return;
 	if (!u.ok) {
-		// ponytail: a missing-key/missing-creds failure is actionable — show a
-		// placeholder bar (click → setup form) instead of hiding silently. Other
-		// errors (network, stale cookie) stay hidden; they'd just re-fail every
-		// 60s poll.
-		const missing =
-			(usageViewKind(provider) === "zai-quota" && u.error === "no API key") ||
-			(usageViewKind(provider) === "opencode-go-quota" &&
-				u.error === "no workspace credentials");
-		if (missing) {
-			setSafeHtml(
-				usageBar,
-				`<div class="ub-row"><span class="ub-lbl">${esc(usageProviderLabel(provider))}</span><span class="ub-val">no quota creds</span></div>`,
-			);
-			usageBar.style.display = "flex";
-			usageBar.title = `${usageProviderLabel(provider)} — click to set up quota tracking`;
-			return;
-		}
-		usageBar.style.display = "none";
+		quotaBadgePct = null;
+		renderRail(false);
 		return;
 	}
 	const bars = quotaLimits(provider, u.data);
-	if (!bars.length) {
-		usageBar.style.display = "none";
-		return;
-	}
-	setSafeHtml(usageBar, renderUsageInline(bars));
-	usageBar.style.display = "flex";
-	// ponytail: the peak-hours badge is z.ai tokencost-specific — don't show it
-	// for Codex or OpenCode Go quota bars.
-	usageBar.classList.toggle(
-		"peak",
-		usageViewKind(provider) === "zai-quota" && inPeakHours(),
-	);
-	usageBar.title = `${usageProviderLabel(provider)} quota — click for details`;
+	const pcts = bars
+		.map(pctOf)
+		.filter((n) => typeof n === "number" && Number.isFinite(n));
+	quotaBadgePct = pcts.length ? Math.max(...pcts) : null;
+	renderRail(false);
+	if (railWidget && railWidget.id === "quotas")
+		quotasRender($("tools-body"), railGen.cur());
 }
-usageBar.onclick = showUsage;
 
 // ---- todo panel: incremental state from the `todo` tool ----
 // The `todo` tool (extensions/pi_minimal_webui/todo.ts) sends one ACTION per
@@ -2061,9 +2022,6 @@ usageBar.onclick = showUsage;
 // (agent-supplied) and a status: open | started | finished. The frontend owns
 // the state — same proven OUT smuggling channel as ask_user_question, and
 // nothing to lose across compaction / new sessions / pi restarts.
-const todopanel = $("todopanel"),
-	tpBody = $("tp-body"),
-	tpCount = $("tp-count");
 let todos = []; // {id, subject, status}
 const TODO_OK = new Set(["open", "started", "finished"]);
 // ponytail: localStorage is a reload HINT, mirroring the pi:model idiom.
@@ -2124,39 +2082,31 @@ function applyTodoOp(args) {
 	persistTodos();
 	renderTodos();
 }
-function renderTodos() {
-	// ponytail: hide once every task is finished — a fully-done list has done
-	// its job; lingering checkmarks are clutter. State is kept (a later plan/add
-	// re-opens the panel), and persistTodos already saved it for reload safety.
-	const allDone =
-		todos.length > 0 && todos.every((t) => t.status === "finished");
-	if (!todos.length || allDone) {
-		todopanel.style.display = "none";
+function todoRowHtml(t, i) {
+	const cls =
+		t.status === "finished" ? "done" : t.status === "started" ? "live" : "pend";
+	const ck = t.status === "finished" ? "✓" : t.status === "started" ? "●" : "○";
+	return `<span class="ck ${cls}">${ck}</span><span class="id">#${t.id != null ? esc(String(t.id)) : i + 1}</span><span class="sbj">${esc(t.subject)}</span>`;
+}
+// W1 chunk 7: rail panel render — same tool-owned mirror, same rows
+function todosRender(el) {
+	if (!todos.length) {
+		setSafeHtml(el, '<p class="w-placeholder">no todo list yet</p>');
 		return;
 	}
-	todopanel.style.display = "block";
 	const done = todos.filter((t) => t.status === "finished").length;
-	tpCount.textContent = `${done}/${todos.length}`;
-	setSafeHtml(tpBody, "");
+	let h = `<div class="tp-count">${done}/${todos.length}</div>`;
 	todos.forEach((t, i) => {
-		const cls =
-			t.status === "finished"
-				? "done"
-				: t.status === "started"
-					? "live"
-					: "pend";
-		const ck =
-			t.status === "finished" ? "✓" : t.status === "started" ? "●" : "○";
-		const row = document.createElement("div");
-		row.className = "ti " + cls;
-		setSafeHtml(
-			row,
-			`<span class="ck ${cls}">${ck}</span><span class="id">#${t.id != null ? esc(String(t.id)) : i + 1}</span><span class="sbj">${esc(t.subject)}</span>`,
-		);
-		tpBody.appendChild(row);
+		h += `<div class="ti">${todoRowHtml(t, i)}</div>`;
 	});
+	setSafeHtml(el, h);
 }
-
+function renderTodos() {
+	// W1: todos live only in the rail Todos widget — refresh the tab badge
+	// and, when the widget is open, its body (immediate, not the ticker).
+	renderRail(false);
+	if (railWidget && railWidget.id === "todos") todosRender($("tools-body"));
+}
 // ---- plan/spec sidebar: left rail shows the active SDD set's phase stepper;
 // click a reached phase to expand the pane and read its doc as markdown. ----
 // ponytail: skills/sdd writes .sdd/{type}_{slug}_{DDMMYYYY}.md (plan/spec/tasks/
@@ -2209,32 +2159,129 @@ function activeSet() {
 	}
 	return best;
 }
-// ponytail: left SDD rail. Narrow by default (vertical stepper for the active
-// set); clicking a reached phase widens the pane and renders that doc. Hidden
-// entirely while no active set exists. Replaces the old header badge + modal.
-let sddCurArt = null; // artifact shown in the expanded pane (null = collapsed)
+// ---- W1 workspace-tools rail: fixed widget table + shell (spec FR-1..FR-4) ----
+// Five entries, no runtime registration; permissions is a launcher (chunk 4),
+// not a widget. Width persists separately as pi:rail-width (the resize handle
+// owns it); rail state {widget, open} persists via rail.js (pi:rail + one-time
+// legacy pi:sddbar migration).
+// FR-10 migration gates: a palette command opens the rail widget only after
+// its four smokes pass (chunk 9 flips these); the modal stays until then.
+const PARITY = { analysis: false, git: false, quotas: false, todos: false };
+const railState = rail.createRailState();
+const railGen = rail.createGen();
+let railSt = railState.load();
+let railWidget = null; // mounted widget entry (null = panel closed)
+let sddRel = null; // SDD doc pointer (the open artifact)
 let sddInit = false; // restore-once guard so the 30s poll can't reopen a user-closed pane
-function updateSddBar() {
-	const bar = $("sddbar");
-	if (!bar) return;
+let gitBadgeSnap = null; // {changed} once the git widget caches a snapshot (chunk 6) — MUST be let (assigned on fetch)
+let quotaBadgePct = null; // max window pct once the 60s poll resolves — MUST be let (assigned in refreshUsageBar)
+
+function sddSummaryFor() {
 	const set = activeSet();
-	if (!set) {
-		bar.setAttribute("aria-hidden", "true");
-		bar.classList.remove("open");
-		document.body.classList.remove("sdd-on", "sdd-open");
-		return;
-	}
-	bar.setAttribute("aria-hidden", "false");
-	document.body.classList.add("sdd-on");
+	if (!set) return null;
+	const sset = planSets().find(
+		(x) => (x.slug || "") + "|" + (x.date || "") === set.slug + "|" + set.date,
+	);
+	const t = (sset && sset.arts.find((a) => a.phase === "tasks")) || null;
+	return { ...set, done: t && t.done, total: t && t.total };
+}
+function widgetVisible(w) {
+	return w.id === "sdd" ? rail.sddVisibility(sddSummaryFor()) : true;
+}
+
+// placeholder render for widgets migrating in chunks 5-7 (temporary, FR-10)
+function placeholderRender(el, label, hint) {
+	setSafeHtml(
+		el,
+		'<p class="w-placeholder">' +
+			esc(label) +
+			" migrates into this rail next. " +
+			esc(hint) +
+			"</p>",
+	);
+}
+
+const WIDGETS = [
+	{
+		id: "sdd",
+		label: "SDD",
+		icon: "\u25c8",
+		commandId: "sdd",
+		refresh: "manual", // refreshPlanState's own 30s poll owns SDD (scroll-safe)
+		badge: () => rail.sddBadge(sddSummaryFor()),
+		render: sddRender,
+		onOpen: sddTitle,
+		onClose: () => {},
+	},
+	{
+		id: "analysis",
+		label: "Usage",
+		icon: "\u25f7",
+		commandId: "usage",
+		refresh: "interval:10000",
+		badge: () => ({ text: "", tone: "none" }),
+		render: analysisRender,
+		onOpen: () => {},
+		onClose: () => {},
+	},
+	{
+		id: "git",
+		label: "Git",
+		icon: "\u2442",
+		commandId: "git",
+		refresh: "interval:60000",
+		badge: () => rail.gitBadge(gitBadgeSnap),
+		render: (el) => setSafeHtml(el, '<p class="um-hint">loading…</p>'),
+		onOpen: (g) => gitRenderRail($("tools-body"), g),
+		onClose: () => {},
+	},
+	{
+		id: "quotas",
+		label: "Quotas",
+		icon: "\u25d4",
+		commandId: "quotas",
+		refresh: "interval:60000",
+		badge: () => rail.quotaBadge(quotaBadgePct),
+		render: (el) => setSafeHtml(el, '<p class="um-hint">loading…</p>'),
+		onOpen: (g) => quotasRender($("tools-body"), g),
+		onClose: () => {},
+	},
+	{
+		id: "todos",
+		label: "Todos",
+		icon: "\u2713",
+		commandId: "todos",
+		refresh: "interval:5000",
+		badge: () => rail.todosBadge(todos),
+		render: todosRender,
+		onOpen: () => {},
+		onClose: () => {},
+	},
+].map((w) => {
+	if (!rail.validWidgetEntry(w))
+		throw new Error("invalid widget table entry: " + w.id);
+	return w;
+});
+
+function sddTitle() {
+	const sum = sddSummaryFor();
+	const prog = sum && sum.total ? " (" + sum.done + "/" + sum.total + ")" : "";
+	$("tools-title").textContent =
+		"SDD" + (sum && sum.phase ? " · " + sum.phase : "") + prog;
+}
+
+// the SDD panel: horizontal phase stepper + the doc of the open artifact
+function sddRender(el) {
+	const set = activeSet();
 	const sset = planSets().find(
 		(x) => (x.slug || "") + "|" + (x.date || "") === set.slug + "|" + set.date,
 	);
 	const arts = (sset && sset.arts) || [];
 	const sum = setSummary(sset || { arts: [] });
 	const curRank = PHASE_RANK[sum.phase];
-	const rail = $("sdd-rail");
-	if (!rail) return;
-	setSafeHtml(rail, "");
+	el.textContent = "";
+	const steps = document.createElement("div");
+	steps.className = "ss-steps";
 	for (const ph of ["plan", "spec", "tasks", "verify"]) {
 		const art = arts.find((a) => a.phase === ph);
 		const reached = PHASE_RANK[ph] <= curRank;
@@ -2247,76 +2294,240 @@ function updateSddBar() {
 		const dot = document.createElement("span");
 		dot.className = "ss-dot";
 		dot.textContent = reached ? "●" : "○";
-		const txt = document.createElement("span");
-		txt.className = "ss-txt";
+		b.appendChild(dot);
 		const lbl = document.createElement("span");
 		lbl.className = "ss-lbl";
 		lbl.textContent = ph;
-		txt.appendChild(lbl);
-		// chunk progress: skills/sdd Phase 4 marks each chunk [x] + compliance note
+		b.appendChild(lbl);
 		if (ph === "tasks" && art && art.total) {
 			const meta = document.createElement("span");
 			meta.className = "ss-meta";
 			meta.textContent = art.done + "/" + art.total;
-			txt.appendChild(meta);
+			b.appendChild(meta);
 		}
-		b.appendChild(dot);
-		b.appendChild(txt);
 		const a = art;
 		if (a) b.onclick = () => openSddPhase(a);
-		rail.appendChild(b);
+		steps.appendChild(b);
 	}
-	// keep an open pane in sync across polls; drop it if its artifact vanished
-	if (sddCurArt && bar.classList.contains("open")) {
-		const still = arts.find((a) => a.rel === sddCurArt.rel);
-		if (still) renderPlanDoc($("sdd-body"), still.rel);
-		else closeSddPane();
-	}
-	// restore the last expanded doc once, after the first poll resolves
-	if (!sddInit) {
-		sddInit = true;
-		try {
-			const saved = JSON.parse(localStorage["pi:sddbar"] || "{}");
-			if (saved.open && saved.rel) {
-				const a = arts.find((x) => x.rel === saved.rel);
-				if (a) openSddPhase(a);
-			}
-		} catch {}
+	el.appendChild(steps);
+	const doc = document.createElement("div");
+	doc.className = "doc-body";
+	el.appendChild(doc);
+	// drop a vanished artifact (set archived mid-view); else render the doc —
+	// sddRel when set, else the highest-reached phase with content
+	let art = null;
+	if (sddRel) art = arts.find((a) => a.rel === sddRel);
+	if (!art)
+		art =
+			arts.find((a) => a.phase === sum.phase) || arts[arts.length - 1] || null;
+	if (art) {
+		sddRel = art.rel;
+		renderPlanDoc(doc, art.rel);
+	} else {
+		setSafeHtml(doc, '<p class="um-hint">no artifacts in this set yet</p>');
 	}
 }
-function openSddPhase(art) {
-	const bar = $("sddbar");
+
+function renderRail(renderPanel = true) {
+	const bar = $("toolsbar");
 	if (!bar) return;
-	// toggle: clicking the phase already shown collapses back to the rail
-	if (sddCurArt && sddCurArt.rel === art.rel) {
-		closeSddPane();
+	const tabs = WIDGETS.filter(widgetVisible);
+	if (!tabs.length) {
+		bar.setAttribute("aria-hidden", "true");
+		bar.classList.remove("open");
+		document.body.classList.remove("rail-on", "rail-open");
+		railWidget = null;
 		return;
 	}
-	sddCurArt = art;
-	bar.classList.add("open");
-	document.body.classList.add("sdd-open");
-	const prog =
-		art.phase === "tasks" && art.total
-			? " (" + art.done + "/" + art.total + ")"
-			: "";
-	$("sdd-title").textContent =
-		art.phase + (art.slug ? " · " + art.slug : "") + prog;
-	renderPlanDoc($("sdd-body"), art.rel);
-	localStorage["pi:sddbar"] = JSON.stringify({ open: true, rel: art.rel });
+	bar.setAttribute("aria-hidden", "false");
+	document.body.classList.add("rail-on");
+	// active widget hidden (set archived mid-view) -> close silently
+	if (railSt.widget && !tabs.some((w) => w.id === railSt.widget)) {
+		railWidget = null;
+		railSt.open = false;
+	}
+	const railNav = $("tools-rail");
+	setSafeHtml(railNav, "");
+	for (const w of tabs) {
+		const sel = railSt.open && railSt.widget === w.id;
+		const b = document.createElement("button");
+		b.type = "button";
+		b.className = "rail-tab" + (sel ? " sel" : "");
+		b.setAttribute("role", "tab");
+		b.setAttribute("aria-selected", sel ? "true" : "false");
+		b.tabIndex = sel ? 0 : -1;
+		b.title = w.label;
+		// selected tab click collapses (keeps the old stepper toggle)
+		b.onclick = () => (sel ? closeRail() : openRailWidget(w.id));
+		const ic = document.createElement("span");
+		ic.className = "rt-ic";
+		ic.textContent = w.icon;
+		b.appendChild(ic);
+		const lb = document.createElement("span");
+		lb.className = "rt-lbl";
+		lb.textContent = w.label;
+		b.appendChild(lb);
+		const bd = w.badge();
+		if (bd && bd.text) {
+			const bs = document.createElement("span");
+			bs.className = "rt-badge b-" + (bd.tone || "none");
+			bs.textContent = bd.text;
+			bs.title = bd.text; // FR-6: badge text, never color alone
+			b.appendChild(bs);
+		}
+		railNav.appendChild(b);
+	}
+	// FR-7: permissions launcher — NOT a widget; routes to the dedicated page.
+	// Badge mirrors the on-screen approval (err tone + count) and config error.
+	const perm = document.createElement("button");
+	perm.type = "button";
+	perm.className = "rail-tab rail-perm";
+	perm.title = "permissions";
+	perm.onclick = () => {
+		location.hash = "#permissions";
+	};
+	const permIc = document.createElement("span");
+	permIc.className = "rt-ic";
+	permIc.textContent = "\u2691";
+	perm.appendChild(permIc);
+	const permLb = document.createElement("span");
+	permLb.className = "rt-lbl";
+	permLb.textContent = "Perms";
+	perm.appendChild(permLb);
+	const pb = rail.approvalsBadge(pendingApproval ? 1 : 0);
+	if (pb.text) {
+		const pbs = document.createElement("span");
+		pbs.className = "rt-badge b-" + pb.tone;
+		pbs.textContent = pb.text;
+		pbs.title = pb.text;
+		perm.appendChild(pbs);
+	}
+	railNav.appendChild(perm);
+	const open = railSt.open && tabs.find((x) => x.id === railSt.widget);
+	if (open && renderPanel) {
+		railWidget = open;
+		bar.classList.add("open");
+		document.body.classList.add("rail-open");
+		open.onOpen(railGen.cur());
+		open.render($("tools-body"));
+		return;
+	}
+	if (!open) {
+		railWidget = null;
+		bar.classList.remove("open");
+		document.body.classList.remove("rail-open");
+	}
+}
+
+function openRailWidget(id) {
+	const w = WIDGETS.find((x) => x.id === id);
+	if (!w || !widgetVisible(w)) return;
+	if (railWidget && railWidget !== w) railWidget.onClose();
+	railWidget = w;
+	railSt = { ...railSt, widget: id, open: true };
+	railState.save(railSt);
+	w.onOpen(railGen.open());
+	renderRail();
+}
+function closeRail() {
+	if (railWidget) railWidget.onClose();
+	railWidget = null;
+	railSt = { ...railSt, open: false };
+	railState.save(railSt);
+	renderRail();
+}
+
+// W1 auto-refresh (FR-8): the open widget's body re-renders on its declared
+// interval:N cadence. Event-driven pushes (todo ops, quota poll, git
+// mutations, plan-state poll) already render immediately — this ticker is the
+// catch-all for steady-state drift (analysis, git status, quota windows).
+// Scroll is preserved across re-renders so reading a long list isn't jarred.
+const RAIL_TICK_MS = 5000;
+const railLastRender = {}; // widget id -> last panel render ts
+function railRenderDue(w) {
+	const m = /^interval:(\d+)$/.exec(w.refresh);
+	if (!m) return false; // manual / on-open: own refresh path
+	return (railLastRender[w.id] || 0) + Number(m[1]) <= Date.now();
+}
+function refreshRailWidget(w) {
+	railLastRender[w.id] = Date.now();
+	const el = $("tools-body");
+	const st = el.scrollTop;
+	if (w.id === "git") {
+		gitRenderRail(el, railGen.cur()).then(() => (el.scrollTop = st));
+		return;
+	}
+	if (w.id === "quotas") {
+		quotasRender(el, railGen.cur()).then(() => (el.scrollTop = st));
+		return;
+	}
+	w.render(el); // sync renders (analysis / todos)
+	el.scrollTop = st;
+}
+setInterval(() => {
+	if (railWidget && railRenderDue(railWidget)) refreshRailWidget(railWidget);
+}, RAIL_TICK_MS);
+function openSddPhase(art) {
+	sddRel = art.rel;
+	try {
+		localStorage["pi:rail:sdd"] = JSON.stringify({ rel: art.rel });
+	} catch {}
+	openRailWidget("sdd");
 }
 function closeSddPane() {
-	sddCurArt = null;
-	const bar = $("sddbar");
-	if (bar) bar.classList.remove("open");
-	document.body.classList.remove("sdd-open");
-	localStorage["pi:sddbar"] = JSON.stringify({ open: false });
+	closeRail(); // legacy name kept for the Esc handler / resize guards
 }
+
+// W1 FR-5: roving tabindex over the #tools-rail tabs (WAI tabs pattern).
+// Delegated on the container so it works for whichever tab set is mounted.
+// Arrows/Home/End move focus among enabled tabs; Esc closes the panel and
+// returns focus to the selected tab (or the first enabled one).
+function initRailTabs() {
+	const railNav = $("tools-rail");
+	if (!railNav) return;
+	railNav.addEventListener("keydown", (e) => {
+		const tabs = [...railNav.querySelectorAll('[role="tab"]:not([disabled])')];
+		if (!tabs.length) return;
+		const cur = tabs.indexOf(document.activeElement);
+		const focus = (t) => {
+			e.preventDefault();
+			if (t) t.focus();
+		};
+		if (e.key === "ArrowRight" || e.key === "ArrowDown")
+			focus(tabs[(cur + 1 + tabs.length) % tabs.length]);
+		else if (e.key === "ArrowLeft" || e.key === "ArrowUp")
+			focus(tabs[(cur - 1 + tabs.length) % tabs.length]);
+		else if (e.key === "Home") focus(tabs[0]);
+		else if (e.key === "End") focus(tabs[tabs.length - 1]);
+		else if (e.key === "Esc") {
+			closeSddPane();
+			const selected = railNav.querySelector('[aria-selected="true"]');
+			focus(selected || tabs[0]);
+		}
+	});
+}
+initRailTabs();
 function refreshPlanState() {
 	fetch("/api/plan-state")
 		.then((r) => r.json())
 		.then((j) => {
 			planArtifacts = j && Array.isArray(j.artifacts) ? j.artifacts : [];
-			updateSddBar();
+			// restore the last open rail widget once, after the first poll
+			// resolves (legacy pi:sddbar rel migrates too)
+			if (!sddInit) {
+				sddInit = true;
+				try {
+					if (railSt.open && railSt.widget === "sdd") {
+						let saved = JSON.parse(localStorage["pi:rail:sdd"] || "null");
+						if (!saved || !saved.rel)
+							saved = JSON.parse(localStorage["pi:sddbar"] || "null");
+						if (saved && saved.rel) sddRel = saved.rel;
+					}
+				} catch {}
+			}
+			// SDD keeps its poll-sync (doc re-render while open); other widgets
+			// own their refresh policy (chunks 5-7)
+			renderRail(railWidget && railWidget.id === "sdd");
 		})
 		.catch(() => {});
 }
@@ -2337,7 +2548,7 @@ async function renderPlanDoc(container, rel) {
 	highlightCode(container);
 }
 (function initSddBar() {
-	const close = $("sdd-close");
+	const close = $("tools-close");
 	if (close) close.addEventListener("click", closeSddPane);
 	refreshPlanState();
 	// ponytail: the 30s poll is declared with the other timers below so it joins
@@ -6014,9 +6225,10 @@ function scrollToMessage(mi) {
 function anPct(part, whole) {
 	return whole > 0 ? Math.round((part / whole) * 100) : 0;
 }
-function showAnalysisModal() {
+// W1 chunk 5: body builder shared by the modal AND the rail panel widget
+function analysisBody() {
 	const SA = window.sessionAnalysis;
-	if (!SA || !SA.analyzeSession) return;
+	if (!SA || !SA.analyzeSession) return "";
 	const a = SA.analyzeSession(lastMessages, lastStats, lastRunning);
 	const turns = a.turns;
 	// bar metric: cost if any attributed, else output tokens (still useful signal)
@@ -6177,17 +6389,32 @@ function showAnalysisModal() {
 		parts.push("</div>");
 	}
 	parts.push("</div></div>");
-	showModal(parts.join(""), true);
-	card.classList.add("an-card");
-	// wire click→scroll on every [data-mi] inside the card (skip -1 placeholders)
-	const clickable = card.querySelectorAll('[data-mi]:not([data-mi="-1"])');
-	clickable.forEach((el) => {
+	return parts.join("");
+}
+// wire click→scroll on every [data-mi] inside a container (skip -1
+// placeholders); onJump lets the modal close itself, the rail stay open
+function wireAnalysis(container, onJump) {
+	container.querySelectorAll('[data-mi]:not([data-mi="-1"])').forEach((el) => {
 		el.addEventListener("click", () => {
 			const mi = el.getAttribute("data-mi");
-			hideModal();
+			if (onJump) onJump();
 			setTimeout(() => scrollToMessage(mi), 60);
 		});
 	});
+}
+function showAnalysisModal() {
+	if (!analysisBody()) return;
+	showModal(analysisBody(), true);
+	card.classList.add("an-card");
+	wireAnalysis(card, hideModal);
+}
+function analysisRender(el) {
+	if (!el) return;
+	setSafeHtml(
+		el,
+		analysisBody() || '<p class="w-placeholder">no session data yet</p>',
+	);
+	wireAnalysis(el, null); // rail: keep the panel open, just scroll
 }
 
 // ---- git sidebar, read-only (plan 4.5) ----
@@ -6196,6 +6423,7 @@ function showAnalysisModal() {
 // unpushed commits with their files. Click a file → unified diff view (colored
 // +/− lines) with a back button. §6.3: ~60% of git-sidebar value, no mutation risk.
 async function showGitModal() {
+	gitEl = null; // modal mode
 	showModal(
 		'<div class="git"><h3>Git</h3><p class="um-hint">loading…</p></div>',
 		true,
@@ -6219,10 +6447,22 @@ async function showGitModal() {
 	renderGitList(data.snapshot);
 }
 
+// W1 chunk 6: git renders into EITHER the modal card or the rail panel body.
+let gitEl = null; // rail panel target (null = modal mode)
+function gEl() {
+	return gitEl || card;
+}
+let gitLastSnap = null; // last list snapshot (back-button re-render)
+function gitBack() {
+	// re-render the last list into the SAME target (rail stays rail)
+	if (gitEl) renderGitList(gitLastSnap);
+	else showGitModal();
+}
 function renderGitList(s) {
+	gitLastSnap = s;
 	if (!s.repository) {
 		setSafeHtml(
-			card,
+			gEl(),
 			'<div class="git"><h3>Git</h3><p class="um-hint">not a git repository</p></div>',
 		);
 		return;
@@ -6264,10 +6504,10 @@ function renderGitList(s) {
 		parts.push("</div>");
 	}
 	parts.push("</div>");
-	setSafeHtml(card, parts.join(""));
-	const commitBtn = card.querySelector(".git-act.primary");
+	setSafeHtml(gEl(), parts.join(""));
+	const commitBtn = gEl().querySelector(".git-act.primary");
 	if (commitBtn) commitBtn.addEventListener("click", gitCommitModal);
-	const pushBtn = card.querySelector(".git-push");
+	const pushBtn = gEl().querySelector(".git-push");
 	if (pushBtn)
 		pushBtn.addEventListener("click", () =>
 			gitConfirm(
@@ -6276,7 +6516,7 @@ function renderGitList(s) {
 				"/api/git/push",
 			),
 		);
-	const discBtn = card.querySelector(".git-discard-all");
+	const discBtn = gEl().querySelector(".git-discard-all");
 	if (discBtn)
 		discBtn.addEventListener("click", () =>
 			gitConfirm(
@@ -6285,14 +6525,16 @@ function renderGitList(s) {
 				"/api/git/discard",
 			),
 		);
-	card.querySelectorAll(".git-file[data-path]").forEach((btn) => {
-		btn.addEventListener("click", () =>
-			showGitDiff(
-				btn.getAttribute("data-path"),
-				btn.getAttribute("data-commit") || null,
-			),
-		);
-	});
+	gEl()
+		.querySelectorAll(".git-file[data-path]")
+		.forEach((btn) => {
+			btn.addEventListener("click", () =>
+				showGitDiff(
+					btn.getAttribute("data-path"),
+					btn.getAttribute("data-commit") || null,
+				),
+			);
+		});
 }
 
 function gitFileBtn(f, commit) {
@@ -6325,15 +6567,15 @@ function gitFileBtn(f, commit) {
 async function showGitDiff(p, commit) {
 	const back = '<button type="button" class="git-back">← back</button>';
 	setSafeHtml(
-		card,
+		gEl(),
 		'<div class="git">' +
 			back +
 			'<div class="git-sec-h git-diffpath">' +
 			esc(p) +
 			'</div><p class="um-hint">loading diff…</p></div>',
 	);
-	const backBtn = card.querySelector(".git-back");
-	if (backBtn) backBtn.addEventListener("click", showGitModal);
+	const backBtn = gEl().querySelector(".git-back");
+	if (backBtn) backBtn.addEventListener("click", gitBack);
 	let data;
 	try {
 		const q =
@@ -6346,7 +6588,7 @@ async function showGitDiff(p, commit) {
 	}
 	if (!data.ok) {
 		setSafeHtml(
-			card,
+			gEl(),
 			'<div class="git">' +
 				back +
 				'<div class="git-sec-h git-diffpath">' +
@@ -6355,8 +6597,8 @@ async function showGitDiff(p, commit) {
 				esc(data.error || "failed") +
 				"</p></div>",
 		);
-		const b2 = card.querySelector(".git-back");
-		if (b2) b2.addEventListener("click", showGitModal);
+		const b2 = gEl().querySelector(".git-back");
+		if (b2) b2.addEventListener("click", gitBack);
 		return;
 	}
 	// render the unified diff with +/− line coloring (content escaped per line)
@@ -6371,7 +6613,7 @@ async function showGitDiff(p, commit) {
 		})
 		.join("\n");
 	setSafeHtml(
-		card,
+		gEl(),
 		'<div class="git">' +
 			back +
 			'<div class="git-sec-h git-diffpath">' +
@@ -6380,8 +6622,34 @@ async function showGitDiff(p, commit) {
 			body +
 			"</pre></div>",
 	);
-	const b3 = card.querySelector(".git-back");
-	if (b3) b3.addEventListener("click", showGitModal);
+	const b3 = gEl().querySelector(".git-back");
+	if (b3) b3.addEventListener("click", gitBack);
+}
+
+// W1 chunk 6: rail widget body — lazy fetch on open, gen-stamped (FR-8):
+// a response landing after the user switched widgets is dropped.
+async function gitRenderRail(el, g) {
+	gitEl = el;
+	setSafeHtml(gEl(), '<div class="git"><p class="um-hint">loading…</p></div>');
+	let data;
+	try {
+		data = await (await fetch("/api/git")).json();
+	} catch (e) {
+		data = { ok: false, error: e.message };
+	}
+	if (railGen.stale(g)) return; // user moved on — drop
+	if (!data.ok) {
+		setSafeHtml(
+			gEl(),
+			'<div class="git"><p class="um-hint">' +
+				esc(data.error || "failed to load") +
+				"</p></div>",
+		);
+		return;
+	}
+	gitBadgeSnap = { changed: (data.snapshot.files || []).length }; // API field is files
+	renderGitList(data.snapshot);
+	renderRail(false); // refresh the badge only
 }
 
 // ---- git mutations (plan 4.6): all gated behind a confirm ----
@@ -6389,7 +6657,10 @@ async function showGitDiff(p, commit) {
 async function gitRefresh() {
 	try {
 		const data = await (await fetch("/api/git")).json();
-		if (data.ok) renderGitList(data.snapshot);
+		if (data.ok) {
+			gitBadgeSnap = { changed: (data.snapshot.files || []).length }; // API field is files
+			renderGitList(data.snapshot);
+		}
 	} catch {}
 }
 async function gitPost(path, body) {
@@ -6503,10 +6774,16 @@ registerCommand(
 	openSettings,
 );
 registerCommand(
+	"sdd",
+	"sdd phases",
+	"open the spec-driven development rail widget",
+	() => openRailWidget("sdd"),
+);
+registerCommand(
 	"git",
 	"git status",
 	"review changes & unpushed commits",
-	showGitModal,
+	rail.paletteRoute(PARITY.git, () => openRailWidget("git"), showGitModal),
 );
 registerCommand(
 	"rename-session",
@@ -6518,7 +6795,23 @@ registerCommand(
 	"usage",
 	"session usage",
 	"cost/tool/cache breakdown for this session",
-	showAnalysisModal,
+	rail.paletteRoute(
+		PARITY.analysis,
+		() => openRailWidget("analysis"),
+		showAnalysisModal,
+	),
+);
+registerCommand(
+	"quotas",
+	"quota usage",
+	"provider quotas and limits",
+	() => openRailWidget("quotas"), // fully moved to the rail (W1)
+);
+registerCommand(
+	"todos",
+	"agent todos",
+	"the agent's todo list",
+	() => openRailWidget("todos"), // fully moved to the rail (W1)
 );
 registerCommand(
 	"scroll-bottom",
@@ -6553,9 +6846,9 @@ registerCommand(
 );
 
 // ---- right-rail drag-resize (plan 3.5 / U§2.6) ----
-// The #sddbar (and future widget rail) is drag-resizable via a .rail-resize
+// The #toolsbar (and future widget rail) is drag-resizable via a .rail-resize
 // handle on its left edge; the width persists as the --rail-width CSS var (read
-// by the body.sdd-on.sdd-open rules). Clamped 240–720px; when the transcript
+// by the body.rail-on.rail-open rules). Clamped 240–720px; when the transcript
 // floor cap binds (narrow w-wide viewports, spec FR-3.3) the upper bound
 // shrinks below 240 rather than violate it. Only active when the pane is open.
 // Mouse + touch.
@@ -6588,7 +6881,7 @@ function clampRailWidth() {
 	}
 }
 function initRailResize() {
-	const bar = $("sddbar");
+	const bar = $("toolsbar");
 	if (!bar || bar.querySelector(".rail-resize")) return;
 	const handle = document.createElement("div");
 	handle.className = "rail-resize";
@@ -6609,7 +6902,7 @@ function initRailResize() {
 		startX = 0,
 		startW = 0;
 	const down = (clientX) => {
-		if (!document.body.classList.contains("sdd-open")) return false;
+		if (!document.body.classList.contains("rail-open")) return false;
 		dragging = true;
 		startX = clientX;
 		startW = bar.offsetWidth;
@@ -6637,7 +6930,7 @@ function initRailResize() {
 	// keyboard: ArrowLeft widens (mirrors pointer), ArrowRight narrows,
 	// Home/End jump — step math in a11y-contrast.resizeStep (unit-tested)
 	handle.addEventListener("keydown", (e) => {
-		if (!document.body.classList.contains("sdd-open")) return;
+		if (!document.body.classList.contains("rail-open")) return;
 		if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
 		e.preventDefault();
 		const mx = railMaxWidth();

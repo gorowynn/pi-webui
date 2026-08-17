@@ -4,6 +4,24 @@
 > orientation doc stays lean. One entry per meaningful chunk of work:
 > `### YYYY-MM-DD — <area>: <one-line summary>` then bullet detail (what + why + file).
 
+### 2026-08-17 — feat(webui): usage bar + todo panel moved fully into the rail
+
+- Header `#usagebar` and in-flow `#todopanel` are GONE; quota windows and the
+  todo list now render only in the rail's Quotas / Todos widgets (`app.js`:
+  `refreshUsageBar` re-scoped to feed `quotaBadgePct` + the open panel,
+  `renderTodos` delegates to the Todos widget; `index.html` elements removed).
+- The Quotas modal (`showUsage`) is deleted — the rail widget owns forms
+  (key + OpenCode Go creds) and refresh; palette "quota usage" / "agent todos"
+  open the rail widget directly (PARITY flags for quotas/todos retired).
+- Open rail widgets now AUTO-REFRESH: `refreshRailWidget` honors each widget's
+  `interval:N` policy (SDD manual/plan-poll, analysis 10s, git+quotas 60s,
+  todos 5s) with scroll preservation; event paths (todo ops, quota poll, git
+  mutations, plan-state) still push immediately.
+- `quotaBadgePct` now live (was a `const null` placeholder) — the Quotas tab
+  badge shows the tightest window's percent once the poll resolves.
+- Rail todo-row CSS retargeted `#todopanel` → `.tools-pane`; dead `#usagebar`/
+  `.ub-*` CSS removed. test/rail.test.js 65 → 68 checks.
+
 ### 2026-08-17 — feat(safeguard): bash-sensitive path protection (closes `cat .env` bypass)
 
 FR-7 sensitivePaths applied only to path selectors — bash selectors matched the

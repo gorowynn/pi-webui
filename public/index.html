@@ -89,7 +89,6 @@
 		</script>
 		<header>
 			<span class="logo">◆ pi</span>
-			<div id="usagebar" aria-hidden="true"></div>
 			<span id="status"
 				><span id="dot"></span
 				><span id="status-text">connecting…</span></span
@@ -161,18 +160,23 @@
 			≫
 		</button>
 
-		<aside
-			id="sddbar"
-			aria-hidden="true"
-			aria-label="spec-driven development phases"
-		>
-			<nav class="sdd-rail" id="sdd-rail"></nav>
-			<div class="sdd-pane">
-				<div class="sdd-head">
-					<span class="sdd-title" id="sdd-title"></span>
+		<aside id="toolsbar" aria-hidden="true" aria-label="workspace tools">
+			<nav
+				class="tools-rail"
+				id="tools-rail"
+				role="tablist"
+				aria-orientation="vertical"
+			></nav>
+			<div
+				class="tools-pane"
+				role="tabpanel"
+				aria-labelledby="tools-title"
+			>
+				<div class="tools-head">
+					<span class="tools-title" id="tools-title"></span>
 					<button
-						class="sdd-close"
-						id="sdd-close"
+						class="tools-close"
+						id="tools-close"
 						type="button"
 						aria-label="collapse sidebar"
 						title="collapse"
@@ -180,7 +184,7 @@
 						×
 					</button>
 				</div>
-				<div class="doc-body" id="sdd-body"></div>
+				<div class="doc-body" id="tools-body"></div>
 			</div>
 		</aside>
 
@@ -442,12 +446,6 @@
 				↓
 			</button>
 		</div>
-		<details id="todopanel" open>
-			<summary>
-				<span>todos</span><span class="count" id="tp-count">0/0</span>
-			</summary>
-			<div class="tbody" id="tp-body"></div>
-		</details>
 		<div class="activity idle" id="activity">
 			<span class="spin"></span><span class="idle-dot"></span
 			><span class="alabel" id="act-label">connecting…</span>
@@ -589,6 +587,7 @@
 		<script src="permissions-ux.js"></script>
 		<script src="subagents-ux.js"></script>
 		<script src="a11y-contrast.js"></script>
+		<script src="rail.js"></script>
 		<script src="app.js"></script>
 	</body>
 </html>

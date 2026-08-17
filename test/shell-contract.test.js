@@ -117,15 +117,15 @@ check(
 	"T4",
 	"A-4.2",
 	"FR-3",
-	"style.css sdd-open margin rule carries the 560 floor cap",
-	/sdd-on\.sdd-open[\s\S]{0,300}560/.test(css),
+	"style.css rail-open margin rule carries the 560 floor cap",
+	/rail-on\.rail-open[\s\S]{0,300}560/.test(css),
 );
 check(
 	"T4",
 	"A-4.3",
 	"FR-3",
-	"style.css w-mid/w-narrow sdd-open keeps rail-only margin",
-	/body\.w-(?:mid|narrow)[\s\S]{0,150}sdd-open/.test(css),
+	"style.css w-mid/w-narrow rail-open keeps rail-only margin",
+	/body\.w-(?:mid|narrow)[\s\S]{0,150}rail-open/.test(css),
 );
 check(
 	"T4",

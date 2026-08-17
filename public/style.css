@@ -50,7 +50,7 @@
 	   accents on dark are a top AI-slop tell). paperlike softens further. */
 	--shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
 	/* wsbar push width — single source for the sidebar, the body margin, and
-	   the sdd-open floor cap (spec FR-3). */
+	   the rail-open floor cap (spec FR-3). */
 	--wsbar-w: min(240px, 26vw);
 }
 * {
@@ -2182,76 +2182,47 @@ body.page-open #modal {
 	min-width: 64px;
 }
 
-#todopanel {
-	flex: 0 0 auto;
-	width: 100%;
-	margin: 0;
-	background: var(--surface-raised);
-	border-top: 1px solid var(--line);
-	border-radius: 0;
-	padding: 0;
-	font-size: 12px;
-	max-height: 40vh;
-	overflow: hidden;
-	display: none;
-}
-#todopanel > summary {
-	list-style: none;
-	cursor: pointer;
-	padding: 8px clamp(12px, 3vw, 40px);
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-	background: var(--surface-raised);
-	border-bottom: 1px solid var(--line);
-	font-weight: 600;
-	font-size: 11px;
-	text-transform: uppercase;
-	letter-spacing: 0.5px;
-}
-#todopanel > summary::-webkit-details-marker {
-	display: none;
-}
-#todopanel > summary .count {
+/* W1: todo list — the rail Todos widget panel (was the in-flow #todopanel;
+   moved fully into the rail). Rows share .ti/.ck/.id/.sbj with the widget
+   renderer; count line styled like the old summary badge. */
+.tools-pane .tp-count {
 	color: var(--accent);
 	font-weight: 700;
+	padding: 2px 0 6px;
+	font-size: 11px;
 }
-#todopanel .tbody {
-	padding: 6px clamp(12px, 3vw, 40px);
-	max-height: 32vh;
-	overflow: auto;
-}
-#todopanel .ti {
+.tools-pane .ti {
 	display: flex;
 	gap: 6px;
 	align-items: baseline;
 	padding: 4px 0;
 	border-bottom: 1px solid #ffffff0d;
+	font-size: 12px;
 }
-#todopanel .ti:last-child {
+.tools-pane .ti:last-child {
 	border-bottom: none;
 }
-#todopanel .ti .ck {
+.tools-pane .ti .ck {
 	width: 12px;
 	flex: 0 0 12px;
 }
-#todopanel .ti .ck.done {
+.tools-pane .ti .ck.done {
 	color: var(--success);
 }
-#todopanel .ti .ck.live {
+.tools-pane .ti .ck.live {
 	color: var(--warning);
 }
-#todopanel .ti .ck.pend {
+.tools-pane .ti .ck.pend {
 	color: var(--muted);
 }
-#todopanel .ti.done .sbj {
+.tools-pane .ti.done .sbj {
 	color: var(--muted);
 	text-decoration: line-through;
 }
-#todopanel .ti.live .sbj {
+.tools-pane .ti.live .sbj {
 	color: var(--ink);
 }
-#todopanel .ti .id {
+.tools-pane .ti .id {
 	color: var(--accent);
 	flex: 0 0 auto;
 }
@@ -2505,83 +2476,6 @@ body.w-mid.ws-on {
 }
 
 /* ---- provider quota bar (inline in header, click for details) ---- */
-#usagebar {
-	display: none;
-	flex: 1 1 auto;
-	min-width: 300px;
-	flex-direction: row;
-	gap: 8px;
-	margin: 0 8px;
-	padding: 2px 8px;
-	border: 1px solid transparent;
-	border-radius: var(--r);
-	cursor: pointer;
-}
-#usagebar:hover {
-	opacity: 0.8;
-}
-/* peak-hours signal: subtle warn-colored border (tokencost higher 14–18
-   UTC+8); toggled on refreshUsageBar's 60s poll, so minute-accurate. */
-#usagebar.peak {
-	border-color: var(--warning);
-}
-.ub-window {
-	flex: 1 1 0;
-	min-width: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-}
-.ub-head {
-	display: flex;
-	justify-content: space-between;
-	gap: 4px;
-	font-size: 11px;
-	min-width: 0;
-}
-.ub-lbl {
-	color: var(--muted);
-	white-space: nowrap;
-}
-.ub-track {
-	display: block;
-	min-width: 0;
-	height: 7px;
-	background: #00000060;
-	border: 1px solid var(--line);
-	border-radius: var(--r);
-	overflow: hidden;
-}
-.ub-val,
-.ub-reset {
-	color: var(--muted);
-	font-family: ui-monospace, Menlo, Consolas, monospace;
-	white-space: nowrap;
-}
-.ub-val {
-	font-size: 11px;
-}
-.ub-reset {
-	font-size: 10px;
-}
-.ub-fill {
-	display: block;
-	height: 100%;
-	transition: width 0.3s ease;
-}
-.ub-fill.lo {
-	background: var(--success);
-}
-.ub-fill.mid {
-	background: var(--warning);
-}
-.ub-fill.hi {
-	background: var(--danger);
-}
-.ub-fill.time {
-	background: var(--accent);
-}
-
 /* ---- z.ai usage modal (Usage button) ---- */
 .um-meta {
 	display: flex;
@@ -2810,7 +2704,6 @@ body.w-mid.ws-on {
 	display: none;
 }
 body.page-open #scroll-wrap,
-body.page-open #todopanel,
 body.page-open footer,
 body.page-open .activity {
 	display: none;
@@ -2896,7 +2789,7 @@ body.page-open .activity {
 /* ---- left workspace/session sidebar (#wsbar) ----
    Persistent left edge: auto-discovered project roots (one-click switch via
    POST /api/workspace) + the active project's session history (resume without
-   the footer modal). Mirrors #sddbar's fixed-edge + body-margin pattern on the
+   the footer modal). Mirrors #toolsbar's fixed-edge + body-margin pattern on the
    opposite edge. Collapsible (body.ws-on); an edge launcher (#ws-open) re-shows
    it. Collapse persists in localStorage["pi:wsbar"]. */
 #wsbar {
@@ -3120,7 +3013,7 @@ body.w-narrow.ws-on #ws-scrim {
    the right edge; body margin-right pushes the whole in-flow app left (header,
    transcript, composer, statusbar) so nothing hides behind it. Nothing floats
    on the right, so there are no collisions. */
-#sddbar {
+#toolsbar {
 	position: fixed;
 	right: 0;
 	top: 0;
@@ -3136,32 +3029,37 @@ body.w-narrow.ws-on #ws-scrim {
 	padding-top: env(safe-area-inset-top);
 	padding-bottom: env(safe-area-inset-bottom);
 }
-body.sdd-on {
-	margin-right: 88px;
+/* W1: collapsed widget strip — 108px total, 84px usable after the 24px
+   resize-hit-zone reservation (was 88px/64px: labels + badges cramped). */
+body {
+	--rail-strip: 108px;
 }
-body.sdd-on #sddbar {
+body.rail-on {
+	margin-right: var(--rail-strip);
+}
+body.rail-on #toolsbar {
 	display: flex;
-	width: 88px;
+	width: var(--rail-strip);
 }
-body.sdd-on.sdd-open {
+body.rail-on.rail-open {
 	margin-right: min(
 		var(--rail-width, min(400px, 58vw)),
 		calc(100vw - var(--wsbar-w, 0px) - 560px)
 	);
 }
-body.sdd-on.sdd-open #sddbar {
+body.rail-on.rail-open #toolsbar {
 	width: var(--rail-width, min(400px, 58vw));
 }
-/* w-mid / w-narrow: the open pane overlays content — the rail keeps its 88px
-   reservation and never pushes the transcript (spec FR-3.2). */
-body.w-mid.sdd-on.sdd-open,
-body.w-narrow.sdd-on.sdd-open {
-	margin-right: 88px;
+/* w-mid / w-narrow: the open pane overlays content — the rail keeps its strip
+   reservation (--rail-strip) and never pushes the transcript (spec FR-3.2). */
+body.w-mid.rail-on.rail-open,
+body.w-narrow.rail-on.rail-open {
+	margin-right: var(--rail-strip);
 }
 /* right-rail drag-resize handle (plan 3.5 / U§2.6) — on the bar's left edge;
    width persists via the --rail-width CSS var (set by app.js). Flat surface,
    no gradient (anti-slop). */
-#sddbar > .rail-resize {
+#toolsbar > .rail-resize {
 	position: absolute;
 	left: 0;
 	top: 0;
@@ -3172,18 +3070,18 @@ body.w-narrow.sdd-on.sdd-open {
 	border-radius: 2px;
 	transition: background-color 0.12s ease;
 }
-#sddbar > .rail-resize:hover,
-#sddbar > .rail-resize.active {
+#toolsbar > .rail-resize:hover,
+#toolsbar > .rail-resize.active {
 	background: var(--accent);
 	opacity: 0.45;
 }
-#sddbar > .rail-resize:focus-visible {
+#toolsbar > .rail-resize:focus-visible {
 	outline: 2px solid var(--accent);
 	outline-offset: -1px;
 }
 /* a11y FR-11: 24px hit area (the visible strip stays 6px). The rail's left
    padding (below) reserves the zone so taps never steal rail-button edges. */
-#sddbar > .rail-resize::after {
+#toolsbar > .rail-resize::after {
 	content: "";
 	position: absolute;
 	top: 0;
@@ -3194,40 +3092,164 @@ body.w-narrow.sdd-on.sdd-open {
 /* a11y FR-12: touch has no hover — keep the resize handle visible so the
    rail is discoverably resizable on touch devices */
 @media (hover: none) {
-	#sddbar > .rail-resize {
+	#toolsbar > .rail-resize {
 		background: var(--line);
 		opacity: 0.5;
 	}
 }
-.sdd-rail {
-	flex: 0 0 88px;
+.tools-rail {
+	flex: 0 0 var(--rail-strip, 108px);
 	display: flex;
 	flex-direction: column;
-	padding: 8px 0;
+	padding: 10px 0 8px;
 	padding-left: 24px; /* a11y FR-11: reserves the resize handle's hit zone */
-	gap: 2px;
+	gap: 3px;
+	overflow-y: auto;
 	border-left: 1px solid var(--line);
 }
-/* SDD phase step (plan→spec→tasks→verify) as a vertical rail button.
-   ● reached / ○ pending; current phase in accent with an accent rail mark.
+/* W1: widget tab (one per table entry). Icon + small label stacked; the
+   selected tab carries a left accent bar + accent icon (IDE convention).
+   Badge rides top-right. NOTE: theme tokens only — --fg/-dim/bg-hover/
+   bg-elev DO NOT exist and silently invalidate colors (seen live). */
+.rail-tab {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 3px;
+	width: 100%;
+	padding: 7px 2px 6px;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: var(--muted);
+	cursor: pointer;
+	transition:
+		background-color 0.12s ease,
+		color 0.12s ease;
+}
+.rail-tab:hover {
+	background: rgba(127, 127, 127, 0.12);
+	color: var(--ink);
+}
+.rail-tab:hover .rt-ic {
+	color: var(--ink);
+}
+.rail-tab:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+.rail-tab.sel {
+	color: var(--ink);
+	background: var(--accent-soft);
+}
+.rail-tab.sel::before {
+	content: "";
+	position: absolute;
+	left: -2px;
+	top: 24%;
+	bottom: 24%;
+	width: 3px;
+	border-radius: 3px;
+	background: var(--accent);
+}
+.rail-tab.sel .rt-ic {
+	color: var(--accent);
+}
+.rail-tab.sel .rt-lbl {
+	font-weight: 700;
+}
+.rt-ic {
+	font-size: 16px;
+	line-height: 1;
+	color: var(--muted);
+}
+.rt-lbl {
+	font-size: 10px;
+	letter-spacing: 0.02em;
+	color: inherit;
+}
+.rt-badge {
+	position: absolute;
+	top: 2px;
+	right: 3px;
+	max-width: 62px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 9px;
+	line-height: 1.6;
+	font-family: ui-monospace, "JetBrains Mono", monospace;
+	padding: 0 5px;
+	border-radius: 9px;
+	border: 1px solid var(--line);
+	background: var(--surface-inset);
+	color: var(--muted);
+}
+.rt-badge.b-warn {
+	color: var(--warning);
+	border-color: var(--warning);
+	background: var(--warning-strong);
+}
+.rt-badge.b-err {
+	color: var(--danger);
+	border-color: var(--danger);
+	background: var(--danger-soft);
+}
+.rt-badge.b-ok {
+	color: var(--success);
+	border-color: var(--success);
+	background: var(--success-soft);
+}
+/* FR-7: permissions launcher — pinned below the widget tabs, visually
+   detached from them. */
+.rail-perm {
+	margin-top: auto;
+	padding-top: 9px;
+	border-top: 1px solid var(--line);
+	border-radius: 0;
+}
+.rail-perm .rt-ic {
+	color: var(--muted);
+}
+.rail-perm:hover .rt-ic,
+.rail-perm:focus-visible .rt-ic {
+	color: var(--accent);
+}
+
+/* placeholder widgets (chunks 5-7) */
+.w-placeholder {
+	color: var(--muted);
+	font-size: 12px;
+	padding: 14px 10px;
+	margin: 0;
+}
+/* SDD phase stepper — now horizontal, inside the panel body */
+.ss-steps {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	padding: 6px 10px 10px;
+	border-bottom: 1px solid var(--line);
+}
+/* SDD phase step (plan→spec→tasks→verify) — pill button in the panel's
+   horizontal stepper strip. ● reached / ○ pending; current phase in accent.
    Steps without an artifact yet are disabled (nudges the next phase). */
 .ss-step {
-	display: flex;
+	display: inline-flex;
 	align-items: center;
-	gap: 7px;
-	width: 100%;
-	padding: 7px 10px;
+	gap: 5px;
+	padding: 4px 8px;
 	background: none;
-	border: none;
-	border-left: 2px solid transparent;
+	border: 1px solid transparent;
+	border-radius: 12px;
 	color: var(--muted);
 	font:
-		600 12px / 1 "JetBrains Mono",
+		600 11px / 1 "JetBrains Mono",
 		ui-monospace,
 		monospace;
 	text-transform: lowercase;
 	cursor: pointer;
-	text-align: left;
 }
 .ss-step:hover:not(:disabled) {
 	background: var(--surface-raised);
@@ -3258,16 +3280,16 @@ body.w-narrow.sdd-on.sdd-open {
 	color: var(--muted);
 	line-height: 1.1;
 }
-.sdd-pane {
+.tools-pane {
 	flex: 1 1 auto;
 	min-width: 0;
 	display: none;
 	flex-direction: column;
 }
-#sddbar.open .sdd-pane {
+#toolsbar.open .tools-pane {
 	display: flex;
 }
-.sdd-head {
+.tools-head {
 	display: flex;
 	align-items: center;
 	gap: 8px;
@@ -3278,7 +3300,7 @@ body.w-narrow.sdd-on.sdd-open {
 	font-weight: 700;
 	text-transform: lowercase;
 }
-.sdd-title {
+.tools-title {
 	flex: 1 1 auto;
 	color: var(--accent);
 	overflow: hidden;
@@ -3286,7 +3308,7 @@ body.w-narrow.sdd-on.sdd-open {
 	white-space: nowrap;
 }
 /* a11y FR-11: the icon glyphs are small — floor the touch targets at 24px */
-.sdd-close {
+.tools-close {
 	background: none;
 	border: none;
 	color: var(--muted);
@@ -3297,10 +3319,10 @@ body.w-narrow.sdd-on.sdd-open {
 	min-width: 24px;
 	min-height: 24px;
 }
-.sdd-close:hover {
+.tools-close:hover {
 	color: var(--ink);
 }
-#sddbar .doc-body {
+#toolsbar .doc-body {
 	flex: 1 1 auto;
 	min-height: 0;
 	max-height: none;
@@ -3521,7 +3543,7 @@ body.w-narrow.sdd-on.sdd-open {
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	font-size: 15px;
 	font-weight: 600;
-	color: var(--fg);
+	color: var(--ink);
 }
 .an-lbl {
 	font-size: 10px;
@@ -3538,7 +3560,7 @@ body.w-narrow.sdd-on.sdd-open {
 .an-sec-h {
 	font-size: 12px;
 	font-weight: 600;
-	color: var(--fg);
+	color: var(--ink);
 }
 .an-sec-sub {
 	font-weight: 400;
@@ -3588,7 +3610,7 @@ body.w-narrow.sdd-on.sdd-open {
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	font-size: 14px;
 	font-weight: 600;
-	color: var(--fg);
+	color: var(--ink);
 }
 .an-tok-l {
 	font-size: 10px;
@@ -3619,7 +3641,7 @@ body.w-narrow.sdd-on.sdd-open {
 	cursor: pointer;
 	text-align: left;
 	font-size: 12px;
-	color: var(--fg);
+	color: var(--ink);
 }
 .an-item:hover {
 	background: var(--surface-inset);
@@ -3686,7 +3708,7 @@ body.w-narrow.sdd-on.sdd-open {
 	border: none;
 	border-radius: 50%;
 	background: color-mix(in srgb, var(--surface) 85%, transparent);
-	color: var(--fg);
+	color: var(--ink);
 	font-size: 12px;
 	line-height: 14px;
 	padding: 0;
@@ -3769,7 +3791,7 @@ body.w-narrow.sdd-on.sdd-open {
 	cursor: pointer;
 	text-align: left;
 	font-size: 12px;
-	color: var(--fg);
+	color: var(--ink);
 }
 .git-file:hover {
 	background: var(--surface-inset);
@@ -3812,7 +3834,7 @@ body.w-narrow.sdd-on.sdd-open {
 	color: var(--muted);
 }
 .git-delta::first-line {
-	color: var(--fg);
+	color: var(--ink);
 }
 .git-commit {
 	padding: 8px 4px 4px;
@@ -3820,7 +3842,7 @@ body.w-narrow.sdd-on.sdd-open {
 	border-top: 1px solid var(--line);
 }
 .git-csubj {
-	color: var(--fg);
+	color: var(--ink);
 }
 .git-cfiles {
 	color: var(--muted);
@@ -3829,7 +3851,7 @@ body.w-narrow.sdd-on.sdd-open {
 .git-back {
 	border: 1px solid var(--line);
 	background: var(--surface-inset);
-	color: var(--fg);
+	color: var(--ink);
 	border-radius: calc(var(--r) - 2px);
 	padding: 4px 10px;
 	cursor: pointer;
@@ -3843,7 +3865,7 @@ body.w-narrow.sdd-on.sdd-open {
 	text-transform: none;
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	font-size: 12px;
-	color: var(--fg);
+	color: var(--ink);
 	word-break: break-all;
 }
 .git-diff {
@@ -3883,7 +3905,7 @@ body.w-narrow.sdd-on.sdd-open {
 .git-act {
 	border: 1px solid var(--line);
 	background: var(--surface-inset);
-	color: var(--fg);
+	color: var(--ink);
 	border-radius: calc(var(--r) - 2px);
 	padding: 5px 12px;
 	cursor: pointer;
@@ -3912,13 +3934,13 @@ body.w-narrow.sdd-on.sdd-open {
 	border: 1px solid var(--line);
 	border-radius: calc(var(--r) - 2px);
 	padding: 8px;
-	color: var(--fg);
+	color: var(--ink);
 	box-sizing: border-box;
 }
 .git-cancel {
 	border: 1px solid var(--line);
 	background: var(--surface-inset);
-	color: var(--fg);
+	color: var(--ink);
 	border-radius: calc(var(--r) - 2px);
 	padding: 5px 12px;
 	cursor: pointer;
