@@ -35,6 +35,7 @@ import {
 	readFileSync,
 	statSync,
 	writeFileSync,
+	renameSync,
 	realpathSync,
 } from "node:fs";
 import { join, isAbsolute } from "node:path";
@@ -118,29 +119,60 @@ const DENY = "Deny";
 // invalidates the instant a manual edit or a "save always" lands — preserving
 // the re-read-each-call live behavior without the per-call cost. saveConfig()
 // drops the cache so a write can never leave callers reading a pre-write
-// snapshot. A missing/corrupt file throws → empty layer, cache cleared
-// (re-probe next call once the file is fixed and its mtime advances).
+// snapshot. SEC-15a: a malformed file keeps its LAST KNOWN GOOD parse (per
+// path) instead of degrading to an empty layer, and the failure is surfaced
+// through loadLayers' `errors` channel — a corrupt workspace config must not
+// silently pretend the workspace said nothing.
 let layersCache: {
 	userMtime: number;
 	wsMtime: number;
 	layers: Array<{ name: string; cfg: unknown }>;
 	effective: Record<string, unknown>;
 	diagnostics: Array<{ layer: string; path: string; message: string }>;
+	errors: Array<{ path: string; message: string }>;
 } | null = null;
+
+const lastGoodCfg = new Map<
+	string,
+	{ cfg: Record<string, unknown>; mtime: number }
+>();
 
 function readCfgOrEmpty(p: string): {
 	cfg: Record<string, unknown>;
 	mtime: number;
+	error: { path: string; message: string } | null;
 } {
 	try {
 		const mtime = statSync(p).mtimeMs;
-		const parsed = JSON.parse(readFileSync(p, "utf-8")) as Record<
-			string,
-			unknown
-		>;
-		return { cfg: parsed && typeof parsed === "object" ? parsed : {}, mtime };
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(readFileSync(p, "utf-8"));
+		} catch {
+			// malformed (or unreadable): keep last known good, surface the error.
+			// mtime -1 → the layers cache can never hit on a malformed file, so
+			// the error (and last-good layers) rebuild on every call until the
+			// file parses again.
+			const good = lastGoodCfg.get(p);
+			return {
+				cfg: good ? good.cfg : {},
+				mtime: -1,
+				error: {
+					path: p,
+					message: good
+						? `malformed config ${p} — using last known good`
+						: `malformed config ${p} — treated as empty`,
+				},
+			};
+		}
+		const cfg =
+			parsed && typeof parsed === "object" && !Array.isArray(parsed)
+				? (parsed as Record<string, unknown>)
+				: {};
+		lastGoodCfg.set(p, { cfg, mtime });
+		return { cfg, mtime, error: null };
 	} catch {
-		return { cfg: {}, mtime: -1 };
+		// missing file → normal cold start, no error
+		return { cfg: {}, mtime: -1, error: null };
 	}
 }
 
@@ -154,12 +186,19 @@ function loadLayers() {
 	)
 		return layersCache;
 	const merged = engine.mergeLayers(DEFAULT_CONFIG, user.cfg, ws.cfg);
+	// SEC-15a: config parse failures ride alongside the layers so the gate
+	// can surface them (last-known-good layers still apply underneath).
+	const errors = [user.error, ws.error].filter(Boolean) as Array<{
+		path: string;
+		message: string;
+	}>;
 	layersCache = {
 		userMtime: user.mtime,
 		wsMtime: ws.mtime,
 		layers: merged.layers,
 		effective: merged.effective,
 		diagnostics: merged.diagnostics,
+		errors,
 	};
 	return layersCache;
 }
@@ -170,12 +209,18 @@ function loadUserConfigForWrite(): Record<string, unknown> {
 	return engine.normalizeForWrite(cfg);
 }
 
-function saveConfig(cfg: Record<string, unknown>): void {
+/** SEC-15b: atomic config write (temp sibling + rename over the target).
+ *  Returns true on success; callers must surface the failure and NOT release
+ *  the approved call as if the grant had persisted. */
+function saveConfig(cfg: Record<string, unknown>): boolean {
 	layersCache = null; // invalidate before the write — a thrown write must not leave a stale cache
 	try {
-		writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
+		const tmp = CONFIG_PATH + ".tmp-" + Date.now();
+		writeFileSync(tmp, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
+		renameSync(tmp, CONFIG_PATH);
+		return true;
 	} catch {
-		/* best-effort */
+		return false;
 	}
 }
 
@@ -223,19 +268,21 @@ function saveAllowAlways(
 	toolName: string,
 	selector: string,
 	cfg: Record<string, unknown>,
-): void {
+): boolean {
 	// v2: "Allow always" writes an EXACT-selector grant (config `grants`),
 	// not a pattern rule. Rule-based allows are subject to the FR-9 compound
 	// gate (a stale/loose pattern can never auto-allow a mutating command),
 	// while an always-grant is an explicit approval of THIS exact selector and
 	// bypasses the gate — so "Allow always" keeps working for repetitive
-	// mutating commands (npm test, …).
+	// mutating commands (npm test, …). SEC-15b: returns whether the grant
+	// actually persisted — a failed save must block the call, not release it
+	// as if the user's approval had been recorded.
 	const key = `${toolName}\u0000${selector}`;
 	const grants = Array.isArray(cfg.grants) ? (cfg.grants as string[]) : [];
 	if (!grants.includes(key)) grants.push(key);
 	cfg.grants = grants;
 	cfg.revision = ((cfg.revision as number) || 0) + 1;
-	saveConfig(cfg);
+	return saveConfig(cfg);
 }
 
 /**
@@ -298,7 +345,18 @@ export default function (pi: ExtensionAPI) {
 		// ponytail: empty selector (e.g. empty bash command) → nothing to gate
 		if (!selector.trim()) return;
 
-		const { layers, effective } = loadLayers(); // re-read live (manual edits apply)
+		const { layers, effective, errors } = loadLayers(); // re-read live (manual edits apply)
+		// SEC-15a: a malformed config is NEVER silent — surface it on the next
+		// gated call (last-known-good layers still apply underneath).
+		if (ctx.hasUI && errors && errors.length) {
+			for (const e of errors) {
+				try {
+					ctx.ui.notify(`⚠ Safeguard config error: ${e.message}`, "warning");
+				} catch {
+					/* best-effort */
+				}
+			}
+		}
 		const mode = sessionYolo
 			? "yolo"
 			: ((effective.mode as string) ?? "default");
@@ -342,10 +400,13 @@ export default function (pi: ExtensionAPI) {
 			);
 			bash = { parts: cls.parts, gate };
 		}
-		// FR-13: mode transform (yolo is session state, never a config value)
+		// FR-13: mode transform (yolo is session state, never a config value).
+		// SEC-02b: bash read-class in read-only mode requires the per-part
+		// gate (bashGate) — the classifier label alone must not auto-allow.
 		let eff = engine.applyMode(verdict, mode, {
 			toolName: event.toolName,
 			bashClassify: bash ? bash.gate.classify : null,
+			bashGate: bash ? bash.gate : null,
 		});
 
 		// 1. deny always wins (rules, sensitive deny, read-only blocks) — even
@@ -397,6 +458,9 @@ export default function (pi: ExtensionAPI) {
 			if (!bash || bash.gate.allow) return;
 			// mode-induced allows (read-only / auto-approve / yolo) are explicit
 			// posture choices — they bypass the compound gate (no prompts).
+			// SEC-02b: only YOLO reaches here for bash — applyMode now denies
+			// read-only bash without the gate and leaves auto-approve bash at
+			// ask, so a mode can never ride a readonly label past FR-9.
 			if (
 				eff.tier === "read-only" ||
 				eff.tier === "auto-approve" ||
@@ -507,7 +571,31 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		if (choice === ALLOW_ALWAYS) {
-			saveAllowAlways(event.toolName, selector, loadUserConfigForWrite());
+			// SEC-15b: a failed save must NOT release the call as if the grant
+			// had persisted — report and block (retryable: Allow once/session
+			// need no write).
+			const saved = saveAllowAlways(
+				event.toolName,
+				selector,
+				loadUserConfigForWrite(),
+			);
+			if (!saved) {
+				if (ctx.hasUI) {
+					try {
+						ctx.ui.notify(
+							`⚠ Could not save the always-grant to ${CONFIG_PATH} — the call was blocked. Choose “Allow once” or “Allow for this session” instead.`,
+							"warning",
+						);
+					} catch {
+						/* best-effort */
+					}
+				}
+				return {
+					block: true,
+					reason:
+						"Safeguard: failed to save the always-grant (config write error)",
+				};
+			}
 			applyEdits();
 			return;
 		}

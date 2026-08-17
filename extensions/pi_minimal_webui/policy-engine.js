@@ -57,6 +57,13 @@ function globToRe(g) {
 	return new RegExp(`^${esc}$`, "i");
 }
 
+/** SEC-06: forward-slash-normalized form for pattern matching (Windows
+ *  backslash paths must match `/`-separated globs like the shipped .env
+ *  sensitive-path patterns). */
+function slashNorm(p) {
+	return String(p).replace(/\\/g, "/");
+}
+
 /**
  * Pattern → selector matching, byte-compatible with the v1 safeguard
  * semantics: "re:" → case-insensitive regex; glob ("*"/"?") → anchored
@@ -74,11 +81,13 @@ function matchValue(pattern, selector, isPath) {
 	}
 	if (pattern.includes("*") || pattern.includes("?")) {
 		const re = globToRe(pattern);
-		return isPath
-			? re.test(selector) || re.test(basename(selector))
-			: re.test(selector);
+		const s = isPath ? slashNorm(selector) : selector;
+		return isPath ? re.test(s) || re.test(basename(s)) : re.test(selector);
 	}
-	if (isPath) return selector === pattern || basename(selector) === pattern;
+	if (isPath) {
+		const s = slashNorm(selector);
+		return s === pattern || basename(s) === pattern;
+	}
 	return selector.toLowerCase().includes(pattern.toLowerCase());
 }
 
@@ -170,31 +179,57 @@ function buildVerdict(action, matchedRule, layer, toolName, selector, opts) {
 function resolve(toolName, selector, layers, opts = {}) {
 	const ls = Array.isArray(layers) ? layers : [{ name: "user", cfg: layers }];
 	const isPath = isPathSelector(toolName, selector);
+	// SEC-04a: a recon tool may receive its args as JSON (grep/find/ls/glob
+	// via selectorFor). The JSON blob is NOT one path — extract each real
+	// path field and canonicalize/containment-check them independently, so
+	// `ls {"path":"/etc/passwd"}` can't be joined to cwd and allowed.
+	let jsonPaths = null;
+	if (MAYBE_PATH.has(toolName)) {
+		jsonPaths = jsonPathFields(selector);
+	}
 	let canon = selector;
 	let effLayers = ls;
 	let outsideRoot = false;
 	if (isPath) {
-		canon = canonicalize(selector, opts);
-		if (opts.workspaceRoot && !isUnderRoot(canon, opts.workspaceRoot)) {
-			if (toolName === "write" || toolName === "edit") {
-				return {
-					action: "deny",
-					tier: "hard-deny",
-					matchedRule: "workspace-root",
-					layer: "default",
-					outsideRoot: true,
-					reason: `${toolName} target '${selector}' escapes the workspace root`,
-				};
+		if (jsonPaths && jsonPaths.length) {
+			// containment is per FIELD: any field outside the root marks the
+			// call outside (read-class caps at ask; write/edit are not recon
+			// tools, so the hard-deny branch below is unreachable here)
+			for (const f of jsonPaths) {
+				const c = canonicalize(f, opts);
+				if (opts.workspaceRoot && !isUnderRoot(c, opts.workspaceRoot)) {
+					outsideRoot = true;
+					effLayers = ls.filter((L) => L.name !== "workspace");
+					break;
+				}
 			}
-			// read-class outside the root: the workspace layer may not grant,
-			// and the verdict caps at ask (buildVerdict outsideRoot)
-			outsideRoot = true;
-			effLayers = ls.filter((L) => L.name !== "workspace");
+			// rule matching still sees the raw selector (unchanged contract)
+		} else {
+			canon = canonicalize(selector, opts);
+			if (opts.workspaceRoot && !isUnderRoot(canon, opts.workspaceRoot)) {
+				if (toolName === "write" || toolName === "edit") {
+					return {
+						action: "deny",
+						tier: "hard-deny",
+						matchedRule: "workspace-root",
+						layer: "default",
+						outsideRoot: true,
+						reason: `${toolName} target '${selector}' escapes the workspace root`,
+					};
+				}
+				// read-class outside the root: the workspace layer may not grant,
+				// and the verdict caps at ask (buildVerdict outsideRoot)
+				outsideRoot = true;
+				effLayers = ls.filter((L) => L.name !== "workspace");
+			}
 		}
 	}
-	// FR-7: sensitive override computed once per resolution (path tools only)
+	// FR-7: sensitive override computed once per resolution (path tools only).
+	// SEC-04a: for JSON recon selectors, sensitive matching runs per field.
 	const sens = isPath
-		? sensitiveFor(selector, canon, opts.sensitivePaths)
+		? jsonPaths && jsonPaths.length
+			? jsonSensitiveFor(jsonPaths, opts)
+			: sensitiveFor(selector, canon, opts.sensitivePaths)
 		: null;
 	const o2 = sens
 		? { ...opts, sensitive: () => sens, outsideRoot }
@@ -247,12 +282,103 @@ function resolve(toolName, selector, layers, opts = {}) {
 	return buildVerdict("allow", "default:*", "default", toolName, selector, o2);
 }
 
+/** SEC-04a: path-like string fields of a JSON recon selector (grep/find/
+ *  ls/glob). Returns an array of field values (path/filePath/dir keys, or
+ *  any value that looks like a path) or null when the selector isn't JSON
+ *  or carries no path fields. */
+function jsonPathFields(selector) {
+	const s = String(selector ?? "").trim();
+	if (!s.startsWith("{")) return null;
+	let obj;
+	try {
+		obj = JSON.parse(s);
+	} catch {
+		return null;
+	}
+	const out = [];
+	const isPathish = (v) =>
+		/^[./~\\]/.test(v) ||
+		v.includes("/") ||
+		v.includes("\\") ||
+		/^[a-z]:/i.test(v);
+	const walk = (v, key) => {
+		if (typeof v === "string" && v.trim()) {
+			if (key === "path" || key === "filePath" || key === "dir" || isPathish(v))
+				out.push(v);
+		} else if (Array.isArray(v)) {
+			for (const x of v) walk(x, key);
+		} else if (v && typeof v === "object") {
+			for (const k of Object.keys(v)) walk(v[k], k);
+		}
+	};
+	walk(obj, "");
+	return out.length ? out : null;
+}
+
+/** SEC-04a: sensitive override for JSON recon selectors — match against
+ *  EVERY extracted path field (canon + raw), deny wins over ask. */
+function jsonSensitiveFor(jsonPaths, opts) {
+	let hit = null;
+	for (const f of jsonPaths) {
+		const canon = canonicalize(f, opts);
+		const r = sensitiveFor(f, canon, opts.sensitivePaths);
+		if (r === "deny") return "deny";
+		if (r === "ask") hit = "ask";
+	}
+	return hit;
+}
+
+/** Collapse `.` and `..` segments lexically (pure string math, no fs).
+ *  SEC-04b: `sub/../../outside/new.txt` joined to cwd must normalize to
+ *  `<cwd-parent>/outside/new.txt` BEFORE any containment check — the old
+ *  raw join let `..` traversal slip past the string-prefix check. Handles
+ *  both `/` and Windows `\` separators; drive letters are preserved. */
+function collapseDotSegments(p) {
+	const sep = p.includes("\\") ? "\\" : "/";
+	const isAbs = p.startsWith("/") || p.startsWith("\\") || /^[a-z]:/i.test(p);
+	const parts = p.split(sep);
+	const out = [];
+	for (const part of parts) {
+		if (part === "." || part === "") continue;
+		if (part === "..") {
+			if (out.length && out[out.length - 1] !== "..") out.pop();
+			else if (!isAbs) out.push(part);
+			continue;
+		}
+		out.push(part);
+	}
+	const prefix = isAbs && p.startsWith(sep) ? sep : "";
+	const drive = isAbs && /^[a-z]:/i.test(p) ? out[0] : null;
+	const body = (drive ? out.slice(1) : out).join(sep);
+	return (drive ? drive + sep : prefix) + body;
+}
+
+/** Ancestor prefixes of a path, DEEPEST first (nearest to the full path).
+ *  SEC-04c walk order: try the closest existing ancestor first. Keeps the
+ *  leading separator so absolute paths stay absolute (realpath needs it). */
+function ancestorPrefixes(p) {
+	const str = String(p);
+	const parts = str.split(/[/\\]+/);
+	const out = [];
+	let cur = str.startsWith("/") || str.startsWith("\\") ? "/" : "";
+	for (let i = 0; i < parts.length - 1; i++) {
+		const part = parts[i];
+		if (!part) continue;
+		cur = cur === "/" ? cur + part : cur ? cur + "/" + part : part;
+		out.push(cur);
+	}
+	return out.reverse();
+}
+
 /** Canonicalize a path selector through the injected realpath (FR-6). When
  *  realpath fails (missing target, no realpath injected), non-escaping
  *  relative selectors are joined to the caller's cwd (opts.cwd) so a missing
- *  file INSIDE the root isn't misjudged as outside. `..`, `~`, absolute,
- *  drive-letter and $-prefixed selectors stay raw — the safe direction is
- *  ask, never a false allow. */
+ *  file INSIDE the root isn't misjudged as outside. SEC-04b: the joined
+ *  result collapses `.`/`..` segments. SEC-04c: for a missing target below a
+ *  symlink/junction, realpath the NEAREST EXISTING ANCESTOR and append the
+ *  missing suffix — the raw join alone let in-workspace links escape the
+ *  containment check. `~`, absolute, drive-letter and $-prefixed selectors
+ *  stay raw — the safe direction is ask, never a false allow. */
 function canonicalize(selector, opts) {
 	if (!opts) return selector;
 	const s = String(selector);
@@ -262,14 +388,32 @@ function canonicalize(selector, opts) {
 	} catch {
 		/* target may not exist yet (e.g. a write to a new file) */
 	}
-	if (
+	const joined =
 		opts.cwd &&
 		!s.startsWith("..") &&
 		!/^[a-z]:/i.test(s) &&
 		!/^[\\/~]/.test(s) &&
 		!s.startsWith("$")
-	)
-		return opts.cwd.replace(/[\\/]+$/, "") + "/" + s;
+			? opts.cwd.replace(/[\\/]+$/, "") + "/" + s
+			: null;
+	const target = joined ?? s;
+	// SEC-04c: walk up from the target; the deepest existing ancestor's real
+	// path + the missing suffix is the canonical form (a symlink's real
+	// parent then containment-checks correctly).
+	if (opts.realpath) {
+		for (const anc of ancestorPrefixes(target)) {
+			try {
+				const r = opts.realpath(anc);
+				if (r) {
+					const suffix = target.slice(anc.length).replace(/^[/\\]+/, "");
+					return suffix ? collapseDotSegments(r + "/" + suffix) : r;
+				}
+			} catch {
+				/* keep walking up — no existing ancestor here */
+			}
+		}
+	}
+	if (joined) return collapseDotSegments(joined);
 	return s;
 }
 
@@ -378,8 +522,14 @@ const DEFAULT_CONFIG = {
 
 	// bash: allow only anchored read-only recon (the classifier additionally
 	// requires every compound subcommand read-only + allow-ruled, FR-9).
+	// SEC-02a refinement: the read-only recon toolkit is allow-ruled by VERB -
+	// safe because the compound gate still requires argument-aware READ-ONLY
+	// classification, so `sed -i` / `find -delete` / `awk 'system()'` / `env rm`
+	// never ride these rules (gate.allow=false - ask in every mode).
 	bash: {
 		"*": "ask",
+		"re:^(cat|head|tail|less|more|grep|egrep|fgrep|wc|uniq|cut|tr|diff|cmp|file|stat|du|df|which|whereis|type|printenv|date|whoami|id|hostname|uname|uptime|sed|awk|find|sort|env)(\\s|$)":
+			"allow",
 		"re:^git (status|log|diff|show|blame|ls-files)(\\s|$)": "allow",
 		"re:^git branch --show-current(\\s|$)": "allow",
 		"re:^git remote -v(\\s|$)": "allow",
@@ -518,7 +668,24 @@ function normalizeForWrite(cfg) {
 function mergeTwo(high, low) {
 	const out = { ...(low && typeof low === "object" ? low : {}) };
 	if (high && typeof high === "object") {
-		for (const k of Object.keys(high)) out[k] = high[k];
+		for (const k of Object.keys(high)) {
+			const h = high[k];
+			const l = out[k];
+			// SEC-02a refinement: object tool tables union per key (high key
+			// wins) — a user's existing table must not WHOLESALE-shadow the
+			// floor's allows/denies (that made every floor improvement invisible
+			// to existing users). Scalars and arrays (grants, sensitivePaths)
+			// still replace wholesale.
+			out[k] =
+				h &&
+				l &&
+				typeof h === "object" &&
+				typeof l === "object" &&
+				!Array.isArray(h) &&
+				!Array.isArray(l)
+					? { ...l, ...h }
+					: h;
+		}
 	}
 	return out;
 }
@@ -539,6 +706,25 @@ function effActionFor(effCfg, toolName, key) {
 	}
 	if (typeof rule === "string") return rule;
 	return effCfg["*"] ?? "allow";
+}
+
+/** SEC-01a: strictest action among ALL inherited subrules of a tool
+ *  (deny > ask > allow). A workspace scalar may not loosen ANY of them —
+ *  comparing it to the wildcard alone let `bash:"ask"` shadow built-in
+ *  deny tables. */
+function strictestActionFor(effCfg, toolName) {
+	const rank = { deny: 3, ask: 2, allow: 1 };
+	let best = effCfg["*"] ?? "allow";
+	const consider = (a) => {
+		if (typeof a === "string" && rank[a] > rank[best]) best = a;
+	};
+	const rule = effCfg[toolName];
+	if (rule && typeof rule === "object") {
+		for (const k of Object.keys(rule)) consider(rule[k]);
+	} else {
+		consider(rule);
+	}
+	return best;
 }
 
 /**
@@ -563,10 +749,62 @@ function mergeLayers(defaultCfg, userCfg, workspaceCfg) {
 		if (ws[k] && typeof ws[k] === "object" && !Array.isArray(ws[k]))
 			ws[k] = { ...ws[k] };
 	const effUser = mergeTwo(userCfg, defaultCfg);
-	const eff = ws ? mergeTwo(ws, effUser) : effUser;
 
-	// mode resolution
-	let mode = effUser.mode ?? "default";
+	// SEC-01b: workspace metadata cannot bypass the tightening sweep. grants
+	// and nonInteractive are user/floor-only authority — a committed repo
+	// file must not inject always-grants or change the headless posture.
+	// sensitivePaths merge additively + tighten-only (append ask/deny, drop
+	// allow). mode is handled in the mode-resolution block below.
+	let wsSensitive = null;
+	if (ws) {
+		if (ws.grants != null) {
+			diagnostics.push({
+				layer: "workspace",
+				path: "grants",
+				message: "workspace may not inject grants — user layer only",
+			});
+			delete ws.grants;
+		}
+		if (ws.nonInteractive != null) {
+			diagnostics.push({
+				layer: "workspace",
+				path: "nonInteractive",
+				message: "workspace may not set nonInteractive — user layer only",
+			});
+			delete ws.nonInteractive;
+		}
+		if (ws.sensitivePaths != null) {
+			if (!Array.isArray(ws.sensitivePaths)) {
+				diagnostics.push({
+					layer: "workspace",
+					path: "sensitivePaths",
+					message: "workspace sensitivePaths must be an array",
+				});
+			} else {
+				const kept = ws.sensitivePaths.filter((e) => {
+					const tighten =
+						e &&
+						typeof e === "object" &&
+						(e.action === "ask" || e.action === "deny");
+					if (!tighten)
+						diagnostics.push({
+							layer: "workspace",
+							path: "sensitivePaths",
+							message: `workspace sensitivePaths entry ${JSON.stringify(e)} is not a tightening ask/deny — dropped`,
+						});
+					return tighten;
+				});
+				if (kept.length) wsSensitive = kept;
+			}
+			delete ws.sensitivePaths;
+		}
+	}
+
+	// mode resolution — SEC-14: yolo is session-only state and must NEVER
+	// propagate from a persisted layer. A `mode:"yolo"` in any layer only
+	// produces the diagnostic above; the effective mode falls back to the
+	// inherited non-yolo mode (or default).
+	let mode = effUser.mode && effUser.mode !== "yolo" ? effUser.mode : "default";
 	for (const [layer, cfg] of [
 		["workspace", workspaceCfg],
 		["user", userCfg],
@@ -607,10 +845,43 @@ function mergeLayers(defaultCfg, userCfg, workspaceCfg) {
 				return true;
 			};
 			if (typeof wsRule === "string") {
-				if (!check(tool, wsRule)) delete ws[tool];
+				// SEC-01a: a scalar must not loosen ANY inherited subrule —
+				// compare against the strictest inherited action, not just the
+				// wildcard (the old check let bash:"ask" shadow built-in denies).
+				const strictest = strictestActionFor(effUser, tool);
+				if (isLoosening(wsRule, strictest)) {
+					diagnostics.push({
+						layer: "workspace",
+						path: tool,
+						message: `'${wsRule}' loosens effective '${strictest}' — workspace may only tighten`,
+					});
+					delete ws[tool];
+				}
 			} else if (wsRule && typeof wsRule === "object") {
 				for (const p of Object.keys(wsRule)) {
-					if (!check(p, wsRule[p])) delete wsRule[p];
+					if (!check(p, wsRule[p])) {
+						delete wsRule[p];
+						continue;
+					}
+					// SEC-01a: a per-key allow on a tool with an inherited deny is
+					// only safe when the exact key is an inherited allow — a
+					// workspace pattern more specific than the deny could shadow
+					// it (resolve checks the workspace layer first).
+					if (wsRule[p] === "allow") {
+						const inherited = effUser[tool];
+						const exactAllow =
+							inherited &&
+							typeof inherited === "object" &&
+							inherited[p] === "allow";
+						if (strictestActionFor(effUser, tool) === "deny" && !exactAllow) {
+							diagnostics.push({
+								layer: "workspace",
+								path: `${tool}.${p}`,
+								message: `'allow' on '${tool}.${p}' could shadow an inherited deny — exact key must match an inherited allow`,
+							});
+							delete wsRule[p];
+						}
+					}
 				}
 			}
 		}
@@ -628,7 +899,20 @@ function mergeLayers(defaultCfg, userCfg, workspaceCfg) {
 	if (userCfg && typeof userCfg === "object")
 		layers.unshift({ name: "user", cfg: userCfg });
 	if (ws) layers.unshift({ name: "workspace", cfg: ws });
-	return { layers, diagnostics, effective: { ...eff, mode } };
+	// SEC-01c: effective derives from the FILTERED workspace layer (sweep +
+	// metadata above), so the display view can never disagree with layers.
+	const eff = ws ? mergeTwo(ws, effUser) : effUser;
+	const effective = { ...eff, mode };
+	// SEC-01b: workspace sensitivePaths merged additively — inherited
+	// entries survive, workspace ask/deny entries append (allow already
+	// dropped in the filter).
+	if (wsSensitive && wsSensitive.length) {
+		const inherited = Array.isArray(effective.sensitivePaths)
+			? effective.sensitivePaths
+			: [];
+		effective.sensitivePaths = [...inherited, ...wsSensitive];
+	}
+	return { layers, diagnostics, effective };
 }
 
 // C2 additions attached after their declarations (the C1 exports above are
@@ -676,6 +960,11 @@ function applyMode(verdict, mode, ctx = {}) {
 	if (!mode || mode === "default") return verdict;
 	if (mode === "yolo") return { ...verdict, action: "allow", tier: "yolo" };
 	if (mode === "auto-approve") {
+		// SEC-02b: a bash command is only auto-approvable when the compound
+		// gate allows it — mode-induced allows must not bypass FR-9. (The
+		// gate's deny/outside flags also block: gate.allow false means ask.)
+		if (ctx.toolName === "bash" && ctx.bashGate && !ctx.bashGate.allow)
+			return verdict;
 		if (verdict.action === "ask" && verdict.tier === "ordinary-ask") {
 			return { ...verdict, action: "allow", tier: "auto-approve" };
 		}
@@ -683,9 +972,16 @@ function applyMode(verdict, mode, ctx = {}) {
 	}
 	if (mode === "read-only") {
 		if (COORD_TOOLS.has(ctx.toolName)) return verdict;
+		// SEC-02b: bash is read-class ONLY when the classifier says readonly
+		// AND the per-part gate allows — `find . -delete` or `env rm -rf .`
+		// can't ride the name-only classification into an auto-allow.
 		const readClass =
 			READ_TOOLS.has(ctx.toolName) ||
-			(ctx.bashClassify && ctx.bashClassify.verdict === "readonly");
+			(ctx.toolName === "bash" &&
+				ctx.bashClassify &&
+				ctx.bashClassify.verdict === "readonly" &&
+				ctx.bashGate &&
+				ctx.bashGate.allow);
 		if (readClass) {
 			// FR-6: outside-workspace stays ask even in read-only mode — the
 			// containment cap beats the mode's read-class auto-allow

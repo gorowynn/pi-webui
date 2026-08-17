@@ -37,6 +37,25 @@ function createBroker() {
 		};
 	}
 
+	/**
+	 * SEC-07: normalize the offered options to their string labels
+	 * ("Allow once" | {label:"Deny"} → "Deny"; malformed entries skipped).
+	 * resolve() refuses any decision whose label is not among them, so a
+	 * client rendering MORE buttons than the gate offered (e.g. the IDE's
+	 * four-label bar on a mandatory-ask) can never upgrade a one-shot
+	 * approval into a session or persistent grant.
+	 */
+	function optionLabelsOf(options) {
+		if (!Array.isArray(options) || options.length === 0) return [];
+		const labels = [];
+		for (const o of options) {
+			if (typeof o === "string") labels.push(o);
+			else if (o && typeof o.label === "string") labels.push(o.label);
+			// malformed entries (null, {}, numbers) are skipped
+		}
+		return labels;
+	}
+
 	return {
 		/** Record the most recent tool_execution_start identity. */
 		setContext(toolCallId, toolName) {
@@ -58,6 +77,7 @@ function createBroker() {
 				title,
 				message,
 				options,
+				optionLabels: optionLabelsOf(options),
 			});
 			pending.set(requestId, rec);
 			return rec;
@@ -66,13 +86,34 @@ function createBroker() {
 		 * Resolve a pending approval. First response wins (FR-19):
 		 * @returns {{ok: true, event: {requestId, toolCallId, decision}}}
 		 *   on first resolution, or
-		 *   {ok: false, reason: "unknown" | "resolved"} otherwise.
+		 *   {ok: false, reason: "unknown" | "resolved" | "invalid-option"}
+		 *   otherwise.
+		 *
+		 * SEC-07: when the request offered options, the decision's label (a
+		 * string decision IS the label; an object decision's `.label` — the
+		 * editable-diff shape) must be one of them. An illegal label is
+		 * rejected WITHOUT consuming the response (record stays pending), so
+		 * a correct client can still answer. Freeform methods (confirm/input/
+		 * editor — no options) accept any value, unchanged.
 		 */
 		resolve(requestId, decision) {
 			const rec = pending.get(requestId);
 			if (!rec) return { ok: false, reason: "unknown" };
 			if (rec.status !== "pending")
 				return { ok: false, reason: "resolved" };
+			if (
+				Array.isArray(rec.optionLabels) &&
+				rec.optionLabels.length > 0
+			) {
+				const label =
+					typeof decision === "string"
+						? decision
+						: decision && typeof decision.label === "string"
+							? decision.label
+							: null;
+				if (label === null || !rec.optionLabels.includes(label))
+					return { ok: false, reason: "invalid-option" };
+			}
 			rec.status = "resolved";
 			rec.decision = decision;
 			return {

@@ -261,6 +261,103 @@ const layers = [
 	ok("helper exports (globToRe/matchValue/makeKey) behave (# FR-1)");
 }
 
+// ---- SEC-02a refinement: recon toolkit allow-ruled by verb + table union ----
+
+{
+	const {
+		DEFAULT_CONFIG,
+		resolve,
+		mergeLayers,
+	} = require("../extensions/pi_minimal_webui/policy-engine.js");
+	const {
+		gateBash,
+	} = require("../extensions/pi_minimal_webui/bash-classifier.js");
+	const idr = {
+		realpath: () => {
+			throw new Error("missing");
+		},
+	};
+	const { effective } = mergeLayers(DEFAULT_CONFIG, null, null);
+	// benign recon compounds: rule allow AND gate allow → silent allow
+	for (const cmd of [
+		"grep -rn foo src/",
+		"cat package.json | head -5",
+		"sed -n 1,5p server.js",
+		"find . -name '*.md'",
+		"sort package.json",
+		"awk '{print $1}' x.txt",
+		"env | grep FOO",
+	]) {
+		const v = resolve("bash", cmd, effective, idr);
+		assert.equal(v.action, "allow", `floor allows recon verb: ${cmd}`);
+		const g = gateBash(cmd, (part) => resolve("bash", part, effective, idr));
+		assert.equal(g.allow, true, `gate allows recon compound: ${cmd}`);
+	}
+	// SEC-02a binding: mutating forms hit an ALLOW rule but the compound gate
+	// refuses them — the rule can never carry a mutation (prompts everywhere)
+	for (const cmd of [
+		"sed -i s/a/b/ f",
+		"find . -delete",
+		"sort -o out f",
+		"env rm -rf .",
+	]) {
+		const v = resolve("bash", cmd, effective, idr);
+		assert.equal(v.action, "allow", `verb-anchored rule matches: ${cmd}`);
+		const g = gateBash(cmd, (part) => resolve("bash", part, effective, idr));
+		assert.equal(g.allow, false, `gate refuses the mutation: ${cmd}`);
+	}
+	ok(
+		"floor: recon verbs allow-ruled; mutations still gate-blocked (# SEC-02a)",
+	);
+}
+{
+	// table union: a user's existing bash table must not WHOLESALE-shadow the
+	// floor — floor allows/denies reach the effective config; same-key user
+	// entries still win (the prompt-storm root cause)
+	const {
+		DEFAULT_CONFIG,
+		mergeLayers,
+		resolve,
+	} = require("../extensions/pi_minimal_webui/policy-engine.js");
+	const user = { bash: { "*": "ask", "re:^ls(\\s|$)": "deny" } }; // user tightens ls
+	const { effective } = mergeLayers(DEFAULT_CONFIG, user, null);
+	assert.ok(
+		Object.keys(effective.bash).some((k) => k.startsWith("re:^(cat")),
+		"floor bash rules survive the user table",
+	);
+	assert.equal(
+		resolve("bash", "grep x f", effective, {
+			realpath: () => {
+				throw 0;
+			},
+		}).action,
+		"allow",
+		"floor allow reaches a user with an existing table",
+	);
+	assert.equal(
+		resolve("bash", "ls -la", effective, {
+			realpath: () => {
+				throw 0;
+			},
+		}).action,
+		"deny",
+		"same-key user entry wins (tightening preserved)",
+	);
+	// scalars still replace tables wholesale (explicit posture choice)
+	const scalar = mergeLayers(DEFAULT_CONFIG, { bash: "ask" }, null).effective;
+	assert.equal(scalar.bash, "ask", "scalar user bash replaces the table");
+	// arrays (grants) never merge — high replaces
+	const arr = mergeLayers(
+		{ grants: ["a\u0000b"] },
+		{ grants: ["c\u0000d"] },
+		null,
+	).effective;
+	assert.deepEqual(arr.grants, ["c\u0000d"], "grants array not merged");
+	ok(
+		"mergeTwo: tool tables union per key; scalars/arrays unchanged (# SEC-02a)",
+	);
+}
+
 console.log(`\npolicy-engine.test.js — C1: ${passed} passed`);
 
 // ---------------------------------------------------------------------------
@@ -358,6 +455,556 @@ const {
 	ok("workspace top-level '*' may not loosen (# FR-4)");
 }
 
+// ---- SEC-01a — scalar workspace rules tighten against EVERY inherited subrule -----
+
+{
+	// scalar bash:"ask" over a default deny table must be dropped — the
+	// old wildcard-only comparison accepted it and shadowed the rm deny
+	const def = { "*": "ask", bash: { "re:^rm(\\s|$)": "deny", "*": "ask" } };
+	const { layers, diagnostics } = mergeLayers(def, {}, { bash: "ask" });
+	assert.equal(diagnostics.length, 1);
+	assert.ok(diagnostics[0].path === "bash", "diagnostic names the tool");
+	assert.equal(
+		resolve("bash", "rm -rf /", layers, { realpath: (p) => p, cwd: "/" })
+			.action,
+		"deny",
+		"built-in rm deny survives a workspace bash:ask",
+	);
+}
+{
+	// scalar bash:"allow" over a deny table is dropped; inherited allow
+	// rules still resolve for their commands
+	const def = {
+		"*": "ask",
+		bash: {
+			"re:^git status(\\s|$)": "allow",
+			"re:^rm(\\s|$)": "deny",
+			"*": "ask",
+		},
+	};
+	const { layers, diagnostics } = mergeLayers(def, {}, { bash: "allow" });
+	assert.equal(diagnostics.length, 1);
+	assert.equal(
+		resolve("bash", "git status", layers, { realpath: (p) => p, cwd: "/" })
+			.action,
+		"allow",
+		"inherited git-status allow still resolves",
+	);
+}
+{
+	// scalar tightening is still allowed: workspace read:"ask" over an
+	// inherited allow table is KEPT and applies
+	const def = { "*": "ask", read: { "*": "allow" } };
+	const { layers, diagnostics } = mergeLayers(def, {}, { read: "ask" });
+	assert.equal(diagnostics.length, 0);
+	assert.equal(
+		resolve("read", "/a/x", layers, { realpath: (p) => p, cwd: "/" }).action,
+		"ask",
+	);
+}
+{
+	// per-key allow matching an inherited allow key survives
+	const def = {
+		"*": "ask",
+		bash: { "re:^ls(\\s|$)": "allow", "re:^rm(\\s|$)": "deny", "*": "ask" },
+	};
+	const { layers, diagnostics } = mergeLayers(
+		def,
+		{},
+		{ bash: { "re:^ls(\\s|$)": "allow" } },
+	);
+	assert.equal(diagnostics.length, 0, "exact inherited allow key is safe");
+	assert.equal(
+		resolve("bash", "ls -la", layers, { realpath: (p) => p, cwd: "/" }).action,
+		"allow",
+	);
+}
+{
+	// per-key allow NOT matching an inherited allow key is dropped when the
+	// tool has an inherited deny (a more specific workspace pattern could
+	// shadow it — resolve checks the workspace layer first)
+	const def = {
+		"*": "ask",
+		bash: { "re:^rm(\\s|$)": "deny", "*": "allow" },
+	};
+	const { layers, diagnostics } = mergeLayers(
+		def,
+		{},
+		{ bash: { "re:^rm -rf /(\\s|$)": "allow" } },
+	);
+	assert.equal(diagnostics.length, 1, "shadowing allow rejected");
+	assert.equal(
+		resolve("bash", "rm -rf /", layers, { realpath: (p) => p, cwd: "/" })
+			.action,
+		"deny",
+		"deny still wins for the shadowed command",
+	);
+}
+ok(
+	"SEC-01a: scalar/per-key workspace rules tighten against every inherited subrule (# SEC-01a)",
+);
+
+// ---- SEC-01b — workspace metadata cannot bypass the tightening sweep ---------------
+
+{
+	// workspace grants are rejected — a committed repo file cannot inject
+	// exact-selector always-grants
+	const def = { "*": "ask", grants: [] };
+	const { layers, effective, diagnostics } = mergeLayers(
+		def,
+		{},
+		{ grants: ["bash\u0000rm -rf /"] },
+	);
+	assert.equal(
+		effective.grants && effective.grants.includes("bash\u0000rm -rf /"),
+		false,
+		"workspace grant excluded from effective.grants",
+	);
+	assert.ok(
+		diagnostics.some((d) => d.path === "grants"),
+		"diagnostic names grants",
+	);
+	// the gate's grant lookup path (hasGrant over effective.grants) never sees it
+	const opts = {
+		realpath: (p) => p,
+		cwd: "/",
+		hasGrant: (k) =>
+			(Array.isArray(effective.grants) && effective.grants.includes(k)) ||
+			false,
+	};
+	assert.notEqual(
+		resolve("bash", "rm -rf /", layers, opts).tier,
+		"grant",
+		"no grant tier via workspace-injected grants",
+	);
+}
+{
+	// workspace nonInteractive is rejected — headless posture is user/floor-only
+	const def = { "*": "ask", nonInteractive: "allow" };
+	const { effective, diagnostics } = mergeLayers(
+		def,
+		{ nonInteractive: "block" },
+		{ nonInteractive: "block" },
+	);
+	assert.equal(
+		effective.nonInteractive,
+		"block",
+		"workspace nonInteractive ignored; user value survives",
+	);
+	assert.ok(diagnostics.some((d) => d.path === "nonInteractive"));
+}
+{
+	// workspace sensitivePaths merge ADDITIVELY with the inherited list
+	const def = {
+		"*": "ask",
+		sensitivePaths: [{ pattern: "**/.env*", action: "ask" }],
+	};
+	const { effective, diagnostics } = mergeLayers(
+		def,
+		{},
+		{ sensitivePaths: [{ pattern: "**/secret*", action: "ask" }] },
+	);
+	assert.equal(diagnostics.length, 0);
+	assert.equal(effective.sensitivePaths.length, 2);
+	assert.ok(
+		effective.sensitivePaths.some((e) => e.pattern === "**/.env*"),
+		"inherited entry survives",
+	);
+	assert.ok(
+		effective.sensitivePaths.some((e) => e.pattern === "**/secret*"),
+		"workspace entry appended",
+	);
+}
+{
+	// workspace sensitivePaths may not WEAKEN (allow entries dropped)
+	const def = {
+		"*": "ask",
+		sensitivePaths: [{ pattern: "**/.env*", action: "ask" }],
+	};
+	const { effective, diagnostics } = mergeLayers(
+		def,
+		{},
+		{ sensitivePaths: [{ pattern: "**/.env*", action: "allow" }] },
+	);
+	assert.equal(effective.sensitivePaths.length, 1);
+	assert.equal(effective.sensitivePaths[0].action, "ask");
+	assert.ok(diagnostics.some((d) => d.path === "sensitivePaths"));
+}
+{
+	// workspace mode:auto-approve is dropped with a diagnostic (only
+	// read-only may force); user mode survives
+	const def = { "*": "ask", mode: "default" };
+	const { effective, diagnostics } = mergeLayers(
+		def,
+		{ mode: "auto-approve" },
+		{ mode: "auto-approve" },
+	);
+	assert.equal(effective.mode, "auto-approve");
+	assert.ok(diagnostics.some((d) => d.message.includes("read-only")));
+}
+ok(
+	"SEC-01b: workspace grants/nonInteractive/sensitivePaths/mode filtered tighten-only (# SEC-01b)",
+);
+
+// ---- SEC-01c — effective derives from the FILTERED workspace layer ---------------
+
+{
+	// a dropped loosening rule must NOT appear in effective (the old code
+	// merged ws BEFORE the sweep, so the display showed rules the gate
+	// rejected)
+	const def = { "*": "ask", bash: { "re:^rm(\\s|$)": "deny", "*": "ask" } };
+	const { effective } = mergeLayers(def, {}, { bash: "ask" });
+	assert.notEqual(
+		effective.bash,
+		"ask",
+		"dropped scalar absent from effective",
+	);
+	assert.deepEqual(
+		effective.bash,
+		def.bash,
+		"effective.bash == inherited table",
+	);
+}
+{
+	// a KEPT tightening appears in effective AND resolves
+	const def = { "*": "ask", read: { "*": "allow" } };
+	const { effective, layers } = mergeLayers(def, {}, { read: "ask" });
+	assert.equal(effective.read, "ask");
+	assert.equal(
+		resolve("read", "/a/x", layers, { realpath: (p) => p, cwd: "/" }).action,
+		"ask",
+	);
+}
+{
+	// effective.mode still resolved per SEC-14 after filtering
+	const { effective } = mergeLayers({}, { mode: "yolo" }, null);
+	assert.equal(effective.mode, "default");
+}
+ok("SEC-01c: effective view == layers view after the sweep (# SEC-01c)");
+
+// ---- SEC-06 — Windows separator normalization in path matching ---------------------
+
+{
+	// sensitive hit on Windows separators: C:\proj\.env matches **/.env*
+	const layersWin = [
+		{ name: "user", cfg: { "*": "ask", read: { "*": "allow" } } },
+	];
+	const sensWin = [{ pattern: "**/.env*", action: "ask" }];
+	const v = resolve("read", "C:\\proj\\.env", layersWin, {
+		realpath: (p) => p,
+		cwd: "C:\\proj",
+		sensitivePaths: sensWin,
+	});
+	assert.equal(
+		v.tier,
+		"mandatory-ask",
+		"C:proj.env read hits the sensitive ask (not grantable)",
+	);
+}
+{
+	const layersWin = [
+		{ name: "user", cfg: { "*": "ask", read: { "*": "allow" } } },
+	];
+	assert.equal(
+		resolve("read", "C:\\proj\\id_rsa", layersWin, {
+			realpath: (p) => p,
+			cwd: "C:\\proj",
+			sensitivePaths: [{ pattern: "**/id_rsa", action: "deny" }],
+		}).action,
+		"deny",
+		"C:projid_rsa hard-deny",
+	);
+	assert.equal(
+		resolve("read", "C:\\keys\\a.key", layersWin, {
+			realpath: (p) => p,
+			cwd: "C:\\keys",
+			sensitivePaths: [{ pattern: "**/id_rsa", action: "deny" }],
+		}).tier,
+		"allow",
+		"glob **/*.key is NOT id_rsa — non-match stays allow",
+	);
+}
+{
+	// POSIX behavior unchanged: .env hits, plain files don't
+	const layersPosix = [
+		{ name: "user", cfg: { "*": "ask", read: { "*": "allow" } } },
+	];
+	const sensPosix = [
+		{ pattern: "**/.env*", action: "ask" },
+		{ pattern: "**/*.key", action: "ask" },
+	];
+	assert.equal(
+		resolve("read", "/home/u/.env", layersPosix, {
+			realpath: (p) => p,
+			cwd: "/home/u",
+			sensitivePaths: sensPosix,
+		}).tier,
+		"mandatory-ask",
+	);
+	assert.equal(
+		resolve("read", "/home/u/src.ts", layersPosix, {
+			realpath: (p) => p,
+			cwd: "/home/u",
+			sensitivePaths: sensPosix,
+		}).tier,
+		"allow",
+	);
+	// Windows glob with / pattern matches backslash path
+	assert.equal(
+		resolve("read", "C:\\keys\\a.key", layersPosix, {
+			realpath: (p) => p,
+			cwd: "C:\\keys",
+			sensitivePaths: [{ pattern: "**/*.key", action: "ask" }],
+		}).tier,
+		"mandatory-ask",
+		"glob **/*.key matches C:keysa.key",
+	);
+}
+ok(
+	"SEC-06: Windows backslash paths match /-separated sensitive patterns (# SEC-06)",
+);
+
+// ---- SEC-04a — recon-tool JSON selectors canonicalized per path field -------------
+
+// realistic realpath stub: only /ws (and children) exist; everything else
+// throws ENOENT exactly like realpathSync on a missing target
+const rpWs = (p) => {
+	if (p.startsWith("/ws")) return p;
+	const e = new Error("ENOENT");
+	e.code = "ENOENT";
+	throw e;
+};
+
+{
+	// review evidence: ls {"path":"/etc/passwd"} must NOT resolve allow —
+	// the JSON blob is not a single path, and the outside field caps at ask
+	const layers = [
+		{
+			name: "user",
+			cfg: { ls: "allow", grep: "allow", find: "allow", "*": "ask" },
+		},
+	];
+	const v = resolve("ls", '{"path":"/etc/passwd"}', layers, {
+		realpath: rpWs,
+		cwd: "/ws",
+		workspaceRoot: "/ws",
+	});
+	assert.equal(v.action, "ask", "outside field caps at ask");
+	assert.equal(v.tier, "outside-workspace");
+	assert.equal(v.outsideRoot, true);
+}
+{
+	// inside-root JSON fields stay allow when the rule allows
+	const layers = [
+		{
+			name: "user",
+			cfg: { ls: "allow", grep: "allow", find: "allow", "*": "ask" },
+		},
+	];
+	const v = resolve("grep", '{"path":"src/x","pattern":"foo"}', layers, {
+		realpath: rpWs,
+		cwd: "/ws",
+		workspaceRoot: "/ws",
+	});
+	assert.equal(v.action, "allow", "inside-root recon stays allow");
+}
+{
+	const layers = [{ name: "user", cfg: { find: "allow", "*": "ask" } }];
+	const v = resolve("find", '{"path":"/outside"}', layers, {
+		realpath: rpWs,
+		cwd: "/ws",
+		workspaceRoot: "/ws",
+	});
+	assert.equal(v.outsideRoot, true);
+	assert.equal(v.action, "ask");
+}
+{
+	// JSON with no path-like values keeps the existing non-path behavior
+	const layers = [{ name: "user", cfg: { ls: "allow", "*": "ask" } }];
+	const v = resolve("ls", '{"pattern":"src"}', layers, {
+		realpath: rpWs,
+		cwd: "/ws",
+		workspaceRoot: "/ws",
+	});
+	assert.equal(v.action, "allow", "non-path JSON selector unchanged");
+}
+ok("SEC-04a: JSON recon selectors canonicalize each path field (# SEC-04a)");
+
+// ---- SEC-04b — `..` normalized before containment --------------------------------
+
+{
+	// review evidence: write sub/../../outside/new.txt escapes via .. segments
+	const layers = [{ name: "user", cfg: { "*": "ask", write: "ask" } }];
+	const v = resolve("write", "sub/../../outside/new.txt", layers, {
+		realpath: () => {
+			throw new Error("ENOENT");
+		},
+		cwd: "/ws",
+		workspaceRoot: "/ws",
+	});
+	assert.equal(v.action, "deny", ".. traversal outside root → hard-deny");
+	assert.equal(v.tier, "hard-deny");
+	assert.equal(v.outsideRoot, true);
+}
+{
+	// . segments stay inside
+	const layers = [{ name: "user", cfg: { "*": "ask", write: "allow" } }];
+	const v = resolve("write", "sub/./x.txt", layers, {
+		realpath: () => {
+			throw new Error("ENOENT");
+		},
+		cwd: "/ws",
+		workspaceRoot: "/ws",
+	});
+	assert.equal(v.action, "allow", ". collapse keeps the target inside");
+}
+{
+	// read-class .. escape caps at ask (FR-6 outside-workspace tier)
+	const layers = [{ name: "user", cfg: { "*": "allow" } }];
+	const v = resolve("read", "../outside", layers, {
+		realpath: () => {
+			throw new Error("ENOENT");
+		},
+		cwd: "/ws",
+		workspaceRoot: "/ws",
+	});
+	assert.equal(v.action, "ask");
+	assert.equal(v.tier, "outside-workspace");
+}
+{
+	// Windows separators: sub\..\..\outside\n.txt escapes
+	const layers = [{ name: "user", cfg: { "*": "ask", write: "ask" } }];
+	const v = resolve("write", "sub\\..\\..\\outside\\n.txt", layers, {
+		realpath: () => {
+			throw new Error("ENOENT");
+		},
+		cwd: "C:\\ws",
+		workspaceRoot: "C:\\ws",
+	});
+	assert.equal(
+		v.action,
+		"deny",
+		"Windows .. traversal outside root → hard-deny",
+	);
+	assert.equal(v.outsideRoot, true);
+}
+ok("SEC-04b: `..` segments normalize before containment (# SEC-04b)");
+
+// ---- SEC-04c — missing targets realpath their nearest existing parent ------------
+
+{
+	// review evidence: write through an in-workspace symlink whose real
+	// parent is outside — the missing target itself can't realpath, so the
+	// walk must realpath the nearest existing ancestor (the link)
+	const layers = [{ name: "user", cfg: { "*": "ask", write: "ask" } }];
+	const v = resolve("write", "link/outside/new.txt", layers, {
+		realpath: (p) => {
+			// /ws/link is a symlink to /outside; targets under it are missing
+			if (p === "/ws/link") return "/outside";
+			if (p === "/ws") return "/ws";
+			if (p.startsWith("/ws/link/")) throw new Error("ENOENT");
+			if (p.startsWith("/ws")) return p;
+			throw new Error("ENOENT");
+		},
+		cwd: "/ws",
+		workspaceRoot: "/ws",
+	});
+	assert.equal(
+		v.action,
+		"deny",
+		"symlink-parent write outside root → hard-deny",
+	);
+	assert.equal(v.outsideRoot, true);
+}
+{
+	// same shape with the link staying inside → allow
+	const layers = [{ name: "user", cfg: { "*": "ask", write: "allow" } }];
+	const v = resolve("write", "link/inside/new.txt", layers, {
+		realpath: (p) => {
+			if (p === "/ws/link") return "/ws/real";
+			if (p === "/ws") return "/ws";
+			if (p.startsWith("/ws/link/")) throw new Error("ENOENT");
+			if (p.startsWith("/ws")) return p;
+			throw new Error("ENOENT");
+		},
+		cwd: "/ws",
+		workspaceRoot: "/ws",
+	});
+	assert.equal(v.action, "allow", "inside symlink-parent write stays allow");
+}
+{
+	// existing targets still realpath directly (no walk needed)
+	const layers = [{ name: "user", cfg: { "*": "ask", read: "allow" } }];
+	const v = resolve("read", "/ws/x", layers, {
+		realpath: (p) => (p === "/ws/x" ? "/ws/real/x" : p),
+		cwd: "/ws",
+		workspaceRoot: "/ws",
+	});
+	assert.equal(v.action, "allow", "direct realpath unchanged");
+	assert.equal(v.matchedRule, "read", "rule matched the canonical path");
+}
+{
+	// no ancestor realpaths (fresh tree) → raw join fallback (existing behavior)
+	const layers = [{ name: "user", cfg: { "*": "ask", write: "allow" } }];
+	const v = resolve("write", "a/b/new.txt", layers, {
+		realpath: () => {
+			throw new Error("ENOENT");
+		},
+		cwd: "/ws",
+		workspaceRoot: "/ws",
+	});
+	assert.equal(v.action, "allow", "no symlinks → literal join inside");
+}
+ok("SEC-04c: missing targets realpath the nearest existing parent (# SEC-04c)");
+
+// ---- SEC-02b — mode-induced bash allows require the per-part gate ------------------
+
+const {
+	applyMode: applyModeB,
+} = require("../extensions/pi_minimal_webui/policy-engine.js");
+{
+	// read-only: bash classified readonly but the compound gate does NOT
+	// allow → NOT read-class → deny (the old applyMode let it auto-allow)
+	const v = { action: "ask", tier: "ordinary-ask" };
+	const d = applyModeB(v, "read-only", {
+		toolName: "bash",
+		bashClassify: { verdict: "readonly" },
+		bashGate: { allow: false },
+	});
+	assert.equal(d.action, "deny", "readonly-class bash without gate → deny");
+	assert.equal(d.tier, "read-only-deny");
+}
+{
+	// read-only: bash readonly AND gate allow → read-class allow
+	const v = { action: "ask", tier: "ordinary-ask" };
+	const a = applyModeB(v, "read-only", {
+		toolName: "bash",
+		bashClassify: { verdict: "readonly" },
+		bashGate: { allow: true },
+	});
+	assert.equal(a.action, "allow", "readonly-class bash with gate → allow");
+	assert.equal(a.tier, "read-only");
+}
+{
+	// non-bash read tools unchanged (no bashGate in ctx)
+	const v = { action: "allow", tier: "allow" };
+	const r = applyModeB(v, "read-only", { toolName: "read" });
+	assert.equal(r.action, "allow", "read tool stays allowed");
+	assert.equal(r.tier, "read-only", "read-class tier (existing behavior)");
+}
+{
+	// yolo stays the explicit session override (never gated)
+	const v = { action: "deny", tier: "hard-deny" };
+	assert.equal(
+		applyModeB(v, "yolo", { toolName: "bash", bashGate: { allow: false } })
+			.action,
+		"allow",
+	);
+}
+ok(
+	"SEC-02b: read-only bash requires classifier readonly AND the per-part gate (# SEC-02b)",
+);
+
 // ---- FR-4/FR-12 — mode across layers ---------------------------------------------
 
 {
@@ -405,6 +1052,58 @@ const {
 	}
 	ok("mode:yolo rejected in EVERY layer (# FR-12)");
 }
+
+// ---- SEC-14 — persisted yolo must never reach effective.mode ---------------------
+
+{
+	// user yolo: diagnostic yes, effective mode = default (never yolo)
+	const { effective, diagnostics } = mergeLayers({}, { mode: "yolo" }, null);
+	assert.equal(effective.mode, "default", "user yolo normalizes to default");
+	assert.ok(
+		diagnostics.some((d) => d.message.includes("yolo")),
+		"diagnostic still emitted",
+	);
+}
+{
+	// workspace yolo: same normalization
+	const { effective } = mergeLayers({}, {}, { mode: "yolo" });
+	assert.equal(
+		effective.mode,
+		"default",
+		"workspace yolo normalizes to default",
+	);
+}
+{
+	// workspace read-only still forces
+	const { effective } = mergeLayers(
+		{},
+		{ mode: "auto-approve" },
+		{ mode: "read-only" },
+	);
+	assert.equal(effective.mode, "read-only");
+}
+{
+	// yolo in user config can never flip a hard-deny verdict: resolve+applyMode
+	const {
+		DEFAULT_CONFIG,
+		applyMode,
+	} = require("../extensions/pi_minimal_webui/policy-engine.js");
+	const { layers } = mergeLayers(DEFAULT_CONFIG, { mode: "yolo" }, null);
+	const v = resolve("bash", "rm -rf /", layers, {
+		realpath: (p) => p,
+		cwd: "/",
+	});
+	assert.equal(v.action, "deny", "rm -rf / stays hard-deny under user yolo");
+	assert.equal(applyMode(v, "default").action, "deny");
+}
+{
+	// non-yolo persisted modes unchanged
+	const { effective } = mergeLayers({}, { mode: "auto-approve" }, null);
+	assert.equal(effective.mode, "auto-approve");
+}
+ok(
+	"SEC-14: persisted yolo normalizes to default; never reaches effective.mode (# SEC-14)",
+);
 
 // ---- FR-5 — v1 migration + validateConfig -----------------------------------------
 
@@ -828,11 +1527,20 @@ const {
 		"deny",
 		"mandatory-ask on a mutator denies in read-only",
 	);
-	// bash read-class via classifier verdict
+	// bash read-class via classifier verdict REQUIRES the per-part gate
+	// (SEC-02b — a readonly label alone must not auto-allow)
 	assert.equal(
 		applyMode({ action: "ask", tier: "ordinary-ask" }, "read-only", {
 			toolName: "bash",
 			bashClassify: { verdict: "readonly" },
+		}).action,
+		"deny",
+	);
+	assert.equal(
+		applyMode({ action: "ask", tier: "ordinary-ask" }, "read-only", {
+			toolName: "bash",
+			bashClassify: { verdict: "readonly" },
+			bashGate: { allow: true },
 		}).action,
 		"allow",
 	);
@@ -894,26 +1602,24 @@ console.log(
 
 	// relative selector whose realpath fails (missing target) but which is
 	// INSIDE the root must not be misjudged outside — cwd-joined
-	const rel = resolve(
-		"read",
-		"src/new.txt",
-		layers,
-		{ ...opts, cwd: "/work", realpath: () => {
+	const rel = resolve("read", "src/new.txt", layers, {
+		...opts,
+		cwd: "/work",
+		realpath: () => {
 			throw new Error("ENOENT");
-		} },
-	);
+		},
+	});
 	assert.equal(rel.action, "allow");
 	assert.equal(rel.outsideRoot, undefined);
 
 	// a relative `..` escape stays flagged outside (raw — safe direction)
-	const esc = resolve(
-		"read",
-		"../secrets/x",
-		layers,
-		{ ...opts, cwd: "/work", realpath: () => {
+	const esc = resolve("read", "../secrets/x", layers, {
+		...opts,
+		cwd: "/work",
+		realpath: () => {
 			throw new Error("ENOENT");
-		} },
-	);
+		},
+	});
 	assert.equal(esc.action, "ask");
 	assert.equal(esc.tier, "outside-workspace");
 
@@ -969,5 +1675,7 @@ console.log(
 	);
 	assert.equal(wsGrant.action, "ask");
 	assert.equal(wsGrant.tier, "outside-workspace");
-	ok("FR-6: outside-root reads cap at ask in every non-yolo mode; write/edit hard-deny");
+	ok(
+		"FR-6: outside-root reads cap at ask in every non-yolo mode; write/edit hard-deny",
+	);
 }

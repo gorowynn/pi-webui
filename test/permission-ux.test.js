@@ -243,8 +243,9 @@ const ok = (name) => {
 		app.indexOf("function shellLooks"),
 	);
 	assert.ok(
-		askModal.includes('showModal("", false, true)'),
-		"ask question uses the full-page modal",
+		askModal.includes('showModal("", false)') &&
+			!askModal.includes('showModal("", false, true)'),
+		"ask question opens the blocking modal (width only with diffs, bce9bcf)",
 	);
 	assert.ok(
 		askModal.includes('toast("Your input is needed", "warn")'),
@@ -269,27 +270,26 @@ const ok = (name) => {
 		"full-page modal variant exists",
 	);
 	assert.ok(
-		app.includes("async function openSelectModal(req, notify = false)"),
-		"select modal accepts an explicit notification flag",
+		app.includes("async function openSelectModal(req)") &&
+			!app.includes("notify = false"),
+		"select modal takes no notify flag (toasts live in the dialog branches)",
 	);
 	assert.ok(
-		app.includes("openSelectModal(req, true)"),
-		"live selects request a notification",
-	);
-	assert.ok(
-		app.includes(
-			'toast(isPermission ? "Approval required" : "Your input is needed", "warn")',
-		),
-		"select notifications distinguish approval from input",
+		(app.match(/toast\("Your input is needed", "warn"\)/g) || []).length >=
+			3,
+		"ask/input/editor branches emit a warning notification",
 	);
 	assert.ok(
 		app.includes(
-			'showModal(`<h3>${esc(req.title || "Input")}</h3>`, false, true)',
+			'showModal(`<h3>${esc(req.title || "Input")}</h3>`, false)',
 		) &&
 			app.includes(
-				'showModal(`<h3>${esc(req.title || "Edit")}</h3>`, false, true)',
+				'showModal(`<h3>${esc(req.title || "Edit")}</h3>`, false)',
+			) &&
+			!app.includes(
+				'showModal(`<h3>${esc(req.title || "Input")}</h3>`, false, true)',
 			),
-		"input and editor requests use the full-page modal",
+		"input/editor open the blocking modal (width only with diffs, bce9bcf)",
 	);
 	assert.ok(
 		app.includes('labels.filter((l) => l === "Allow once" || l === "Deny")'),

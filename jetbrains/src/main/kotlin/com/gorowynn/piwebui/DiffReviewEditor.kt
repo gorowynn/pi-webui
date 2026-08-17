@@ -26,6 +26,7 @@ import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.event.ActionEvent
 import java.beans.PropertyChangeListener
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.AbstractAction
 import javax.swing.JButton
 import javax.swing.JComponent
@@ -68,7 +69,65 @@ class DiffReviewEditor(
     private var origRight: String = ""
     private var rightContent: DocumentContent? = null
 
+    // SEC-17b: rebuilt-diff plumbing (root panel + current center pane) and
+    // the inline staleness warning the blocked-allow path fills.
+    private var rootPanel: JPanel? = null
+    private var diffPane: JComponent? = null
+    private var diffPanel: DiffRequestPanel? = null
+    private var staleWarn: JLabel? = null
+
     private fun build(): JComponent {
+        val bar = JPanel(BorderLayout())
+        bar.border = JBUI.Borders.empty(8)
+        // U6 C11 (FR-41): the active permission mode rides the bridge payload
+        // (app.js sends pendingApproval.provenance.mode) so the gate shows its
+        // own posture; yolo gets a warning badge.
+        val modeLabel =
+            when (file.payload.mode) {
+                "yolo" -> "⚠ YOLO ACTIVE — all actions auto-allowed"
+                "", "default" -> "mode: default"
+                else -> "mode: ${file.payload.mode}"
+            }
+        bar.add(JLabel("Approve pi's change to ${file.payload.filename}? · $modeLabel"), BorderLayout.WEST)
+        // SEC-17b: filled when an allow is blocked because the file changed on
+        // disk; cleared by the re-read that re-bases the diff.
+        staleWarn = JLabel("").also { bar.add(it, BorderLayout.CENTER) }
+        val east = JPanel()
+        east.add(
+            JButton(
+                object : AbstractAction("Re-read file") {
+                    override fun actionPerformed(e: ActionEvent) = reRead()
+                },
+            ),
+        )
+        // SEC-07: render ONLY the options the gate actually offered (a
+        // mandatory-ask shows Allow once/Deny — never a four-label bar that
+        // could mint a session/persistent grant the gate never offered).
+        // Old-webui payloads without options fall back to the four labels.
+        val labels = file.payload.options.ifEmpty { listOf(ALLOW_ONCE, ALLOW_SESSION, ALLOW_ALWAYS, DENY) }
+        for (label in labels) {
+            east.add(
+                JButton(
+                    object : AbstractAction(label) {
+                        override fun actionPerformed(e: ActionEvent) = attemptDecision(label)
+                    },
+                ),
+            )
+        }
+        bar.add(east, BorderLayout.EAST)
+
+        val root = JPanel(BorderLayout())
+        root.add(bar, BorderLayout.NORTH)
+        rootPanel = root
+        rebuildDiffPane(root)
+        return root
+    }
+
+    /** (Re)build the CENTER diff against the CURRENT on-disk base. Used by
+     *  build() and by the SEC-17b re-read after a blocked stale allow (fresh
+     *  base, proposal re-applied per payload.op, right pane reset). */
+    private fun rebuildDiffPane(root: JPanel) {
+        val oldPanel = diffPanel
         val (left, right, fileType) = resolveContents(proj, file.payload)
         leftText = left
         origRight = right
@@ -84,35 +143,43 @@ class DiffReviewEditor(
             DiffManager.getInstance().createRequestPanel(proj, diffDisp, null)
         panel.setRequest(request)
         panel.component.preferredSize = Dimension(1000, 700)
-
-        val bar = JPanel(BorderLayout())
-        bar.border = JBUI.Borders.empty(8)
-        // U6 C11 (FR-41): the active permission mode rides the bridge payload
-        // (app.js sends pendingApproval.provenance.mode) so the gate shows its
-        // own posture; yolo gets a warning badge.
-        val modeLabel =
-            when (file.payload.mode) {
-                "yolo" -> "⚠ YOLO ACTIVE — all actions auto-allowed"
-                "", "default" -> "mode: default"
-                else -> "mode: ${file.payload.mode}"
-            }
-        bar.add(JLabel("Approve pi's change to ${file.payload.filename}? · $modeLabel"), BorderLayout.WEST)
-        val buttons = JPanel()
-        for (label in listOf(ALLOW_ONCE, ALLOW_SESSION, ALLOW_ALWAYS, DENY)) {
-            buttons.add(
-                JButton(
-                    object : AbstractAction(label) {
-                        override fun actionPerformed(e: ActionEvent) = decideAndClose(label)
-                    },
-                ),
-            )
-        }
-        bar.add(buttons, BorderLayout.EAST)
-
-        val root = JPanel(BorderLayout())
-        root.add(bar, BorderLayout.NORTH)
+        diffPane?.let { root.remove(it) }
+        oldPanel?.let { Disposer.dispose(it) } // free the swapped-out panel
         root.add(panel.component, BorderLayout.CENTER)
-        return root
+        root.revalidate()
+        root.repaint()
+        diffPane = panel.component
+        diffPanel = panel
+    }
+
+    /** SEC-17b re-read: rebuild the diff from the fresh on-disk base and
+     *  clear the staleness block (the next allow is judged against the new
+     *  base; the user's in-flight right-pane edits reset — the proposal is
+     *  re-applied verbatim). */
+    private fun reRead() {
+        val root = rootPanel ?: return
+        rebuildDiffPane(root)
+        staleWarn?.text = ""
+    }
+
+    /** SEC-17b: an ALLOW against a file that changed on disk since the diff
+     *  was built is BLOCKED until the user explicitly re-reads (a silent
+     *  approval could clobber newer content). Deny always resolves
+     *  (fail-closed direction). */
+    private fun attemptDecision(label: String) {
+        if (DiffBridge.shouldBlockAllow(label, currentStale())) {
+            staleWarn?.text = "⚠ changed on disk — Re-read file before allowing (Deny works)"
+            return
+        }
+        decideAndClose(label)
+    }
+
+    private fun currentStale(): Boolean {
+        if (file.payload.path.isBlank()) return false
+        return runCatching {
+            val vf = resolveVirtualFile(proj, file.payload) ?: return false
+            DiffBridge.isStale(leftText, readCurrentText(vf))
+        }.getOrDefault(false)
     }
 
     /**
@@ -197,16 +264,17 @@ class DiffReviewFile(
     val requestId: String get() = payload.requestId
     val toolCallId: String get() = payload.toolCallId
 
-    @Volatile private var decided = false
+    private val decided = AtomicBoolean(false)
 
     /**
-     * Idempotent: the FIRST decision wins; later calls (dispose→Deny, double-click) are ignored.
+     * Idempotent + race-free (SEC-17c): the FIRST decision wins; later calls
+     * (dispose→Deny, double-click racing dispose) are ignored via atomic
+     * compare-and-set — exactly one [onDecide] invocation ever.
      * [value] is normally a safeguard label String, or a `{label, oldFull, newFull}` Map when the
      * user EDITED pi's proposal in the diff (safeguard feeds it back via event.input mutation).
      */
     fun decide(value: Any) {
-        if (decided) return
-        decided = true
+        if (!decided.compareAndSet(false, true)) return
         onDecide(value)
     }
 }

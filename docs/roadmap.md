@@ -1,9 +1,12 @@
 # Product Roadmap
 
 > **Role:** source of truth for what pi-webui should build next, in priority and
-> dependency order. Last reviewed **2026-08-07** against the live source,
+> dependency order. Last reviewed **2026-08-11** against the live source,
+> [`security-review.md`](security-review.md),
 > [`improvements.md`](improvements.md), [`pi-livecraft.md`](pi-livecraft.md),
-> [`design.md`](design.md), and the JetBrains plugin.
+> [`design.md`](design.md), and the JetBrains plugin. The security review's
+> remediation order supersedes the original Now sequencing and is tracked as
+> U7 below.
 >
 > [`plans.md`](plans.md) is the execution plan for the **Now** and **Next**
 > horizons. Starting a tranche still requires a focused SDD run; this roadmap is
@@ -57,6 +60,7 @@ from the current work context.
 | U4 | Live-state and large-session correctness | Now | 5 | M | none |
 | U5 | Correct and resilient editable diff | Now | 5 | M | none |
 | U6 | Trustworthy permission policy and approval broker | Now | 5 | L | none; UI reuses U4/U5 |
+| U7 | Security-review remediation and release unblocking | Now | 5 | M | none |
 | W1 | Unified workspace-tools rail | Next | 5 | L | U1, U2 |
 | C1 | Conversation actions and navigation | Next | 5 | M | U2 |
 | G1 | Request-scoped change review and complete Git UI | Next | 5 | M–L | C1, U5 |
@@ -198,6 +202,11 @@ existing editable-document wire contract.
 > auto-approve / read-only / yolo) added at the user's request. Manual smoke
 > matrix in the verify report; browser spot-checks of the in-card approval
 > surface + `#permissions` page pending.
+>
+> **Hardening:** [`security-review.md`](security-review.md) (2026-08-11)
+> reproduced critical defects in the delivered policy layer
+> (SEC-01/02/04/06/07/14/15). Do not rely on safeguard in any mode until U7
+> lands; U7 is the follow-up SDD run.
 
 **Outcome:** no dangerous compound command is mistaken for safe, every blocking
 approval survives reconnect and multi-tab use, and users can inspect and edit
@@ -251,6 +260,59 @@ Scope:
 **Non-goals:** an LLM permission judge, a one-click global bypass mode, or using
 frontend risk heuristics as the security boundary. A future OS sandbox may
 reduce prompts but complements rather than replaces policy.
+
+### U7 — Security-review remediation and release unblocking
+
+**Outcome:** every reproduced defect in
+[`security-review.md`](security-review.md) is fixed or explicitly accepted,
+the published npm package installs and runs, and safeguard is trustworthy in
+every mode.
+
+The review's **Remediation order** (1–9) is the execution sequence; start it
+through an SDD run like any other item. Findings the CHANGELOG shows fixed
+after the review (REL-07, REL-08, REL-14) need verification only, not new
+work.
+
+> **Status:** started 2026-08-11. **Done:** REL-01 (npm `files` whitelist +
+> `test/package.test.js` packed-completeness guard), DEP-01 (markdown-it
+> 14.1.0 → 14.2.0), the **policy-engine tranche** (SEC-01/02/04/06/14/15, SDD
+> run `policy-hardening` 2026-08-11, archived — engine + classifier + gate),
+> and the **trust-boundary tranche** (SEC-03/07/17, REL-24, SDD run
+> `trust-boundary` 2026-08-15, archived — no `--approve`, broker option
+> validation + IDE options/fallback, fail-closed IDE diff gate, id-keyed
+> resolvers + disposal). See CHANGELOG. Open below: runtime resilience, Git
+> safety, order items 7–9.
+
+Scope, in remediation order:
+
+- **Release blocker:** ship all nine root runtime modules in
+  `package.json#files` (REL-01) and add a packed-install release test; upgrade
+  vendored markdown-it to ≥14.1.1 for the reachable linkify CVE (DEP-01).
+- **Policy engine:** tighten-only workspace merge that preserves the strictest
+  action (SEC-01); read-only mode requires the strict per-part Bash gate
+  (SEC-02); canonicalize every path field with nearest-existing-parent
+  realpath and Windows separator normalization (SEC-04, SEC-06); remove
+  persisted yolo from the effective config (SEC-14); fail closed on malformed
+  policy and write atomically (SEC-15).
+- **Trust boundary:** stop approving project-local extensions in `server.js`
+  (SEC-03); enforce the broker's decision set in the IDE bridge, block
+  stale-file approval, key resolvers by request ID (SEC-07, SEC-17, REL-24).
+- **Runtime resilience:** route error boundary for `sendToPi` failures
+  (REL-06), SSE queue-tail preservation (REL-09), broker tombstones (REL-10),
+  live-buffer coalescing + byte ceiling (REL-11),
+  acknowledgment-until-terminal semantics (REL-12), snapshot generation
+  guards (REL-13), split-UTF-8 decoding (REL-15), process-tree termination and
+  readiness (REL-02, REL-17).
+- **Git safety:** literal pathspecs for browser-derived paths (SEC-05),
+  transactional mutations with revalidation, and bounded concurrency/output/
+  duration with `GIT_TERMINAL_PROMPT=0` (REL-18, REL-03).
+- **Order items 7–9 (medium, after the critical tranches):** loopback
+  auth/framing (SEC-08), JCEF bridge scoping (SEC-09), atomic workspace writes
+  (REL-05), markdown/CSP/secret-storage hygiene (SEC-11/12/13, SEC-16), and
+  the canonical test command + CI (TEST-01/02).
+
+**Non-goal:** re-auditing already-verified controls. The review's "Controls
+verified as strong" list stands.
 
 ## 5. Next — workbench and workflow
 
