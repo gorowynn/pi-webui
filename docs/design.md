@@ -327,6 +327,24 @@ the only indicator of Allow/Ask/Deny.
   no dashboard gradients, oversized security illustrations, or celebratory
   “autonomy” treatment.
 
+### 8.4 Subagent fleet page
+
+Background (async) pi-subagents runs get an in-shell page (`#fleet`) that reuses
+the permissions/settings chrome: sticky `.perm-head`, 900px `.perm-body`.
+
+- Rows are quiet hairline cards: description/agents in ink, a small state chip
+  (running = success, queued/paused = warning, failed/rejected = danger,
+  done = success text only), and a muted mono meta strip
+  (`mode · agents · elapsed · turns · current tool`).
+- Per-step lines under a hairline rail; log buttons are small ghost buttons,
+  not links. Logs render as capped (260px) mono `<pre>` on canvas, tail-marked.
+- The steer input lives in the page header (right of the title) — it is a
+  per-run control, so the targeted row gets the accent border (`.sel`), never a
+  modal. Stop is confirm-gated and uses the danger outline.
+- Completion/steer notices in the transcript are slim cards with a 3px
+  left rule (ok/warn/err), first preview line only, session ids muted mono —
+  same restraint as 8.3: hairlines, opaque surfaces, no dashboard theatrics.
+
 ## 9. Do's and Don'ts
 
 **Don't** (each is a recognized AI-slop tell that was stripped out — don't

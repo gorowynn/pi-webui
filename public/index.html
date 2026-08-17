@@ -389,6 +389,40 @@
 			</div>
 		</section>
 
+		<section
+			id="fleet"
+			aria-label="background subagents"
+			tabindex="-1"
+			hidden
+		>
+			<div class="perm-head">
+				<h2>subagent fleet</h2>
+				<div class="fl-steer" id="fl-steer">
+					<input
+						id="fl-steer-input"
+						class="fl-steer-input"
+						type="text"
+						placeholder="steer…"
+						autocomplete="off"
+					/>
+					<button id="fl-steer-send" type="button">send</button>
+				</div>
+				<button
+					id="fleet-close"
+					class="set-x"
+					type="button"
+					aria-label="close subagent fleet"
+				>
+					&times;
+				</button>
+			</div>
+			<div class="perm-body">
+				<section class="perm-sec">
+					<div id="fleet-list"></div>
+				</section>
+			</div>
+		</section>
+
 		<div id="scroll-wrap">
 			<main id="transcript">
 				<div id="tfeed" role="feed" aria-label="conversation"></div>
@@ -553,6 +587,7 @@
 		<script src="tool-presentation.js"></script>
 		<script src="diff-view.js"></script>
 		<script src="permissions-ux.js"></script>
+		<script src="subagents-ux.js"></script>
 		<script src="a11y-contrast.js"></script>
 		<script src="app.js"></script>
 	</body>

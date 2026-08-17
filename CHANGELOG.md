@@ -4,7 +4,130 @@
 > orientation doc stays lean. One entry per meaningful chunk of work:
 > `### YYYY-MM-DD — <area>: <one-line summary>` then bullet detail (what + why + file).
 
+### 2026-08-15 — feat(subagents): async fleet page + notices (pi-subagents plugin support)
+
+The pi-subagents plugin's background side was invisible in the webui: its
+TUI fleet widget and `/sfleet` never cross RPC, and its custom messages
+(completion/steering/control notices) rendered as generic markers — or not at
+all until reload. The foreground `subagent` tool view (GOTCHAS #14) was
+already covered.
+
+- **`subagents.js`** (new, zero-dep): discovers the plugin's temp roots
+  (`<tmp>/pi-subagents-*/async-subagent-runs/`), projects each run's
+  `status.json` (512 KB cap, malformed skipped — a half-written file can't
+  500 the listing), tails `output-<i>.log` / `subagent-log-*.md` (32 KB tail),
+  and delivers STOP/STEER through the plugin's portable file control inbox
+  (`control/stop.json`, `control/steer-requests/<padded-ts>-<b64url>.json` —
+  atomic temp+rename, envelopes matching
+  `pi-subagents/src/runs/background/control-channel.ts`). Run ids validated
+  (charset + must resolve to a discovered dir — no traversal); the internal
+  `dir` path is stripped from client payloads. Routes: `GET /api/subagents`,
+  `GET /api/subagents/log`, `POST /api/subagents/control` (behind the existing
+  CSRF/origin gate). `subagents.js` added to `package.json#files` (caught by
+  `test/package.test.js`).
+- **`#fleet` page** (`public/index.html` + `app.js` + `subagents-ux.js` +
+  `style.css`): in-shell page like settings/permissions (`#fleet` hash, 2 s
+  poll while open). Rows show description/agents, state chip (running green,
+  paused/queued amber, failed red), mode · agents · elapsed · turns · current
+  tool; steps with per-child status + log buttons; failed runs surface the
+  error and keep a run-log button. Logs open inline (cached in `fleetLogs` so
+  the poll re-render never clobbers an open log). Stop is confirm-gated; steer
+  sends to the selected row (click to select; auto-targets the only active
+  run when none is). Opening one page closes the others, and each page only
+  clears its OWN hash (closing fleet mid-`#permissions` navigation can't wipe
+  that route — the guard was added to `closePermPage` too).
+- **Notices** (`renderNoticeMsg` in `app.js`, pure builders in
+  `subagents-ux.js`): custom messages with customType `subagent-notify`,
+  `subagent_steering_notice`, `subagent_control_notice` render as colored
+  notice cards from BOTH `message_end` (live — previously invisible until
+  reload) and `renderMessage` (reload), so the two can't diverge. Generic
+  custom messages now render live too (same renderer as reload — parity).
+  `subagent-notify` uses details `{agent,status,taskInfo,durationMs,
+  resultPreview,session*}` when present, content-markdown fallback otherwise.
+- **Log fallbacks (found live)**: workflow-mode runs write no `output-<i>.log`
+  — step logs now fall back to the child transcript under the project-local
+  `<cwd>/.pi-subagents/artifacts/<id>_<agent>_<i>_transcript.jsonl`
+  (agent + nearest-start-ts correlation, 16 KB head with regex `ts` extraction
+  because fork-context prompts make line 1 unparsable whole), rendered as
+  readable lines (`▸ user`, `→ bash …`, `✓/✗ tool`, assistant text). Run log
+  falls back from `subagent-log-*.md` to formatted `events.jsonl`. Step-log
+  buttons encode row position (workflow steps carry no `index` — previously
+  every button sent 0). subagents.js: 31 tests.
+- **Honest stop UX (found live)**: a workflow run reports `complete` even
+  when every child failed — rows now derive the chip from step statuses
+  (all-failed → red `failed`, mixed → `done` + `N✗` meta). Manual stop is
+  graceful (parks on hung LLM calls), so the listing projects `stopRequested`
+  (stop.json pending + active) → "stopping" chip and the stop button
+  escalates to "force stop" writing `control/timeout.json` (the same path
+  the 30-min runtime cap uses — kills children decisively).
+- **Notice content parsing (found live)**: some delivery paths attach no
+  machine-readable `details` to `subagent-notify`, and the old fallback
+  painted every such notice red ("✗ subagent · ?") even for completions.
+  `notifyHtml` now parses the plugin's own markdown header
+  (`Background task[s] <status>: **agent**[(n)]`, mirroring notify.ts
+  `parseSubagentNotifyContent` + the grouped form), taking agent, status and
+  the first preview line from it; fully unparseable content renders NEUTRAL,
+  never red. subagents-ux: 37 tests.
+- **Transcript correlation is deterministic now** (found live): parallel
+  same-agent children spawned ~100 ms apart cross-matched under ts-proximity
+  (step 1 showed its sibling's log). The child run id in the step's
+  `sessionFile` (`…\<childRunId>un-0\session.jsonl`) matches the artifact
+  filename prefix exactly; ts-proximity remains only as fallback.
+  subagents.js: 37 tests.
+- Palette: "subagent fleet" command. Tests: `test/subagents.test.js` (24 —
+  listing/ids/stop/steer/log-tail/roots; test temp dirs use a non-matching
+  prefix + self-cleanup so they never pollute the real scan) and
+  `test/subagents-ux.test.js` (27). Full suite 32/32. Live-smoked against a
+  real server (routes + static + unknown-id error paths).
+
+### 2026-08-15 — fix(policy): end the benign-command prompt storm (SEC-02a/02b refinement)
+
+Root cause of "why does grep/sed prompt every time": three stacked effects. (1) SEC-02a removed `env/find/sed/awk/sort` from the name-only READONLY set — every benign use classified `mutate`. (2) The floor `bash` table never had allow rules for the recon verbs (`grep`, `cat`, `head`, …), so the FR-9 compound gate reported "no allow rule" for them. (3) SEC-02b bound mode-induced allows to that gate — in `auto-approve`, every bash command not fully allow-ruled now prompts (by design), which surfaced (1)+(2) as a prompt storm. A fourth bug kept fixes from landing for existing users: `mergeTwo` replaced a user's `bash` table WHOLESALE, so floor improvements were invisible to anyone with an existing table.
+
+- **Classifier is argument-aware now** (`bash-classifier.js`): the benign forms classify read-only again — `sed -n 1,5p f` / `sed s/a/b/ f` (no `-i*`/`-f*`/`--in-place`/`--file`, script carries no `w FILE` write command or `>>`), `find . -name x` (no `-delete`/`-exec*`/`-ok*`/`-fprint*`/`-fls`), `sort f` (no `-o`/`--output`), `awk '{print $1}'` (program has no `>`/`|`/`system(`/`getline` — comparisons like `$1 > 5` conservatively prompt), `env`/`env K=V`/`env -i ls` (a following command classifies as that command: `env rm -rf .` → mutate). Every SEC-02a review-evidence mutation still classifies `mutate`.
+- **Floor allow-rules the recon verbs by verb** (`policy-engine.js` DEFAULT_CONFIG): one anchored regex covering the READONLY set + the five argument-sensitive verbs. Safe because an allow rule alone never suffices for bash — the compound gate still requires argument-aware read-only classification AND per-part rules, and SEC-02b keeps mode bypasses behind the same gate: `sed -i s/a/b/ f` matches the allow RULE but `gate.allow=false` → asks in every mode (locked by test).
+- **`mergeTwo` unions object tool tables per key** (high key wins): a user's existing `bash` table no longer wholesale-shadows the floor — floor allows/denies reach everyone, user same-key entries still win (tightening preserved), scalars/arrays still replace wholesale.
+- Verified against the live user config (auto-approve): `grep -rn foo src/`, `sed -n 1,5p server.js`, `cat x | head -5`, `find . -name '*.md'`, `sort x`, `awk '{print \$1}'`, `env | grep FOO` → silent allow; `sed -i`/`find -delete`/`sort -o`/`env rm -rf .` → prompt; `rm -rf /` → hard deny. Tests: bash-classifier 18/18 (7 new blocks), policy-engine 56 checks (floor rules + union merge + gate binding), full suite 30/30.
+- Needs a pi restart to take effect (the extension `require`s the engine at spawn): `/webui-stop` + `/webui`, or restart `node server.js`.
+
+### 2026-08-15 — fix(trust): close the trust-boundary findings (SEC-03/07/17, REL-24, U7 SDD run)
+
+SDD run `trust-boundary` (plan/spec/tasks/verify archived). Four findings spanning the browser↔server↔IDE trust boundary; every fix landed with failing-first tests (Node 30/30 incl. a NEW `test/trust-boundary.test.js`; Kotlin DiffBridgeTest 12/12).
+
+- **SEC-03** (9.6): `server.js` no longer spawns pi with `--approve` — project-local extensions of the opened workspace are NOT trusted anymore. The bundled bridge extension loads explicitly via `-e <__dirname>/extensions/pi_minimal_webui/index.ts` (package-root relative, so a workspace switch can't redirect it); a missing extension degrades loudly (warning + `--no-approve` alone — fail toward no-project-trust, never silently back to `--approve`). `PI_ARGS=--approve` remains the documented explicit opt-in (appended last, wins).
+- **SEC-07** (8.8): approval decisions are now validated **server-side** against the options the gate offered. `broker.js` normalizes the offered options to labels; `resolve()` rejects a decision whose label (string or `{label,…}` object) isn't among them → `invalid-option` 410, and the record **stays pending** so a correct client can still answer. The mandatory-ask → "Allow always" upgrade path from the IDE is closed. Client side: the IDE payload carries `options` (the button bar renders only those — see below); a rejected IDE decision falls back to the webui select modal (`invalid-option`) or toasts (answered elsewhere).
+- **SEC-17a/b/c** (7.6): the IDE diff gate fails closed — malformed bridge JSON (`DiffBridge.parsePayload` → null) resolves Deny with no editor tab instead of an empty approvable diff; an ALLOW against a file that changed on disk mid-review is **blocked** until "Re-read file" rebuilds the diff on the fresh base (Deny always resolves); `DiffReviewFile.decide()` is now `AtomicBoolean` compare-and-set (exactly one resolution, double-click/dispose race safe).
+- **REL-24** (5.6): overlapping IDE approvals no longer cross-resolve — the injected page keeps an id-keyed `__piDiffResolvers` map (`payload.requestId`-keyed; the page assigns the id before stringify so both ends agree; unknown id/double resolve = no-op), and a parent `Disposable` now owns the JS query, the load handler (`removeLoadHandler()`), and the browser, released on tool-window close.
+- Kotlin side lands in a NEW pure helper object `jetbrains/…/DiffBridge.kt` (parse/compose/normalize/stale helpers + the `DiffPayload`/`EditHunk` shapes, `options` added) with `DiffBridgeTest.kt` — runnable via `cmd.exe /c` + Rider JBR (`JAVA_HOME`), which un-blocks agent-side Kotlin testing (GOTCHAS #17 only bans the sh-wrapper).
+- Wire compatibility preserved: `piWebuiOpenDiff(payload) → decision` promise, `extension_ui_response` + marker, safeguard labels, broker record shape (additive `optionLabels`); old/new plugin↔webui pairs degrade safely.
+
 ## Changelog
+
+### 2026-08-11 — fix(policy): close six security-review findings (SEC-01/02/04/06/14/15, U7 SDD run)
+
+SDD run `policy-hardening` (plan/spec/tasks/verify, archived) fixed 12 requirements in the shared policy engine + classifier + safeguard gate. Every finding's review evidence was reproduced as a failing test first; full suite 29/29 green after.
+
+- **SEC-01** workspace tighten-only: scalar workspace rules now compare against EVERY inherited subrule via `strictestActionFor` (deny>ask>allow) — `bash:"ask"` can no longer shadow built-in `rm -rf /` denies; workspace `grants`/`nonInteractive` rejected with diagnostics; `sensitivePaths` merge additively + tighten-only (allow entries dropped); `effective` derives from the FILTERED workspace layer so the Permissions page can never show rules the gate rejected. (`policy-engine.js`)
+- **SEC-02** read-only mode: `env/find/sed/awk/sort` out of the name-only `READONLY` set (argument-sensitive: `env rm -rf .`, `find . -delete`, `sed -i`, `awk 'system()'`, `sort -o`); `git remote -v remove origin` correctly mutates (flags skipped before the subcommand). Mode transforms now bind bash: read-only read-class requires the per-part gate (`bashGate.allow`), auto-approve never lifts a gated bash ask; yolo stays the session-only override. (`bash-classifier.js`, `policy-engine.js`, `safeguard.ts`)
+- **SEC-04** path containment: recon-tool JSON selectors (grep/find/ls/glob) canonicalize + containment-check each path field independently (`ls {"path":"/etc/passwd"}` caps at outside-workspace ask); relative paths collapse `.`/`..` lexically before the containment check (`sub/../../outside/new.txt` hard-denies); missing targets realpath their NEAREST EXISTING ANCESTOR (in-workspace symlink to outside no longer passes). (`policy-engine.js`)
+- **SEC-06** Windows: path matching normalizes `\`→`/` so `**/.env*` etc. hit `C:\proj\.env` (mandatory-ask) and `C:\proj\id_rsa` (deny); POSIX byte-identical.
+- **SEC-14** persisted `mode:"yolo"` normalizes to `default` in every layer with the existing diagnostic — a hand-edited config can never flip a hard-deny; yolo remains session-only state.
+- **SEC-15** fail-closed config: malformed user/workspace JSON keeps its LAST KNOWN GOOD parse and surfaces a visible warning via the gate (new `errors` channel on `loadLayers`; mtime -1 forces rebuild until the file parses again); `saveConfig` writes atomically (temp + rename) and returns success; a failed "Allow always" save now BLOCKS the call with a warning instead of releasing it as if the grant persisted (Allow once/session unaffected — no write needed). (`safeguard.ts`)
+- Test harness note: Node 24's type-stripping loader caches `.ts` per file (survives `require.cache` deletion), so the new behavioral safeguard tests load a per-scenario module copy to get a fresh `CONFIG_PATH` per HOME. The behavioral block drives the REAL gate with a mock pi API against temp HOME/workspace dirs.
+
+### 2026-08-11 — test: repair three stale/broken tests (TEST-01)
+
+- `test/a11y-contract.test.js`: the rail-resize assertion checked for `resizeStep(` in `app.js`, but the math moved to `public/a11y-contrast.js` (app delegates via `a11y && a11y.resizeStep`, unit-tested in `rail-resize.test.js`). Assert the delegation instead.
+- `test/permission-ux.test.js`: two stale contracts from the 08-11 modal rework — the ask modal no longer forces wide (`showModal("", false)`, width only with diffs per `bce9bcf`) and `openSelectModal` lost its `notify` flag (toasts live in the ask/input/editor branches). Assertions updated to the current behavior.
+- `test/rpc-sse.test.js`: `ReferenceError: res is not defined` when an SSE request timed out before the response callback ran — `res` was scoped inside the `http.get` callback but referenced in the timeout handler. Hoisted it. Also TEST-01's two hangs: `sseCollect` capped on an idle `req.setTimeout`, which the server's SSE heartbeat defeats (never fires → infinite hang when the predicate never matches) — now a 12s wall-clock cap; and the snapshot assertion waited for the removed `snap-state` id (server mints random ids) — now asserts ≥5 fan-out responses broadcast on a fresh SSE connection plus a well-formed body check.
+- All 29 `test/*.test.js` now pass (the 08-11 CHANGELOG claim "all 27 non-integration tests pass" had gone stale).
+
+### 2026-08-11 — fix(release): ship all root runtime modules + bump markdown-it (REL-01, DEP-01)
+
+- `package.json#files` listed only `server.js`/`bin.js`/`public`/`extensions`/`skills`; the other nine root runtime modules (`broker`, `git`, `isolated-prompt`, `jsonl`, `livebuf`, `recent-sessions`, `session-entries`, `workspace-file`, `workspaces`) were omitted, so any `npm install pi-webui` failed with `MODULE_NOT_FOUND`. Added all nine; `npm pack --dry-run` now includes 41 files, none missing.
+- Added `test/package.test.js` — static guard that every root `require("./x.js")` in `server.js`/`bin.js`/shipped modules is covered by the `files` whitelist (faster than `npm pack` in CI; catches the same omission class).
+- Vendored `public/vendor/markdown-it.min.js` 14.1.0 → 14.2.0 (CVE-2026-2327 / GHSA-38c4-r59v-3vqw, reachable through the enabled `linkify` path; smartquotes advisory not reachable with `typographer:false`). Same UMD shape (`window.markdownit`), no loader change; `md()` smoke test passes.
+- Pre-existing (not from this change): `test/a11y-contract.test.js` + `test/permission-ux.test.js` fail against current `app.js` (stale assertions after 08-11 modal/a11y rework) — tracked under TEST-01. `test/rpc-sse.test.js` throws `ReferenceError: res is not defined` when an SSE request times out — also TEST-01.
 
 ### 2026-08-11 — fix(webui): a11y-contrast.js actually loads in the browser
 

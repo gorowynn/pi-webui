@@ -37,6 +37,11 @@ const { opencodeGoWindows } = require("./public/usage-provider.js"); // dashboar
 const { createBroker } = require("./broker.js"); // pending-approval broker (U6 C7)
 const policyEngine = require("./extensions/pi_minimal_webui/policy-engine.js"); // THE policy engine (shared with safeguard.ts)
 const bashCls = require("./extensions/pi_minimal_webui/bash-classifier.js"); // compound-command classifier (shared)
+const {
+	listSubagentRuns,
+	readRunLog,
+	deliverControl,
+} = require("./subagents.js"); // pi-subagents async fleet (file-inbox bridge)
 
 const PORT = parseInt(process.env.PORT || "4317", 10);
 const GIT_BIN = gitExecutableForPlatform(process.platform);
@@ -124,6 +129,10 @@ const STATIC = {
 	},
 	"/permissions-ux.js": {
 		file: "permissions-ux.js",
+		type: "text/javascript; charset=utf-8",
+	},
+	"/subagents-ux.js": {
+		file: "subagents-ux.js",
 		type: "text/javascript; charset=utf-8",
 	},
 	"/a11y-contrast.js": {
@@ -274,12 +283,33 @@ function backoffDelay() {
 }
 function startPi() {
 	startStamp = Date.now();
-	// ponytail: --approve trusts project-local files (.pi/extensions) for the run.
-	// Without it, RPC mode can't resolve trust (no select-prompt handler) → the
-	// pi_minimal_webui plugin is skipped → stock npm ask_user_question runs and
-	// auto-declines (ctx.ui.custom is a no-op in RPC). PI_ARGS can override with
-	// --no-approve since it's appended after.
-	const args = ["--mode", "rpc", "--approve", ...PI_ARGS];
+	// SEC-03: never trust project-local files (.pi/extensions of the current
+	// workspace) — opening/switching to an attacker repo must not execute its
+	// code. Instead load ONLY the bundled bridge extension, by absolute
+	// package-root path (never derived from PI_CWD, so a workspace switch
+	// can't redirect it). PI_ARGS is appended last: an explicit --approve
+	// there remains the operator's documented opt-in to project trust.
+	const BUNDLED_EXT = path.join(
+		__dirname,
+		"extensions",
+		"pi_minimal_webui",
+		"index.ts",
+	);
+	let extArgs;
+	if (fs.existsSync(BUNDLED_EXT)) {
+		extArgs = ["--no-approve", "-e", BUNDLED_EXT];
+	} else {
+		// Broken install: fail toward NO project trust (never silently back to
+		// --approve) but say it loudly — the ask bridge + safeguard are degraded
+		// (stock ask_user_question auto-declines in RPC; ctx.ui.custom is a no-op).
+		console.error(
+			"⚠ pi-webui: bundled extension missing at " +
+				BUNDLED_EXT +
+				" — starting WITHOUT it (ask approvals will auto-decline). Reinstall the package.",
+		);
+		extArgs = ["--no-approve"];
+	}
+	const args = ["--mode", "rpc", ...extArgs, ...PI_ARGS];
 	// Windows: npm-global bins (pi) are .cmd shims; spawn can't find them without a
 	// shell to resolve PATHEXT. Fold args into one command string (avoids the
 	// DEP0190 `shell + args` warning). Args are trusted operator flags only.
@@ -1802,6 +1832,51 @@ const server = http.createServer(async (req, res) => {
 		out.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
 		res.writeHead(200, { "Content-Type": "application/json" });
 		return res.end(JSON.stringify({ ok: true, artifacts: out }));
+	}
+	// ---- pi-subagents async fleet (background runs) ----
+	// Read-only listing + log tails + stop/steer via the plugin's file-based
+	// control inbox (see subagents.js). Run ids are validated + resolved against
+	// discovered run dirs there — no client path reaches fs. `dir` is stripped
+	// from the listing (server-internal only).
+	if (req.method === "GET" && url.pathname === "/api/subagents") {
+		try {
+			const runs = listSubagentRuns().map(({ dir, ...pub }) => pub);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true, runs }));
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+	if (req.method === "GET" && url.pathname === "/api/subagents/log") {
+		const id = url.searchParams.get("id") || "";
+		const step = Number(url.searchParams.get("step"));
+		const kind =
+			url.searchParams.get("kind") === "output" ? "output" : "run";
+		const log = readRunLog(
+			id,
+			Number.isInteger(step) ? step : undefined,
+			kind,
+		);
+		if (!log) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({ ok: false, error: "log not found" }),
+			);
+		}
+		res.writeHead(200, { "Content-Type": "application/json" });
+		return res.end(JSON.stringify({ ok: true, ...log }));
+	}
+	if (req.method === "POST" && url.pathname === "/api/subagents/control") {
+		try {
+			const body = JSON.parse((await readBody(req)) || "{}");
+			const out = deliverControl(body);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true, ...out }));
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
 	}
 
 	res.writeHead(404);

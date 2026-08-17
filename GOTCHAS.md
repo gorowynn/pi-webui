@@ -108,27 +108,41 @@ keyword to the index in `AGENTS.md`.
     `com.intellij.diff` (NOT `.contents`, where `DiffContent` is). `local()`
     builds against the auto-detected installed IDE. **Why each pin matters +
     full build notes: [`jetbrains/README.md`](jetbrains/README.md).**
-17. **Don't build `jetbrains/` from pi's git-bash** — `./gradlew` crashes the
-    shell (0xC0000005 on the `java` exec); every `BUILD EXIT=0` is a silent
-    no-op and `build/` reflects the user's Rider build, not the agent's. Build
-    in Rider or a real terminal. Verify Kotlin APIs with `javap`
-    (`~/.jdks/ms-25.0.3/bin/javap.exe -classpath "<rider>/lib/*"`), not
-    gradlew. The webui side IS testable here (`node --check app.js` + greps).
-    Plugin diff-gate surface: the diff renders as a **CENTER editor tab in the
-    main IDE window** (not a floating `DialogWrapper`) — `DiffReviewEditorProvider`
-    (`plugin.xml`: `HIDE_DEFAULT_EDITOR`+`DumbAware`) builds `DiffReviewEditor`
-    over an in-memory `DiffReviewFile` (`LightVirtualFile` carrying payload +
-    the decision callback); native diff uses `DiffContentFactory.create`/
-    `createEditable` over a resolved `VirtualFile`; 4 safeguard buttons in a
-    top bar; a decision closes the tab, a tab-✕/close fails closed → `Deny`
-    via `dispose()`. A user-edited proposal yields bridge value
-    `{label, oldFull, newFull}`; `safeguard.ts` then mutates pi's `event.input`
-    (`write`→`content`, `edit`→`edits=[{oldText,newText}]`) so pi applies the
-    user's version — the standalone webui modal does the same via
-    `mountEditableDiff`. `javap` facts: `LightVirtualFile` is
+17. **Don't build `jetbrains/` from pi's git-bash** — `./gradlew` (the sh
+    wrapper) crashes the shell (0xC0000005 on the `java` exec); every
+    `BUILD EXIT=0` is a silent no-op and `build/` reflects the user's Rider
+    build, not the agent's. **What DOES work from git-bash (2026-08-15):**
+    `cmd.exe /c <bat>` with `JAVA_HOME` set to the Rider JBR — write a `.bat`
+    (`set "JAVA_HOME=C:\Program Files\JetBrains\JetBrains Rider 2025.1.1\jbr"`
+    + `call gradlew.bat test`) and run `MSYS_NO_PATHCONV=1 cmd.exe /c
+    run-test.bat < /dev/null` (the `/c` needs `//c` or `MSYS_NO_PATHCONV=1`;
+    stdin must be redirected or cmd just prints a banner). The JBR has NO
+    `javap` — use `C:/Program Files/Microsoft/jdk-11.0.27.6-hotspot/bin/
+    javap.exe -classpath "<rider>/lib/*"` for API checks. The webui side IS
+    testable here (`node --check app.js` + greps). Plugin diff-gate surface:
+    the diff renders as a **CENTER editor tab in the main IDE window** (not
+    a floating `DialogWrapper`) — `DiffReviewEditorProvider` (`plugin.xml`:
+    `HIDE_DEFAULT_EDITOR`+`DumbAware`) builds `DiffReviewEditor` over an
+    in-memory `DiffReviewFile` (`LightVirtualFile` carrying payload + the
+    decision callback); native diff uses `DiffContentFactory.create`/
+    `createEditable` over a resolved `VirtualFile`; decision buttons come
+    from the payload's offered `options` (SEC-07; four-label fallback for
+    old-webui payloads); a decision closes the tab, a tab-✕/close fails
+    closed → `Deny` via `dispose()`; stale-file allows are blocked until
+    "Re-read file" re-bases the diff (SEC-17b). A user-edited proposal yields
+    bridge value `{label, oldFull, newFull}`; `safeguard.ts` then mutates
+    pi's `event.input` (`write`→`content`, `edit`→`edits=[{oldText,newText}]`)
+    so pi applies the user's version — the standalone webui modal does the
+    same via `mountEditableDiff`. The bridge resolves through an id-keyed
+    `window.__piDiffResolvers` map (`payload.requestId`; malformed JSON →
+    immediate Deny, SEC-17a). Pure helpers + tests: `DiffBridge.kt`/
+    `DiffBridgeTest.kt`. `javap` facts: `LightVirtualFile` is
     `com.intellij.testFramework.*` but ships in `intellij.platform.core.jar`
-    (runtime-available); `FileEditorProvider`/`FileEditorManager`/`FileEditorPolicy`
-    are in `intellij.platform.analysis.jar`.
+    (runtime-available — constructs fine in plain JVM tests);
+    `FileEditorProvider`/`FileEditorManager`/`FileEditorPolicy` are in
+    `intellij.platform.analysis.jar`; `JBCefJSQuery` implements `Disposable`
+    (`Disposer.register`-able); `CefClient.removeLoadHandler()` takes NO
+    argument; `DiffRequestPanel` is `Disposable`.
 18. **Never invoke bare `git` from this repository on Windows.** Windows command
     resolution searches the working directory before `PATH` and commonly has
     `.JS` in `PATHEXT`, so local [`git.js`](git.js) shadows Git for Windows and
@@ -175,3 +189,42 @@ keyword to the index in `AGENTS.md`.
     parser — `$(…)`-built and `$VAR`-prefixed paths are invisible.
     Headless (`nonInteractive=allow`) can't prompt — the nonInteractive knob
     governs there.
+22. **pi-subagents async fleet is a FILE bridge, not an RPC one.** The plugin's
+    TUI widget/fleet views (`ctx.ui.setWidget`, `/sfleet`) never cross RPC —
+    so the webui reads the plugin's on-disk artifacts instead: temp roots
+    `<tmp>/pi-subagents-*/async-subagent-runs/<id>/status.json` via `subagents.js`.
+    Step logs: `output-<i>.log` when the run mode writes one, ELSE the child
+    transcript in the PROJECT-LOCAL `<run cwd>/.pi-subagents/artifacts/
+    <childRunId>_<agent>_<i>_transcript.jsonl` (correlated by the child run id in the step's
+    `sessionFile` `…\<childRunId>un-0\session.jsonl` = artifact filename
+    prefix — DETERMINISTIC; ts-proximity is only the fallback, it
+    cross-matches same-agent children spawned near-simultaneously; regex-extract
+    the first record `ts` — fork-context prompts make line 1 exceed any
+    JSON.parse head). Run log: `subagent-log-*.md`, else
+    formatted `events.jsonl`. Workflow steps carry NO `index` — the step-log
+    button encodes ROW POSITION, and `steps[n]` is the lookup key., and
+    STOP/STEER by writing the plugin's portable control inbox
+    (`control/stop.json`, `control/steer-requests/<padded-ts>-<b64url>.json`,
+    atomic temp+rename, envelope `{type,id,ts,message,source:"pi-webui"}`).
+    STOP IS GRACEFUL — it waits for children to reach an abort boundary and
+    can park forever on a hung LLM call; "force" writes `timeout.json` (the
+    runtime-cap path — kills children decisively). The listing projects
+    `stopRequested` (stop.json present + run still active) → "stopping" chip +
+    the button relabels to "force stop". CEILING (seen live): the inbox is
+    consumed by the run's control watcher; if the spawning parent stopped
+    consuming (dead watcher / dead runner), stop/steer/force files sit unread
+    and children leak — last resort is killing the child pid from
+    `status.json` manually (the webui deliberately does NOT kill pids).
+    **Never rename those filenames/envelopes without checking
+    `node_modules/pi-subagents/src/runs/background/control-channel.ts`** — the
+    runner watches them. Run ids are validated (`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+    AND must resolve to a discovered dir (no traversal); `dir` is stripped
+    before the client payload. Frontend: `#fleet` in-shell page (`#fleet` hash,
+    2s poll, logs cached in `fleetLogs` so re-renders don't clobber open ones);
+    notices = custom messages with customType `subagent-notify` /
+    `subagent_steering_notice` / `subagent_control_notice` — rendered by
+    `renderNoticeMsg` from BOTH `message_end` (live) and `renderMessage`
+    (reload), which is also why generic custom messages now render live
+    (parity). Hash-close guards: each page only clears its OWN hash (closing
+    fleet mid-navigation to #permissions must not wipe that route). New
+    `public/*.js` module rule (#20/#11) applied to `subagents-ux.js`.

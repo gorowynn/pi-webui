@@ -4179,3 +4179,211 @@ body.w-narrow #modal-wrap {
 #permissions button:hover {
 	border-color: var(--accent);
 }
+
+/* ---- #fleet page (pi-subagents async runs) + notice cards ---- */
+#fleet .fl-steer {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	margin-left: auto;
+	margin-right: 10px;
+}
+#fleet .fl-steer-input {
+	width: 220px;
+	min-height: 26px;
+	padding: 2px 8px;
+	border-radius: calc(var(--r, 8px) - 2px);
+	border: 1px solid var(--line, #30363d);
+	background: var(--surface, #0d1117);
+	color: var(--ink, #e6edf3);
+	font-size: 12px;
+}
+.fl-row {
+	border: 1px solid var(--line, #30363d);
+	border-radius: calc(var(--r, 8px) - 2px);
+	padding: 8px 10px;
+	margin-bottom: 8px;
+	background: var(--surface, #0d1117);
+}
+.fl-row.sel {
+	border-color: var(--accent);
+	box-shadow: 0 0 0 1px var(--accent-soft) inset;
+}
+.fl-row-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+.fl-id {
+	font-weight: 600;
+	font-size: 13px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 46%;
+}
+.fl-meta {
+	color: var(--muted);
+	font-size: 12px;
+	font-family: var(--mono);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.fl-actions {
+	margin-left: auto;
+}
+.fl-chip {
+	font-size: 11px;
+	padding: 1px 7px;
+	border-radius: 10px;
+	border: 1px solid var(--line, #30363d);
+	color: var(--muted);
+	white-space: nowrap;
+}
+.fl-chip.fl-running {
+	color: var(--success);
+	border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+	background: var(--success-soft);
+}
+.fl-chip.fl-queued {
+	color: var(--warning);
+	border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+	background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+}
+.fl-chip.fl-paused {
+	color: var(--warning);
+	border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+	background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+}
+.fl-chip.fl-failed,
+.fl-chip.fl-rejected {
+	color: var(--danger);
+	border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+	background: var(--danger-soft);
+}
+.fl-chip.fl-done,
+.fl-chip.fl-complete {
+	color: var(--success);
+}
+.fl-steps {
+	margin-top: 6px;
+	border-left: 2px solid var(--line, #30363d);
+	padding-left: 8px;
+}
+.fl-step {
+	font-size: 12px;
+	font-family: var(--mono);
+	color: var(--ink);
+	padding: 1px 0;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+.fl-step-desc {
+	color: var(--muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.fl-err {
+	color: var(--danger);
+	font-size: 12px;
+	margin-top: 4px;
+	font-family: var(--mono);
+}
+.fl-log-btn,
+.fl-stop {
+	font-size: 11px;
+	padding: 1px 8px;
+	border-radius: calc(var(--r, 8px) - 4px);
+	border: 1px solid var(--line, #30363d);
+	background: var(--surface-raised, #161b22);
+	color: var(--ink);
+	cursor: pointer;
+}
+.fl-stop {
+	color: var(--danger);
+	border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+.fl-log-btn:hover,
+.fl-stop:hover {
+	border-color: var(--accent);
+}
+.fl-log {
+	margin: 6px 0 0;
+	padding: 8px;
+	max-height: 260px;
+	overflow: auto;
+	font-size: 11.5px;
+	font-family: var(--mono);
+	background: var(--canvas, #000000);
+	border: 1px solid var(--line, #30363d);
+	border-radius: calc(var(--r, 8px) - 4px);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+.fl-empty {
+	color: var(--muted);
+	font-size: 13px;
+	padding: 24px 0;
+	text-align: center;
+}
+.fl-more {
+	color: var(--muted);
+}
+
+/* notice cards — pi-subagents custom-message notices (turns, FR-8) */
+.notice-turn {
+	margin: 2px 0;
+}
+.sa-note {
+	display: flex;
+	gap: 8px;
+	align-items: flex-start;
+	border: 1px solid var(--line, #30363d);
+	border-left-width: 3px;
+	border-radius: calc(var(--r, 8px) - 3px);
+	background: var(--surface, #0d1117);
+	padding: 6px 10px;
+	font-size: 12.5px;
+	max-width: 720px;
+}
+.sa-note-ok {
+	border-left-color: var(--success);
+}
+.sa-note-warn {
+	border-left-color: var(--warning);
+}
+.sa-note-err {
+	border-left-color: var(--danger);
+}
+.sa-note-ic {
+	color: var(--muted);
+	font-weight: 700;
+}
+.sa-note-ok .sa-note-ic {
+	color: var(--success);
+}
+.sa-note-warn .sa-note-ic {
+	color: var(--warning);
+}
+.sa-note-err .sa-note-ic {
+	color: var(--danger);
+}
+.sa-note-head {
+	font-weight: 600;
+}
+.sa-note-body {
+	color: var(--muted);
+	margin-top: 2px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.sa-note-foot {
+	color: var(--muted);
+	font-size: 11px;
+	font-family: var(--mono);
+	margin-top: 2px;
+}

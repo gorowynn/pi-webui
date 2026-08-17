@@ -2929,7 +2929,22 @@ async function diffInIde(req) {
 				toolCallId: pendingApproval.toolCallId,
 				decision: decisionForLabel(decision),
 			};
-		api(body);
+		// SEC-07: await the broker's verdict instead of firing and forgetting.
+		// The server validates the label against the options the GATE offered —
+		// a rejection means the IDE rendered buttons the gate never offered.
+		// invalid-option → re-ask in the webui modal (record still pending);
+		// unknown/resolved → answered elsewhere, only toast (a second modal
+		// would double-answer).
+		const r = await api(body);
+		const j = await r.json().catch(() => null);
+		if (j && j.ok === false) {
+			if (j.error === "invalid-option") {
+				toast("IDE decision rejected — pick from the offered options", "warn");
+				openSelectModal(req);
+			} else {
+				toast("approval already answered elsewhere", "warn");
+			}
+		}
 	} catch (_e) {
 		toast("IDE diff unavailable — showing in webui", "warn");
 		openSelectModal(req);
@@ -2959,11 +2974,14 @@ async function buildDiffPayload() {
 		for (const e of edits)
 			rightText = rightText.replace(e.oldText || "", e.newText || "");
 	else if (op === "write") rightText = inp.content || "";
-	// leftText/rightText are the fallback for paths not under the IDE project; the
-	// plugin prefers path+op+edits/content for a real, syntax-highlighted diff.
 	// U6 C11 (FR-39/41): broker identity + active mode ride the payload so the
 	// native tab shows the gate's posture and keys decisions by request id.
+	// SEC-07: the gate's OFFERED option labels ride too — the IDE button bar
+	// renders only these (mandatory-ask = Allow once/Deny, never four buttons).
 	const p = pendingApproval;
+	const opts = (p && Array.isArray(p.options) ? p.options : [])
+		.map((o) => (typeof o === "string" ? o : o && o.label))
+		.filter((l) => typeof l === "string");
 	return {
 		filename,
 		path,
@@ -2975,6 +2993,7 @@ async function buildDiffPayload() {
 		requestId: p ? p.requestId : "",
 		toolCallId: p ? p.toolCallId : "",
 		mode: p && p.provenance ? p.provenance.mode || "default" : "default",
+		options: opts,
 	};
 }
 
@@ -3326,10 +3345,7 @@ function uiRequest(req) {
 			provenance: lastSafeguardCtx,
 		};
 		const body = buildPermissionBody(req.title, req.message);
-		showModal(
-			`<h3>${esc(req.title || "Confirm")}</h3>${body.html}`,
-			false,
-		);
+		showModal(`<h3>${esc(req.title || "Confirm")}</h3>${body.html}`, false);
 		const stack = renderEditDiffPreviews(card);
 		if (stack) card.classList.add("wide");
 		const row = document.createElement("div");
@@ -3413,6 +3429,19 @@ function uiRequest(req) {
 }
 
 // ---- history rendering (full messages from get_messages) ----
+// pi-subagents custom-message notices (async completion / steer / control).
+// Pure HTML from subagents-ux.js; appended as a muted turn (article, FR-8).
+function renderNoticeMsg(msg) {
+	const html = window.subagentsUx && subagentsUx.noticeHtml(msg);
+	if (!html) return false;
+	const art = document.createElement("article");
+	art.className = "notice-turn";
+	setSafeHtml(art, html);
+	feedEl.appendChild(art);
+	autoscroll();
+	return true;
+}
+
 function renderMessage(msg) {
 	if (msg.role === "user") {
 		let txt = "";
@@ -3461,6 +3490,13 @@ function renderMessage(msg) {
 			isError: msg.isError,
 		});
 	} else if (msg.role === "custom") {
+		// pi-subagents notices (async completion / steering / control) get a
+		// dedicated card BEFORE the generic compaction-style marker — both live
+		// (message_end below) and reload route through here, so they can't diverge.
+		if (renderNoticeMsg(msg)) {
+			cur = null;
+			return;
+		}
 		// compaction-aware history (plan F§5.3): a compaction entry from the entry
 		// parent-chain renders as a muted, collapsible marker between the dropped
 		// (pre-compact) span and the kept messages — so a compacted session never
@@ -3598,6 +3634,18 @@ function handle(payload) {
 			// arrives (the !cur guard there). User-role echoes are ignored too.
 			break;
 		case "message_end":
+			// custom messages (pi-subagents notices, compaction markers, …) never
+			// build an assistant bubble — render them directly, then bail. Without
+			// this the async-completion notice was invisible until reload.
+			if (payload.message && payload.message.role === "custom") {
+				if (!renderNoticeMsg(payload.message)) {
+					// generic custom (incl. live compaction markers): reuse the reload
+					// renderer so live and reload stay byte-identical.
+					renderMessage(payload.message);
+				}
+				cur = null;
+				break;
+			}
 			// authoritative render: payload.message is pi's final, server-assembled
 			// AssistantMessage — identical to what get_messages returns (reload).
 			// Render from IT, not the browser-re-accumulated deltas (lossy in the SSE
@@ -4508,6 +4556,7 @@ $("models-btn").onclick = () =>
 const settingsEl = $("settings");
 function openSettings() {
 	closePermPage();
+	closeFleetPage();
 	settingsEl.hidden = false;
 	settingsEl.classList.add("open");
 	settingsEl.setAttribute("aria-hidden", "false");
@@ -4578,6 +4627,7 @@ refreshModeChip();
 
 function openPermPage() {
 	closeSettings();
+	closeFleetPage();
 	permPage.hidden = false;
 	permPage.classList.add("open");
 	document.body.classList.add("page-open");
@@ -4588,7 +4638,10 @@ function closePermPage() {
 	permPage.hidden = true;
 	permPage.classList.remove("open");
 	document.body.classList.remove("page-open");
-	history.replaceState(null, "", location.pathname + location.search);
+	// only clear OUR hash — another page may own the route right now (e.g.
+	// #fleet navigation calling closePermPage mid-hashchange)
+	if (location.hash === "#permissions")
+		history.replaceState(null, "", location.pathname + location.search);
 }
 function permRoute() {
 	if (location.hash === "#permissions") openPermPage();
@@ -4602,6 +4655,185 @@ $("perm-close").onclick = closePermPage;
 $("perm-page-btn").onclick = () => {
 	location.hash = "#permissions";
 };
+
+// ---- #fleet page (pi-subagents async background runs) ----
+// In-shell page like settings/permissions: hash-routed (#fleet), 2s poll while
+// open, stop/steer via the server's file-inbox bridge (/api/subagents/*).
+// Logs are cached per run id so the 2s re-render never clobbers an open log.
+const fleetEl = $("fleet");
+const fleetListEl = $("fleet-list");
+const sau = window.subagentsUx; // pure helpers (dual-mode module)
+let fleetTimer = null;
+let fleetSteerTarget = null; // run id selected for steering (click a row)
+const fleetLogs = new Map(); // runId → log text (survives re-renders)
+
+function openFleetPage() {
+	closeSettings();
+	closePermPage();
+	fleetEl.hidden = false;
+	fleetEl.classList.add("open");
+	document.body.classList.add("page-open");
+	fleetEl.focus();
+	refreshFleet();
+	if (!fleetTimer) fleetTimer = setInterval(refreshFleet, 2000);
+}
+function closeFleetPage() {
+	fleetEl.hidden = true;
+	fleetEl.classList.remove("open");
+	document.body.classList.remove("page-open");
+	if (fleetTimer) {
+		clearInterval(fleetTimer);
+		fleetTimer = null;
+	}
+	if (location.hash === "#fleet")
+		history.replaceState(null, "", location.pathname + location.search);
+}
+function fleetRoute() {
+	if (location.hash === "#fleet") openFleetPage();
+}
+window.addEventListener("hashchange", fleetRoute);
+fleetRoute();
+fleetEl.addEventListener("keydown", (e) => {
+	if (e.key === "Escape") closeFleetPage();
+});
+$("fleet-close").onclick = closeFleetPage;
+
+async function refreshFleet() {
+	try {
+		const r = await fetch("/api/subagents");
+		const j = await r.json();
+		if (!j || !j.ok) return;
+		setSafeHtml(
+			fleetListEl,
+			sau.fleetHtml(
+				j.runs,
+				"no background subagent runs — spawn one via the subagent tool (async)",
+			),
+		);
+		// restore open logs + selection across the re-render
+		for (const row of fleetListEl.querySelectorAll(".fl-row")) {
+			const id = row.dataset.id;
+			row.classList.toggle("sel", id === fleetSteerTarget);
+			const log = fleetLogs.get(id);
+			if (log != null) {
+				const pre = row.querySelector("pre.fl-log");
+				pre.textContent = log;
+				pre.hidden = false;
+			}
+		}
+	} catch {
+		/* transient — next tick retries */
+	}
+}
+
+async function fleetControl(body) {
+	try {
+		const r = await fetch("/api/subagents/control", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+		const j = await r.json();
+		if (!j || !j.ok) toast((j && j.error) || "control failed", "err");
+		return j;
+	} catch {
+		toast("control request failed", "err");
+		return null;
+	}
+}
+
+// one delegated handler: stop / step-log / run-log / row-select (steer target)
+fleetListEl.addEventListener("click", async (e) => {
+	const row = e.target.closest(".fl-row");
+	if (!row) return;
+	const id = row.dataset.id;
+	if (e.target.classList.contains("fl-stop")) {
+		// graceful stop first; a second click (button relabeled "force stop" once
+		// stop.json is pending) escalates to the timeout path, which kills the
+		// children instead of waiting for a hung LLM call to reach a boundary.
+		const force = e.target.dataset.force === "1";
+		if (
+			!confirm(
+				force
+					? "Force stop? Kills the child processes immediately (unsaved work is lost)."
+					: "Stop this background run?",
+			)
+		)
+			return;
+		const j = await fleetControl({ id, action: force ? "force" : "stop" });
+		if (j && j.ok) {
+			toast(force ? "force stop sent" : "stop requested", "ok");
+			refreshFleet();
+		}
+		return;
+	}
+	if (e.target.classList.contains("fl-log-btn")) {
+		const pre = row.querySelector("pre.fl-log");
+		if (
+			!pre.hidden &&
+			pre.dataset.kind === (e.target.dataset.kind || "output")
+		) {
+			pre.hidden = true;
+			fleetLogs.delete(id);
+			return;
+		}
+		const kind = e.target.dataset.kind === "run" ? "run" : "output";
+		const step = e.target.dataset.step;
+		pre.textContent = "loading…";
+		pre.hidden = false;
+		pre.dataset.kind = kind;
+		try {
+			const q =
+				"/api/subagents/log?id=" +
+				encodeURIComponent(id) +
+				"&kind=" +
+				kind +
+				(step != null ? "&step=" + encodeURIComponent(step) : "");
+			const r = await fetch(q);
+			const j = await r.json();
+			const text = j.ok
+				? (j.truncated ? "…(tail)\n" : "") + j.text
+				: j.error || "no log";
+			pre.textContent = text;
+			fleetLogs.set(id, text);
+		} catch {
+			pre.textContent = "failed to load log";
+		}
+		return;
+	}
+	// clicking anywhere else on the row selects it as the steer target
+	fleetSteerTarget = fleetSteerTarget === id ? null : id;
+	for (const r2 of fleetListEl.querySelectorAll(".fl-row"))
+		r2.classList.toggle("sel", r2.dataset.id === fleetSteerTarget);
+});
+
+// steer bar: sends to the selected row (or the only active run)
+async function sendFleetSteer() {
+	const input = $("fl-steer-input");
+	const message = input.value.trim();
+	if (!message) return;
+	let id = fleetSteerTarget;
+	if (!id) {
+		const stops = fleetListEl.querySelectorAll(".fl-row .fl-stop");
+		if (stops.length === 1) id = stops[0].dataset.id;
+	}
+	if (!id) {
+		toast("select a run first (click its row)", "warn");
+		return;
+	}
+	const j = await fleetControl({ id, action: "steer", message });
+	if (j && j.ok) {
+		toast("steered", "ok");
+		input.value = "";
+	}
+}
+$("fl-steer-send").onclick = sendFleetSteer;
+$("fl-steer-input").addEventListener("keydown", (e) => {
+	if (e.key === "Enter") {
+		e.preventDefault();
+		sendFleetSteer();
+	}
+});
 async function refreshPermPage() {
 	try {
 		const r = await fetch("/api/permissions");
@@ -6242,6 +6474,14 @@ registerCommand(
 	"open the permissions page",
 	() => {
 		location.hash = "#permissions";
+	},
+);
+registerCommand(
+	"fleet",
+	"subagent fleet",
+	"background subagent runs — status, logs, stop, steer",
+	() => {
+		location.hash = "#fleet";
 	},
 );
 registerCommand("new-session", "new session", "start a fresh session", () =>

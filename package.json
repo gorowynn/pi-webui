@@ -7,6 +7,16 @@
   "files": [
     "server.js",
     "bin.js",
+    "broker.js",
+    "git.js",
+    "isolated-prompt.js",
+    "jsonl.js",
+    "livebuf.js",
+    "recent-sessions.js",
+    "session-entries.js",
+    "subagents.js",
+    "workspace-file.js",
+    "workspaces.js",
     "public",
     "extensions",
     "skills"

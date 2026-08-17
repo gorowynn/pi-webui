@@ -54,6 +54,7 @@ runtime. Edit `public/app.js`/`public/style.css`/`public/index.html` + refresh =
 | `jsonl.js` | Strict JSONL codec (plan F§4.5): `encodeJsonLine(obj)` + `JsonLineDecoder` (split on `\n`, strip `\r`, buffer incomplete UTF-8 via StringDecoder, per-record cap). Zero-dep CommonJS. |
 | `livebuf.js` | Current-turn event buffer for reconnect replay (plan 5.1): `createLiveBuffer().push(obj)` assigns a monotonic `sequence` (attached to the broadcast wrapper) + buffers turn-content events (agent_start seeds, agent_end clears, only message_*/tool_execution_*). `snapshot()` for `/api/snapshot`'s `liveEvents`; `clear()` on workspace switch. Survives a pi CRASH (lives in Node, not the child). Zero-dep, 10 unit tests. |
 | `session-entries.js` | Compaction-aware history reconstruction (plan 5.2): `activeSessionMessages(entries, leafId)` walks the entry parent-chain from leafId→root, reverses, maps message/compaction/custom_message entries, filters visible. Compaction entries → synthetic `role:"custom"` markers. Used by `/api/snapshot` instead of flat `get_messages` (a superset — no regression). Zero-dep, 10 unit tests. |
+| `subagents.js` | pi-subagents async fleet file bridge: discovers `<tmp>/pi-subagents-*/async-subagent-runs/`, projects each run's `status.json` (bounded, malformed skipped), tails `output-<i>.log`/`subagent-log-*.md`, and delivers stop/steer via the plugin's portable control inbox (atomic temp+rename). Ids validated + dir-resolved — no traversal. Backs `GET /api/subagents`, `/api/subagents/log`, `POST /api/subagents/control`. 24 unit tests. |
 | `recent-sessions.js` | Head/tail session-list reader (plan 4.1): reads only the first 64 KB + a backward-scanned tail (≤2 MB) of each `.jsonl` to recover `{id,cwd,name,updatedAt,firstPrompt}` without parsing multi-MB middles. Exact message count only when the whole file fits; otherwise `messages:null` + `size` (bytes). `listRecentSessions(dir)` backs `/api/sessions`. 35 unit tests. |
 | `git.js` | Read-only git porcelain + mutations (plan 4.5/4.6), ported from pi-livecraft. `getGitSnapshot` (status `--porcelain -z` + numstat merge + unpushed commits), `getGitFileDiff`, `commitChanges`/`pushCommits`/`resetGitCommit`/`revertGitCommit`/`discardFileChanges`/`discardChanges`. Scoped to `realpath(PI_CWD)`; the diff path is validated against the snapshot. Pure parsers exported, 32 unit tests. |
 | `isolated-prompt.js` | Disposable isolated pi runner (plan 4.7/4.8): spawns a separate `pi --mode rpc --no-tools --no-extensions …` in `~/.pi/pi-webui-isolated` (copies auth.json/models.json once — the §6.4 security boundary), auto-selects the cheapest model, runs one prompt, extracts the text, terminates. `improvePrompt(cwd,draft,direction)` backs the composer's Improve dropdown. `cheapestAvailableModel`/`assistantText` pure, 17 unit tests. |
@@ -63,6 +64,7 @@ runtime. Edit `public/app.js`/`public/style.css`/`public/index.html` + refresh =
 | `test/` | `node:assert/strict` unit tests, no framework (`node test/<x>.test.js`). |
 | `public/vendor/` | Vendored runtimes, served via `server.js` `STATIC` whitelist (no npm/build): **markdown-it** v14.1.0 UMD (`window.markdownit`), **highlight.js** v11.11.1 common + `highlight.css` github-dark. `app.js` `highlightCode()` post-processes `pre code`. Both degrade silently if missing (md.js→escaped text; hljs→uncolored). |
 | `public/{tool-presentation,csv-preview,tool-protocol,session-analysis,composer-images}.js` | Zero-dep vanilla feature modules (Phase 2–4), all dual-mode (`module.exports` + `window.*`, require-able in Node for tests), loaded after md.js/highlight, before app.js: **tool-presentation** (typed tool-output previews + offscreen virtualizer), **csv-preview** (bounded CSV→table), **tool-protocol** (tool-call/result extraction + `toolContentText` flatten), **session-analysis** (`analyzeSession` cost/tool/token math, plan 4.2), **composer-images** (canvas downscale + JPEG quality loop, plan 4.10). |
+| `public/subagents-ux.js` | Zero-dep dual-mode pure helpers for the `#fleet` page (run/step rows, state chips) + the plugin's custom-message notices (`subagent-notify`, steering/control). 27 unit tests. |
 | `docs/` | Specs: [`design.md`](docs/design.md) (UI/UX, visual source of truth), [`README.md`](docs/README.md) (index + SSOT). |
 | `package.json` | `keywords:["pi-package"]` → `pi install`-able. `pi` manifest declares `extensions`+`skills` (package-relative); `files:` whitelist ships both. |
 | `skills/sdd/` | 4-phase Spec-Driven Dev + TiCoder (Plan→Spec→Impl-Plan→Code+Test, approval between phases). Artifacts use **`.sdd/{type}_{slug}_{DDMMYYYY}.md`** (plan/spec/tasks/verify) so multiple runs coexist as history; `server.js /api/plan-state` globs `.sdd` and returns `{phase,slug,date,rel,mtime}` newest-first (legacy fixed names like `plan.md`/`verify-report.md` still match for back-compat). Discovered via `pi.skills` manifest (ships + auto-discovered); `/skill:sdd`. A **right rail** (`#sddbar`) shows the **latest active** set's **phase stepper** (`● reached / ○ pending`, current in accent; the rail hides once a set reaches `verify`, at which point the skill archives the set's files into `.sdd/archive/`) — narrow by default, click a reached phase to expand its doc as rendered markdown (state persists in `localStorage`); todos live only in their own panel, never the rail. Advisory only (size gate lives in the `description`). |
@@ -84,12 +86,17 @@ Folder name is a legacy TODO — no second webui here, only the ask-bridge tool
   CommonJS, shared with `server.js` — the page/Explain can never diverge from the
   gate): verdict `{action,tier,matchedRule,layer,reason}` with provenance;
   precedence hard-deny → mandatory-ask → remembered-grant → ordinary-ask → allow;
-  layered config (floor → user → workspace, tighten-only); v2 schema with
+  layered config (floor → user → workspace, tighten-only; **object tool
+  tables union per key floor⊕user** — a user's existing table must not
+  wholesale-shadow floor allows/denies); v2 schema with
   `revision`/`mode`/`sensitivePaths`/`grants`; canonical paths + sensitive-path
   mandatory-ask/deny on every path tool; outside-workspace access capped at
   ask in every non-yolo mode (path tools + bash parts, FR-6); `applyMode`
   (default/auto-approve/read-only/session-yolo); compound-bash classification
-  - FR-9 per-subcommand gating. 45 + 8 unit tests.
+  - FR-9 per-subcommand gating; read-only recon verbs allow-ruled by VERB in
+  the floor (safe: the argument-aware classifier still gates every mutation —
+  `sed -i`/`find -delete`/`awk 'system()'`/`env rm`/`sort -o` never ride the
+  rules). 56 + 18 unit tests.
 - `safeguard.ts` — **Per-tool allow/ask/deny gate** on every tool call, now a thin
   shell over the engine + classifier. Config `~/.pi/agent/safeguard.json` +
   workspace layer `<cwd>/.pi/safeguard.json` (re-read each call). Modes: default /
@@ -150,6 +157,7 @@ entry — these are load-bearing invariants. Numbers match `GOTCHAS.md #N`.
 | subagent live view, `partialResult.details`, density toggle | 14 |
 | settings + permissions in-shell pages, mode chip, model/thinking/pony + tier selects | 15 |
 | outside-workspace containment cap (path tools + bash), `outside-workspace` tier | 21 |
+| pi-subagents async fleet: file bridge (`subagents.js`, control inbox), `#fleet` page, subagent notices | 22 |
 | `jetbrains/` build: gradle pins, Kotlin, `gradlew` in git-bash, `javap`, diff-gate wire contract | 16, 17 |
 
 ## RPC coverage (verified 2026-06-23 — don't re-audit without a pi version bump)
@@ -233,3 +241,10 @@ entry — these are load-bearing invariants. Numbers match `GOTCHAS.md #N`.
   pi (~seconds) and replaced. Spawns a separate `~/.pi/pi-webui-isolated` profile.
 - **Rename session (4.9)** — Alt+K → "rename session" → `set_session_name`; the
   name persists (4.1 reader picks up `session_info`) and shows in both lists.
+- **Subagent fleet (pi-subagents plugin)** — Alt+K → "subagent fleet" (or
+  `#fleet`): background runs with state chips, current tool/turns, per-step +
+  run log tails; click a row → the steer bar targets it (Enter sends); stop is
+  confirm-gated. Async completions arrive LIVE as notice cards
+  (`✓ worker · completed · 1m 5s`) instead of being invisible until reload.
+  `node test/subagents.test.js` + `test/subagents-ux.test.js` cover the file
+  bridge + renderers.
