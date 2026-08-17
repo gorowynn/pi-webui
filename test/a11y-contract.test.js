@@ -220,8 +220,9 @@ assert.ok(
 assert.ok(app.includes('"ArrowLeft"'), "keyboard resize handles ArrowLeft");
 assert.ok(app.includes('"ArrowRight"'), "keyboard resize handles ArrowRight");
 assert.ok(
-	app.includes("resizeStep("),
-	"keyboard resize uses the pure resizeStep math",
+	app.includes("window.a11yContrast") &&
+		app.includes("a11y && a11y.resizeStep"),
+	"keyboard resize delegates to the pure resizeStep math (rail-resize.test.js)",
 );
 
 // ---- FR-7: labelled regions ---------------------------------------------------

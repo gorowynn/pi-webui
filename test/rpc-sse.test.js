@@ -44,13 +44,23 @@ function post(path, obj) {
 	});
 }
 
-// open SSE, collect `response` payloads until predicate or 12s
+// open SSE, collect `response` payloads until predicate or 12s wall clock
 function sseCollect(predicate) {
 	return new Promise((resolve, reject) => {
 		const seen = [];
+		let res = null;
+		let wall = null;
+		let settled = false;
+		const settle = (v) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(wall);
+			resolve(v);
+		};
 		const req = http.get(
 			{ host: "127.0.0.1", port: PORT, path: "/api/events" },
-			(res) => {
+			(r) => {
+				res = r;
 				let buf = "";
 				res.on("data", (c) => {
 					buf += c.toString();
@@ -67,16 +77,22 @@ function sseCollect(predicate) {
 					}
 					if (predicate(seen)) {
 						res.destroy();
-						resolve(seen);
+						settle(seen);
 					}
 				});
 			},
 		);
-		req.on("error", reject);
-		req.setTimeout(15000, () => {
-			res && res.destroy();
-			resolve(seen); // resolve with whatever we got (don't fail on timeout)
+		req.on("error", (e) => {
+			settled = true;
+			reject(e);
 		});
+		// TEST-01: cap on WALL time, not an idle timeout — the server's SSE
+		// heartbeat keeps the socket busy, so req.setTimeout never fires when
+		// the predicate never matches and the test hangs forever.
+		wall = setTimeout(() => {
+			if (res) res.destroy();
+			settle(seen); // resolve with whatever we got (don't fail on timeout)
+		}, 12000);
 	});
 }
 
@@ -115,15 +131,23 @@ function sseCollect(predicate) {
 		ok("fire-and-forget /api/cmd response still streams on SSE");
 	else throw new Error("FAIL: fire-and-forget response NOT on SSE");
 
-	// 2. /api/snapshot's responses (snap-*) must ALSO be broadcast on SSE —
-	//    proving the awaitable path is additive (didn't swallow them).
-	const snapP = sseCollect((arr) => arr.some((p) => p.id === "snap-state"));
-	await get("/api/snapshot");
-	const snapSse = await snapP;
-	const snapIds = new Set(
-		snapSse.filter((p) => p.type === "response").map((p) => p.id),
+	// 2. /api/snapshot's responses must ALSO be broadcast on SSE — proving
+	//    the awaitable path is additive (didn't swallow them). Ids are
+	//    server-minted random ids now (server.js: "init-*/sb-* … never
+	//    snap-*"), so assert by count on a FRESH connection: the 5 fan-out
+	//    RPCs each broadcast one response.
+	const snapP = sseCollect(
+		(arr) => arr.filter((p) => p.type === "response").length >= 5,
 	);
-	if (snapIds.has("snap-state"))
+	const snapRes = await get("/api/snapshot");
+	const snapBody = JSON.parse(snapRes.body);
+	if (!snapBody.ok || !Array.isArray(snapBody.messages))
+		throw new Error(
+			"FAIL: /api/snapshot body malformed: " + snapRes.body.slice(0, 200),
+		);
+	const snapSse = await snapP;
+	const snapCount = snapSse.filter((p) => p.type === "response").length;
+	if (snapCount >= 5)
 		ok(
 			"awaitable /api/snapshot responses are also broadcast on SSE (additive)",
 		);
