@@ -6,6 +6,13 @@
 
 ## History
 
+### 2026-08-18 — fix(extension): keep discipline prompt cache-stable
+
+- `discipline.ts` now appends one fixed process-discipline suffix on prompted
+  turns; live todo state remains in the hard gate and tool results instead of
+  changing the provider's cached system-prompt prefix. Added
+  `test/discipline-contract.test.js`.
+
 ### 2026-08-18 — fix(webui): exclude permission waits from tool timing
 
 - Usage tool-duration telemetry now pauses while a safeguard permission prompt

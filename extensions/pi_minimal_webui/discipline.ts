@@ -81,31 +81,17 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// --- Soft nudge: per-turn system-prompt reminder --------------------------
+	// Keep this suffix byte-identical across turns. Todo state is enforced by the
+	// hard tool_call gate and reflected in tool results; putting live state here
+	// would invalidate the provider's cached prompt prefix.
+	const DISCIPLINE_NUDGE =
+		"For ambiguous requests, use ask_user_question; for 3+ steps, plan a todo list. Keep it current: start exactly one task before work, finish it before starting the next, and clear it when all tasks are done.";
 	pi.on(
 		"before_agent_start",
 		async (event: { prompt?: string; systemPrompt?: string }) => {
-			const todos: TodoItem[] = getTodos();
-			let nudge = "";
-			if (todos.length > 0) {
-				// ponytail: constant nudge — no live ids/counts. The hard tool_call gate
-				// above enforces the invariant mid-turn; this only reminds of the rhythm.
-				// A byte-constant suffix keeps the provider prompt cache stable across
-				// turns (O3 — see docs/plans.md).
-				const allDone = todos.every((t) => t.status === "finished");
-				if (allDone) {
-					nudge =
-						'Your todo list is fully finished but not cleared — call todo action:"clear" before moving on.';
-				} else {
-					nudge =
-						'Todo list active. Keep it current with action:"update" as you work — one started at a time, flip to finished when done.';
-				}
-			} else if (event.prompt && event.prompt.trim()) {
-				nudge =
-					"Fresh request: if it's ambiguous or has multiple valid approaches, use ask_user_question before acting; if it's 3+ steps, plan a todo list first.";
-			}
-			if (!nudge) return;
+			if (!event.prompt || !event.prompt.trim()) return;
 			return {
-				systemPrompt: `${event.systemPrompt ?? ""}\n\n## Process discipline (auto-injected)\n- ${nudge}`,
+				systemPrompt: `${event.systemPrompt ?? ""}\n\n## Process discipline (auto-injected)\n- ${DISCIPLINE_NUDGE}`,
 			};
 		},
 	);
