@@ -25,6 +25,49 @@ const actLabel = $("act-label");
 // A5): LCS row builder + gutter/mode helpers. Render layer stays here (the
 // single escaper rule, GOTCHAS #12).
 const dv = window.diffView;
+// Usage telemetry stays browser-local and degrades to the existing inspector
+// when the optional pure module or storage is unavailable.
+const usageTelemetry = window.usageTelemetry;
+const USAGE_SAMPLE_MS = 10000;
+let usageSessionKey = "standalone";
+function usageLedgerFor(history) {
+	if (!usageTelemetry) return null;
+	const last =
+		history && history.samples && history.samples.length
+			? history.samples[history.samples.length - 1]
+			: null;
+	return usageTelemetry.createEventLedger(
+		last
+			? {
+					durations: last.durations,
+					toolErrors: last.counters.toolErrors,
+				}
+			: null,
+	);
+}
+let usageHistory = usageTelemetry
+	? usageTelemetry.loadHistory(null, usageSessionKey, Date.now())
+	: null;
+let usageEvents = usageLedgerFor(usageHistory);
+let usageLastSampleAt = 0;
+let suppressUsageEnd = false;
+function setUsageSession(sessionFile) {
+	if (!usageTelemetry) return;
+	const key =
+		typeof sessionFile === "string" && sessionFile ? sessionFile : "standalone";
+	if (key === usageSessionKey && usageHistory) return;
+	usageSessionKey = key;
+	usageHistory = usageTelemetry.loadHistory(null, key, Date.now());
+	usageEvents = usageLedgerFor(usageHistory);
+	usageLastSampleAt = 0;
+}
+function resetUsageSession() {
+	if (!usageTelemetry) return;
+	usageSessionKey = null;
+	usageHistory = usageTelemetry.createHistory("standalone");
+	usageEvents = usageTelemetry.createEventLedger();
+	usageLastSampleAt = 0;
+}
 
 let streaming = false;
 let commands = []; // [{name, description, source}]
@@ -69,6 +112,17 @@ function clearPendingApproval() {
 	pendingApproval = null;
 	pendingSending = false;
 	setActivity(streaming ? "working…" : "ready", streaming);
+}
+function pausePermissionTool(toolCallId) {
+	if (usageEvents && toolCallId) usageEvents.pauseTool(toolCallId, Date.now());
+}
+function resumePermissionTool(toolCallId) {
+	if (usageEvents && toolCallId) usageEvents.resumeTool(toolCallId, Date.now());
+}
+function hasPermissionProvenance(value) {
+	return (
+		value && typeof value.tier === "string" && typeof value.action === "string"
+	);
 }
 // stable decision enums for the version-1 marker (FR-25)
 function decisionForLabel(label) {
@@ -3593,6 +3647,12 @@ function uiRequest(req) {
 	// (Rendering earlier — at tool_execution_start — was the bug: the permission
 	// select fired next and clobbered the questions with showModal().)
 	if (method === "input" && req.title === ASK_MARKER) {
+		// If the approval ack was lost during an SSE reconnect, this latch is the
+		// next proof that the safeguard prompt resolved. Do not charge its wait.
+		if (hasPermissionProvenance(lastSafeguardCtx)) {
+			resumePermissionTool(curToolCallId);
+			lastSafeguardCtx = null;
+		}
 		askId = id;
 		if (pendingAskArgs) {
 			const a = pendingAskArgs;
@@ -3667,6 +3727,18 @@ function uiRequest(req) {
 	// the marker + ack flow (FR-25/22) and the diff previews (FR-25) can read
 	// tool identity + provenance. The ask bridge (input+MARKER) is handled
 	// above and keeps its own immediate-close flow.
+	// Safeguard emits setStatus immediately before its blocking prompt, so pause
+	// only that tool's clock. The context is cleared on approval_resolved; the
+	// later ask_user_question input latch therefore remains a real tool wait.
+	if (
+		(method === "select" ||
+			method === "confirm" ||
+			method === "input" ||
+			method === "editor") &&
+		hasPermissionProvenance(lastSafeguardCtx) &&
+		curToolCallId
+	)
+		pausePermissionTool(curToolCallId);
 	if (method === "select") {
 		pendingApproval = {
 			requestId: id,
@@ -3970,6 +4042,11 @@ function handle(payload) {
 	switch (payload.type) {
 		case "agent_start":
 			agentStarts++;
+			if (usageEvents)
+				usageEvents.startTurn(
+					payload.turnId || payload.requestId || payload.id,
+					Date.now(),
+				);
 			sealLatestToolGroup();
 			announceStatus("agent_start");
 			setStreaming(true);
@@ -3981,6 +4058,11 @@ function handle(payload) {
 			toolArgs.clear(); // per-turn args; the replay re-feeds them (FR-25)
 			break;
 		case "agent_end":
+			if (usageEvents && !suppressUsageEnd)
+				usageEvents.endTurn(
+					payload.turnId || payload.requestId || payload.id,
+					Date.now(),
+				);
 			// safety net: render if message_end never fired (broken stream).
 			// finalizeBubble drops an empty bubble, so this can't leave a stray label.
 			// setStreaming(false) below then nulls cur.
@@ -4043,6 +4125,14 @@ function handle(payload) {
 		case "message_update": {
 			const e = payload.assistantMessageEvent;
 			if (!e) break;
+			if (
+				usageEvents &&
+				(e.type === "text_delta" || e.type === "thinking_delta")
+			)
+				usageEvents.markFirstToken(
+					payload.turnId || payload.requestId || payload.id,
+					Date.now(),
+				);
 			if (
 				!cur &&
 				(e.type === "text_start" ||
@@ -4111,6 +4201,8 @@ function handle(payload) {
 		}
 
 		case "tool_execution_start": {
+			if (usageEvents)
+				usageEvents.startTool(payload.toolCallId, payload.toolName, Date.now());
 			toolBlock(payload.toolCallId, payload.toolName, payload.args, true);
 			// subagent: show the agent/mode + an empty live view immediately, so the
 			// box reads as "running scout (lookup)" before the first update lands.
@@ -4160,6 +4252,12 @@ function handle(payload) {
 			break;
 		}
 		case "tool_execution_end": {
+			if (usageEvents)
+				usageEvents.endTool(
+					payload.toolCallId,
+					Date.now(),
+					payload.isError === true,
+				);
 			const w = toolBlocks.get(payload.toolCallId);
 			// build the result text once; consumed inside the if(w) block below.
 			let t = "";
@@ -4576,6 +4674,7 @@ function applyState(data) {
 		refreshStats();
 	}
 	curSessionFile = data.sessionFile || null;
+	setUsageSession(data.sessionFile);
 	refreshPonytailMode(data.sessionFile);
 	refreshSessionsSidebar();
 }
@@ -4627,6 +4726,33 @@ function applyStats(data) {
 	updateCtxMeter(data.contextUsage); // spec FR-10 — same event that refreshes the readout
 	queueSbOverflow();
 	refreshOpenAnalysis();
+	recordUsageSample(false);
+}
+function recordUsageSample(force) {
+	if (!usageTelemetry || !usageHistory || document.hidden) return false;
+	const now = Date.now();
+	if (!force && usageLastSampleAt && now - usageLastSampleAt < USAGE_SAMPLE_MS)
+		return false;
+	let analysis = null;
+	try {
+		const sa = window.sessionAnalysis;
+		if (sa && sa.analyzeSession)
+			analysis = sa.analyzeSession(lastMessages, lastStats, lastRunning);
+	} catch {
+		analysis = null;
+	}
+	const sample = usageTelemetry.sampleFromAnalysis(
+		now,
+		analysis,
+		lastStats,
+		usageEvents ? usageEvents.snapshot() : null,
+	);
+	if (!sample || !usageTelemetry.appendSample(usageHistory, sample))
+		return false;
+	usageTelemetry.saveHistory(null, usageHistory, now);
+	usageLastSampleAt = now;
+	refreshOpenAnalysis();
+	return true;
 }
 // fetch the bundled bootstrap object (state+messages+commands+models+stats) in
 // one round-trip and apply it. Fire-and-forget at every call site (like the old
@@ -4675,6 +4801,7 @@ async function fetchSnapshot() {
 			snapRecheckStarts = agentStarts; // AFTER replay — replay bumps agent_start
 			api({ type: "get_state", id: "snap-recheck" });
 		}
+		recordUsageSample(true);
 		// U6 C8 (FR-21): a reload mid-approval must re-render the pending request
 		// from the broker snapshot — the original requestId stays valid, so the
 		// user's decision still resolves the latch. The tool identity comes from
@@ -4691,7 +4818,11 @@ async function fetchSnapshot() {
 				toolName: rec.toolName,
 				provenance: rec.provenance,
 			};
-			if (rec.toolCallId) curToolCallId = rec.toolCallId;
+			if (rec.toolCallId) {
+				curToolCallId = rec.toolCallId;
+				if (hasPermissionProvenance(rec.provenance))
+					pausePermissionTool(rec.toolCallId);
+			}
 			if (rec.toolName) curToolName = rec.toolName;
 			openSelectModal({
 				id: rec.requestId,
@@ -4712,7 +4843,15 @@ async function fetchSnapshot() {
 // null cur only resets streaming/status, and a re-run after the real end is a
 // no-op.
 function finalizeDeadTurn() {
-	handle({ type: "agent_end" });
+	suppressUsageEnd = true;
+	try {
+		handle({ type: "agent_end" });
+	} finally {
+		suppressUsageEnd = false;
+	}
+	// A crashed turn is not completed telemetry; cancel its active identities
+	// while preserving the cumulative completed totals for the next turn.
+	if (usageEvents) usageEvents.reset(usageEvents.snapshot());
 	for (const b of toolBlocks.values())
 		if (b.el.classList.contains("run")) {
 			b.el.classList.remove("run");
@@ -4767,6 +4906,9 @@ const STATS_FAST = 3000,
 let statsTimer = setInterval(refreshStats, STATS_IDLE);
 let healthTimer = setInterval(refreshHealth, 6000);
 let usageTimer = setInterval(refreshUsageBar, 60000);
+let usageSampleTimer = document.hidden
+	? 0
+	: setInterval(recordUsageSample, USAGE_SAMPLE_MS);
 let planTimer = setInterval(refreshPlanState, 30000);
 function rescheduleStats() {
 	clearInterval(statsTimer);
@@ -4774,11 +4916,15 @@ function rescheduleStats() {
 }
 document.addEventListener("visibilitychange", () => {
 	if (document.hidden) {
+		if (usageTelemetry) usageTelemetry.pauseHistory(usageHistory);
 		clearInterval(statsTimer);
 		clearInterval(healthTimer);
 		clearInterval(usageTimer);
+		clearInterval(usageSampleTimer);
 		clearInterval(planTimer);
 	} else {
+		if (usageTelemetry) usageTelemetry.resumeHistory(usageHistory);
+		recordUsageSample(true);
 		refreshStats();
 		refreshHealth();
 		refreshUsageBar();
@@ -4786,6 +4932,7 @@ document.addEventListener("visibilitychange", () => {
 		rescheduleStats();
 		healthTimer = setInterval(refreshHealth, 6000);
 		usageTimer = setInterval(refreshUsageBar, 60000);
+		usageSampleTimer = setInterval(recordUsageSample, USAGE_SAMPLE_MS);
 		planTimer = setInterval(refreshPlanState, 30000);
 	}
 });
@@ -4848,6 +4995,8 @@ es.onmessage = (ev) => {
 		// approval UI. A mismatched requestId is someone else's broadcast and
 		// must not close anything (FR-24).
 		if (pendingApproval && pendingApproval.requestId === env.requestId) {
+			resumePermissionTool(pendingApproval.toolCallId);
+			lastSafeguardCtx = null;
 			hideModal();
 			clearPendingApproval();
 		}
@@ -4871,6 +5020,7 @@ es.onmessage = (ev) => {
 		setSafeHtml(feedEl, "");
 		toolBlocks.clear();
 		curSessionFile = null;
+		resetUsageSession();
 		setStreaming(false);
 		// U6 C8: the old project's approvals/args must not leak into the new one
 		clearPendingApproval();
@@ -6571,14 +6721,61 @@ function analysisBody() {
 		.filter((t) => t.cost > 0);
 	const failed = a.toolCalls.filter((c) => c.isError);
 	const topTools = a.tools.slice(0, 6);
-	const stat = (val, lbl, cls) =>
-		'<div class="an-stat' +
-		(cls ? " " + cls : "") +
-		'"><span class="an-val">' +
-		esc(val) +
-		'</span><span class="an-lbl">' +
-		esc(lbl) +
-		"</span></div>";
+	let usageById = new Map();
+	if (usageTelemetry && usageHistory && usageTelemetry.metricViews) {
+		try {
+			usageById = new Map(
+				usageTelemetry.metricViews(usageHistory).map((view) => [view.id, view]),
+			);
+		} catch {
+			usageById = new Map();
+		}
+	}
+	const usageView = (id, label) =>
+		usageById.get(id) || {
+			id,
+			label,
+			valueText: "—",
+			available: false,
+			reason: "not-initialized",
+			series: [],
+		};
+	const stat = (id, val, lbl, cls) => {
+		const view = usageView(id, lbl);
+		const card =
+			usageTelemetry && usageTelemetry.metricCardParts
+				? usageTelemetry.metricCardParts({
+						...view,
+						label: lbl,
+						valueText: val,
+						available: val !== "—" && val !== "not reported",
+						reason: view.reason || "not-initialized",
+					})
+				: {
+						id,
+						label: lbl,
+						valueText: val,
+						stateText: "",
+						trendHtml: "",
+					};
+		return (
+			'<div class="an-stat' +
+			(cls ? " " + cls : "") +
+			'" data-metric="' +
+			esc(id) +
+			'"><span class="an-spark-bg" aria-hidden="true">' +
+			(card.trendHtml || "") +
+			'</span><span class="an-stat-main"><span class="an-val">' +
+			esc(card.valueText) +
+			'</span><span class="an-lbl">' +
+			esc(card.label) +
+			"</span>" +
+			(card.stateText
+				? '<span class="an-state">' + esc(card.stateText) + "</span>"
+				: "") +
+			"</span></div>"
+		);
+	};
 	const tok = (lbl, v) =>
 		'<div class="an-tok"><span class="an-tok-v">' +
 		esc(SA.formatTokens(v)) +
@@ -6600,14 +6797,16 @@ function analysisBody() {
 	parts.push('<div class="an-head">');
 	parts.push(
 		stat(
+			"total",
 			a.costAvailable ? SA.formatTurnCost(a.totalCost) : "not reported",
 			"total",
 			"primary",
 		),
 	);
-	parts.push(stat(String(a.turnCount), "turns"));
+	parts.push(stat("turns", String(a.turnCount), "turns"));
 	parts.push(
 		stat(
+			"avg-turn",
 			a.attributedCost > 0 && a.turnCount
 				? SA.formatTurnCost(a.averageTurnCost)
 				: "not reported",
@@ -6616,6 +6815,7 @@ function analysisBody() {
 	);
 	parts.push(
 		stat(
+			"median-turn",
 			a.attributedCost > 0 && a.turnCount
 				? SA.formatTurnCost(a.medianTurnCost)
 				: "not reported",
@@ -6624,12 +6824,38 @@ function analysisBody() {
 	);
 	parts.push(
 		stat(
+			"context",
 			a.contextPercent != null ? Math.round(a.contextPercent) + "%" : "—",
 			"context",
 		),
 	);
-	parts.push(stat(a.tokensAvailable ? cacheHit + "%" : "—", "cache hit"));
+	parts.push(
+		stat("cache-hit", a.tokensAvailable ? cacheHit + "%" : "—", "cache hit"),
+	);
 	parts.push("</div>");
+	parts.push('<div class="an-section an-recent">');
+	parts.push('<div class="an-sec-h">RECENT TELEMETRY</div>');
+	parts.push(
+		'<div class="an-metrics">' +
+			[
+				"output-tps",
+				"avg-output-call",
+				"cost-minute",
+				"tool-error",
+				"tool-calls-minute",
+				"pending-tools",
+				"headroom",
+				"turn-duration",
+				"first-token",
+				"tool-latency",
+			]
+				.map((id) => {
+					const view = usageView(id, id);
+					return stat(id, view.valueText, view.label);
+				})
+				.join("") +
+			"</div></div>",
+	);
 	// per-turn bars
 	if (turns.length) {
 		parts.push('<div class="an-section">');

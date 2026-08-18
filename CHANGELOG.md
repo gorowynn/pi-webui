@@ -6,6 +6,19 @@
 
 ## History
 
+### 2026-08-18 — fix(webui): exclude permission waits from tool timing
+
+- Usage tool-duration telemetry now pauses while a safeguard permission prompt
+  is open and resumes after the decision is resolved. Waiting for permission no
+  longer inflates tool runtime; tool-owned input waits remain measured.
+
+### 2026-08-18 — fix(webui): preserve Usage telemetry per session
+
+- Browser-local Usage storage now keeps a versioned map of the 12 most recently
+  saved session histories instead of replacing the previous session on switch.
+  Existing v1 single-session payloads migrate on the next save. See
+  [`docs/usage-telemetry.md`](docs/usage-telemetry.md).
+
 ### 2026-08-18 — feat(webui): compact context header and inspector rail
 
 - `#statusbar` now lives in the header beside the connection state, keeping repo

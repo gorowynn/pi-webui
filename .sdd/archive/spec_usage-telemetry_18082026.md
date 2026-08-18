@@ -79,7 +79,9 @@
   context overlay, visible-transcript numbering distinction, density modes, and
   approval/error emphasis remain unchanged.
 - **FR-17** The implementation stays zero-build and dependency-free. It adds no
-  server endpoint, session-file field, or persistent storage requirement.
+  server endpoint or session-file field. The bounded numeric history may be
+  persisted in browser-local storage only; storage failure falls back to memory
+  without affecting the Usage panel.
 - **FR-18** Event replay/reconnect is idempotent: a replayed completion or tool
   event cannot count twice in duration, failure, call, or pending metrics.
 - **FR-19** A sample or metric calculation must never throw on malformed,
@@ -106,6 +108,10 @@ A sample is an immutable record with:
 - `samples`: oldest-to-newest samples, bounded to 361 records and 60 minutes.
 - `baselineValid`: whether the newest sample can be compared to its predecessor.
 - `paused`: whether sampling is waiting for the first post-visibility sample.
+- `storage`: optional versioned browser-local snapshot for the current
+  `sessionKey`; it contains bounded samples only, never transcript/tool text.
+  A reload/reopen hydrates only a matching identity; malformed, stale, or
+  unavailable storage is ignored and sampling continues in memory.
 
 ### Metric view
 
@@ -139,3 +145,10 @@ Each metric view contains:
   rather than guessable.
 - The final card layout remains usable in a narrow rail and with keyboard or
   screen-reader access; sparklines cannot become the only click target.
+- Reloading or reopening the browser restores the matching bounded numeric
+  history when local storage is available; it does not restore active event
+  identities or fabricate an interrupted duration. A different session key
+  starts a fresh history.
+- Private browsing, disabled storage, corrupt JSON, quota errors, and schema
+  mismatches degrade to memory-only sampling without throwing or leaking
+  transcript content.

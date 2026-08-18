@@ -17,8 +17,9 @@ slowdowns, and context pressure difficult to spot.
 
 ## Constraints
 
-- Keep only a 60-minute rolling history in the browser session buffer; do not add
-  server-side persistence or alter session files.
+- Keep only a 60-minute rolling history in bounded browser-local storage; do not
+  add server-side persistence or alter session files. If browser storage is
+  unavailable, degrade to the same in-memory buffer without blocking the UI.
 - Sample at a 10-second cadence and cap all buffers to the visible window.
 - Preserve the zero-build, vanilla browser architecture and existing density modes.
 - Treat provider-reported values and measured durations as optional: missing data

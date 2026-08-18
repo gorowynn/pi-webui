@@ -181,6 +181,10 @@ const STATIC = {
 		file: "session-analysis.js",
 		type: "text/javascript; charset=utf-8",
 	},
+	"/usage-telemetry.js": {
+		file: "usage-telemetry.js",
+		type: "text/javascript; charset=utf-8",
+	},
 	"/composer-images.js": {
 		file: "composer-images.js",
 		type: "text/javascript; charset=utf-8",
