@@ -11,6 +11,15 @@ const footer = html.match(/<footer>[\s\S]*?<\/footer>/)?.[0] || "";
 
 assert.match(footer, /id="input"[\s\S]*enterkeyhint="send"/);
 assert.match(footer, /class="bar"/);
+assert.match(
+	footer,
+	/id="attach-images"[\s\S]*type="button"[\s\S]*aria-label=/,
+);
+assert.match(
+	footer,
+	/id="image-picker"[\s\S]*type="file"[\s\S]*accept="image\/\*"/,
+);
+assert.match(footer, /id="image-picker"[\s\S]*multiple[\s\S]*hidden/);
 assert.match(footer, /id="bar-ovf"/);
 assert.match(
 	css,
@@ -23,7 +32,13 @@ assert.match(
 );
 assert.match(css, /\.bar\s*\{[\s\S]*border-top:\s*1px solid var\(--line\)/);
 assert.match(app, /function draggingFiles|const draggingFiles/);
+assert.match(app, /function syncImageAttachmentUi\(\)/);
+assert.match(app, /const id = currentModelId \|\| savedModelId/);
+assert.match(
+	app,
+	/attachImagesButton\.onclick = \(\) => imagePicker\.click\(\)/,
+);
 assert.match(app, /classList\.add\("dragging"\)/);
 assert.match(app, /classList\.remove\("dragging"\)/);
 
-console.log("10 passed");
+console.log("16 passed");

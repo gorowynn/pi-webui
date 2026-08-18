@@ -22,7 +22,22 @@ assert.match(css, /\.rt-lbl\s*\{[\s\S]*clip:\s*rect\(0 0 0 0\)/);
 assert.match(css, /header \.statusbar\s*\{[\s\S]*justify-content:\s*center/);
 assert.match(css, /\.statusbar \.sb-inline\s*\{[\s\S]*flex:\s*0 1 auto/);
 assert.match(app, /function syncHeaderStatusOverflow\(\)/);
+assert.match(app, /function refreshOpenAnalysis\(\)/);
+assert.match(app, /function appendLiveAssistant\(message\)/);
+assert.match(app, /addUser\(txt, imgs, false\)/);
+assert.match(app, /turns\.slice\(-Math\.min\(100, turns\.length\)\)/);
+assert.match(app, /context usage by turn/);
+assert.match(app, /billed model turns/);
+assert.match(app, /<div class="an-sec-h">TURN HISTORY<\/div>/);
+assert.match(app, /function focusModalControl\(\)/);
+assert.match(app, /textContent = "Waiting for approval"/);
+assert.match(app, /setActivity\("waiting for approval…", false\)/);
+assert.match(app, /lastFocus && lastFocus\.isConnected/);
+assert.match(
+	css,
+	/\.approval-wait\s*\{[\s\S]*border:\s*1px solid var\(--warning\)/,
+);
 assert.match(app, /\[data-sb-meta\]/);
 assert.match(app, /sbSec\.hidden = false/);
 
-console.log("14 passed");
+console.log("27 passed");

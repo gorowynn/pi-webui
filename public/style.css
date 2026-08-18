@@ -1679,6 +1679,9 @@ textarea:focus {
 /* ponytail: permission-mode chip — always visible in the composer bar so the
    current posture (default / auto-approve / read-only / yolo) can't be
    forgotten mid-chat. Colored by [data-mode]; click opens #permissions. */
+.bar button.attach-images {
+	flex: 0 0 auto;
+}
 .bar button.mode-chip {
 	font-size: 11px;
 	padding: 6px 10px;
@@ -2015,6 +2018,25 @@ body.page-open #modal {
 .modal-x:hover {
 	color: var(--accent);
 	border-color: var(--accent);
+}
+#modal .approval-wait {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: -2px 0 12px;
+	padding: 8px 10px;
+	border: 1px solid var(--warning);
+	border-radius: var(--r);
+	background: #ffcc661a;
+	color: var(--warning);
+	font:
+		600 11px / 1.3 ui-monospace,
+		monospace;
+	letter-spacing: 0.02em;
+}
+#modal .approval-wait::before {
+	content: "●";
+	font-size: 9px;
 }
 #modal h3 {
 	margin: 0 0 10px;

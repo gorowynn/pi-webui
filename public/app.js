@@ -68,6 +68,7 @@ function pendingToolArgs() {
 function clearPendingApproval() {
 	pendingApproval = null;
 	pendingSending = false;
+	setActivity(streaming ? "working…" : "ready", streaming);
 }
 // stable decision enums for the version-1 marker (FR-25)
 function decisionForLabel(label) {
@@ -286,7 +287,7 @@ if (jumpBottom)
 		});
 	});
 
-function addUser(text, images) {
+function addUser(text, images, recordHistory = true) {
 	const m = document.createElement("article");
 	m.className = "msg";
 	m.classList.add("user-turn");
@@ -313,13 +314,36 @@ function addUser(text, images) {
 		}
 		b.appendChild(grid);
 	}
+	if (recordHistory) {
+		const liveMessageIndex = lastMessages.length;
+		lastMessages.push({
+			role: "user",
+			content: [{ type: "text", text }],
+			timestamp: Date.now(),
+		});
+		m.setAttribute("data-mi", String(liveMessageIndex));
+	}
 	feedEl.appendChild(m);
+	if (recordHistory) refreshOpenAnalysis();
 	pinned = true;
 	unread = 0;
 	scrollDown();
 	refreshJump();
 	updateEmptyState(); // spec FR-8 — a live first message hides the empty state
 }
+function appendLiveAssistant(message) {
+	if (!message || message.role !== "assistant") return -1;
+	const existing = lastMessages.findIndex(
+		(m) =>
+			m === message ||
+			(message.id != null && m.id === message.id) ||
+			(message.timestamp != null && m.timestamp === message.timestamp),
+	);
+	if (existing >= 0) return existing;
+	lastMessages.push(message);
+	return lastMessages.length - 1;
+}
+
 // ponytail: render an extension `notify` payload as a real assistant
 // message in the transcript (markdown-formatted). Used for substantial /
 // multi-line notify content -- e.g. the ctx-stats skill dumps a full
@@ -1630,25 +1654,40 @@ function onModalKey(e) {
 		}
 	}
 }
+function focusModalControl() {
+	requestAnimationFrame(() => {
+		const f = card.querySelector(
+			"button:not([disabled]), [href], input, select, textarea, [tabindex]",
+		);
+		if (f) f.focus();
+	});
+}
 function openModal() {
 	lastFocus = document.activeElement;
 	modalFree = false; // default: assume a latch modal; free openers opt in below
 	if (modalX) modalX.hidden = true;
 	modal.style.display = "flex";
 	modal.setAttribute("aria-modal", "true");
+	modal.setAttribute(
+		"aria-label",
+		pendingApproval ? "Waiting for approval" : "pi dialog",
+	);
 	document.addEventListener("keydown", onModalKey, true);
-	requestAnimationFrame(() => {
-		const f = card.querySelector(
-			"button, [href], input, select, textarea, [tabindex]",
-		);
-		if (f) f.focus();
-	});
+	focusModalControl();
 }
 function showModal(html, free, fullPage) {
 	// Reset per-modal modifiers so they cannot leak across opens. Blocking tool
 	// interactions use the full-page surface rather than a tool-card control.
 	card.className = fullPage ? "card wide" : "card";
 	setSafeHtml(card, html);
+	if (pendingApproval) {
+		const wait = document.createElement("div");
+		wait.className = "approval-wait";
+		wait.setAttribute("role", "status");
+		wait.textContent = "Waiting for approval";
+		card.prepend(wait);
+		setActivity("waiting for approval…", false);
+	}
 	openModal();
 	if (free) {
 		modalFree = true;
@@ -1679,12 +1718,17 @@ function hideModal() {
 	modal.style.display = "none";
 	modal.setAttribute("aria-modal", "false");
 	document.removeEventListener("keydown", onModalKey, true);
-	if (lastFocus) {
+	const target =
+		lastFocus && lastFocus.isConnected && lastFocus !== document.body
+			? lastFocus
+			: inputEl;
+	if (target && typeof target.focus === "function") {
 		try {
-			lastFocus.focus();
+			target.focus();
 		} catch {}
-		lastFocus = null;
 	}
+	lastFocus = null;
+	modal.setAttribute("aria-label", "pi dialog");
 }
 if (modalX) modalX.onclick = dismissModal;
 modal.addEventListener("click", (e) => {
@@ -2554,6 +2598,18 @@ function refreshRailWidget(w) {
 	}
 	w.render(el); // sync renders (analysis / todos)
 	el.scrollTop = st;
+}
+function refreshOpenAnalysis() {
+	if (railWidget && railWidget.id === "analysis") refreshRailWidget(railWidget);
+	if (modalFree && card.classList.contains("an-card")) {
+		const st = card.scrollTop;
+		setSafeHtml(
+			card,
+			analysisBody() || '<p class="w-placeholder">no session data yet</p>',
+		);
+		card.scrollTop = st;
+		wireAnalysis(card, hideModal);
+	}
 }
 setInterval(() => {
 	if (railWidget && railRenderDue(railWidget)) refreshRailWidget(railWidget);
@@ -3525,6 +3581,7 @@ async function openSelectModal(req) {
 		};
 		list.appendChild(b);
 	});
+	focusModalControl();
 }
 
 function uiRequest(req) {
@@ -3667,6 +3724,7 @@ function uiRequest(req) {
 			sendApprovalDecision(id, { confirmed: true }, "allow-once");
 		row.append(no, yes);
 		card.appendChild(row);
+		focusModalControl();
 	} else if (method === "input") {
 		pendingApproval = {
 			requestId: id,
@@ -3696,7 +3754,7 @@ function uiRequest(req) {
 			sendApprovalDecision(id, { cancelled: true }, "deny");
 		row.append(ok, cancel);
 		card.append(inp, row);
-		setTimeout(() => inp.focus(), 10);
+		focusModalControl();
 	} else if (method === "editor") {
 		pendingApproval = {
 			requestId: id,
@@ -3726,7 +3784,7 @@ function uiRequest(req) {
 			sendApprovalDecision(id, { cancelled: true }, "deny");
 		row.append(ok, cancel);
 		card.append(ta, row);
-		setTimeout(() => ta.focus(), 10);
+		focusModalControl();
 	}
 }
 
@@ -3759,7 +3817,7 @@ function renderMessage(msg) {
 			imgs = c.filter((b) => b.type === "image" && b.data);
 			if (!imgs.length) imgs = null;
 		}
-		addUser(txt, imgs);
+		addUser(txt, imgs, false);
 	} else if (msg.role === "assistant") {
 		// stash tool-call args so the matching toolResult below can do typed
 		// rendering (read → code/csv/…) on replay too (plan 2.1 / R§2.1).
@@ -3972,6 +4030,12 @@ function handle(payload) {
 					unread++;
 					refreshJump();
 				}
+			}
+			if (payload.message && payload.message.role === "assistant") {
+				const mi = appendLiveAssistant(payload.message);
+				if (cur && cur.bubble && cur.bubble.parentElement)
+					cur.bubble.parentElement.setAttribute("data-mi", String(mi));
+				refreshOpenAnalysis();
 			}
 			cur = null;
 			break;
@@ -4533,6 +4597,7 @@ function applyMessages(messages) {
 	feedEl.setAttribute("aria-busy", "false");
 	scrollDown();
 	updateEmptyState(); // spec FR-8 — bootstrap/replay may leave the transcript empty
+	refreshOpenAnalysis();
 }
 function applyCommands(cmds) {
 	if (Array.isArray(cmds)) commands = cmds;
@@ -4561,6 +4626,7 @@ function applyStats(data) {
 	sb.cost.textContent = data.cost != null ? data.cost.toFixed(3) : "…";
 	updateCtxMeter(data.contextUsage); // spec FR-10 — same event that refreshes the readout
 	queueSbOverflow();
+	refreshOpenAnalysis();
 }
 // fetch the bundled bootstrap object (state+messages+commands+models+stats) in
 // one round-trip and apply it. Fire-and-forget at every call site (like the old
@@ -4842,6 +4908,7 @@ function setCurrentModel(m) {
 	if (currentProvider !== m.provider) sessionUsage = null;
 	currentModelId = id;
 	currentProvider = m.provider;
+	syncImageAttachmentUi();
 	return true;
 }
 function applyCurrentModel() {
@@ -4869,6 +4936,7 @@ function populateModels(models) {
 		const o = document.createElement("option");
 		o.textContent = "no models";
 		modelSel.appendChild(o);
+		syncImageAttachmentUi();
 		return;
 	}
 	availableModels.forEach((m) => {
@@ -4878,6 +4946,7 @@ function populateModels(models) {
 		modelSel.appendChild(o);
 	});
 	applyCurrentModel();
+	syncImageAttachmentUi();
 }
 modelSel.onchange = () => {
 	refreshSbModel();
@@ -4886,6 +4955,7 @@ modelSel.onchange = () => {
 		currentModelId = v.provider + "/" + v.modelId;
 		if (currentProvider !== v.provider) sessionUsage = null;
 		currentProvider = v.provider;
+		syncImageAttachmentUi();
 		localStorage.setItem("pi:model", currentModelId);
 		refreshUsageBar();
 		refreshStats();
@@ -5581,11 +5651,21 @@ inputEl.oninput = () => {
 let pendingImages = [];
 const imgStripEl = $("imgstrip");
 function currentModelAcceptsImages() {
-	if (!currentModelId || !availableModels) return false;
-	const m = availableModels.find(
-		(x) => x.provider + "/" + x.id === currentModelId,
-	);
+	const id = currentModelId || savedModelId;
+	if (!id || !availableModels) return false;
+	const m = availableModels.find((x) => x.provider + "/" + x.id === id);
 	return !!(m && Array.isArray(m.input) && m.input.indexOf("image") >= 0);
+}
+function syncImageAttachmentUi() {
+	const button = $("attach-images");
+	if (!button) return;
+	const supported = currentModelAcceptsImages();
+	const label = supported
+		? "Attach images"
+		: "Selected model does not accept images";
+	button.disabled = !supported;
+	button.title = label;
+	button.setAttribute("aria-label", label);
 }
 function renderImgStrip() {
 	if (!imgStripEl) return;
@@ -5644,6 +5724,16 @@ async function attachImages(files) {
 		}
 	}
 	if (added) renderImgStrip();
+}
+const imagePicker = $("image-picker");
+const attachImagesButton = $("attach-images");
+if (imagePicker && attachImagesButton) {
+	attachImagesButton.onclick = () => imagePicker.click();
+	imagePicker.onchange = () => {
+		const files = Array.from(imagePicker.files || []);
+		imagePicker.value = "";
+		void attachImages(files);
+	};
 }
 // paste: grab image files from the clipboard
 inputEl.addEventListener("paste", (e) => {
@@ -6394,7 +6484,7 @@ function analysisBody() {
 	// bar metric: cost if any attributed, else output tokens (still useful signal)
 	const useCost = a.attributedCost > 0;
 	const metric = useCost ? (t) => t.cost : (t) => t.usage.output;
-	const shown = turns.slice(-Math.min(80, turns.length));
+	const shown = turns.slice(-Math.min(100, turns.length));
 	const contextWindow =
 		lastStats &&
 		lastStats.contextUsage &&
@@ -6543,14 +6633,14 @@ function analysisBody() {
 	// per-turn bars
 	if (turns.length) {
 		parts.push('<div class="an-section">');
+		parts.push('<div class="an-sec-h">TURN HISTORY</div>');
 		parts.push(
-			'<div class="an-sec-h">' +
-				esc(useCost ? "cost per turn" : "output tokens per turn") +
-				' <span class="an-sec-sub">(last ' +
+			'<div class="an-sec-sub">last ' +
 				shown.length +
 				(turns.length > shown.length ? " of " + turns.length : "") +
+				" billed model turns" +
 				(contextLine ? " · line = context" : "") +
-				" · click to jump)</span></div>",
+				" · click to jump</div>",
 		);
 		parts.push('<div class="an-bars">' + bars + contextLine + "</div>");
 		if (!useCost) {
@@ -6561,7 +6651,7 @@ function analysisBody() {
 		parts.push("</div>");
 	} else {
 		parts.push(
-			'<div class="an-section"><div class="an-sec-h">cost per turn</div>' +
+			'<div class="an-section"><div class="an-sec-h">TURN HISTORY</div>' +
 				'<p class="um-hint">No completed model turns yet; cost appears after pi reports usage.</p></div>',
 		);
 	}

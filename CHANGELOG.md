@@ -29,7 +29,8 @@
   `test/transcript-layout.test.js` for the visual contract.
 - The composer is now one calm writing block: the input uses an inset surface,
   actions sit behind a quiet divider, mobile keyboards get `enterkeyhint="send"`,
-  and image drag/drop visibly highlights the drop target. Added
+  image drag/drop visibly highlights the drop target, and the visible Image picker
+  follows the selected model's image capability. Added
   `test/composer-layout.test.js`.
 - Both sidebars now share the same restrained hierarchy: the workspace/session
   drawer has separated sections and clearer active rows; the inspector rail has
@@ -37,6 +38,9 @@
   a roomier inset pane, and a more deliberate pane head. Workspace sections
   gained semantic labels; `test/sidebar-layout.test.js` covers the
   visual/accessibility contract.
+- Pending approval modals now keep a persistent `Waiting for approval` state,
+  focus the first actionable control after async diff rendering, and restore
+  focus to the prior control or composer on close.
 - The Usage rail widget now gives the total cost a primary treatment and uses a
   readable two-column summary for the roomier pane, with token cards retaining
   their labels instead of collapsing into a cramped six-card row. Missing
@@ -44,8 +48,11 @@
   instead of an empty cost section. The per-turn bars also have a definite chart
   height, so their percentage heights render instead of collapsing to zero. A
   current-context line now overlays the cost bars point-for-point by turn, with
-  the legend identifying it separately from cost. Turn tooltips include context
-  percentage, and token counts use compact `k`/`M`/`B` notation.
+  the legend identifying it separately from cost. The live chart now refreshes
+  from incoming messages/stats, shows the last 100 billed model turns, and
+  labels the graph `TURN HISTORY`; the subtitle distinguishes billed model
+  turns from the transcript's visible-turn numbering. Turn tooltips include
+  context percentage, and token counts use compact `k`/`M`/`B` notation.
 
 ### 2026-08-18 — feat(webui): calm conversation density and grouped tool activity
 

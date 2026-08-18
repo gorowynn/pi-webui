@@ -190,7 +190,8 @@ second typeface.
   titles and accessible names remain as a fallback; selected state is a soft
   background + accent icon with a quiet boundary, never a side stripe. The
   selected tab opens a roomier calm inset detail pane with a prominent Usage
-  summary when selected.
+  summary when selected. Its graph is headed `TURN HISTORY`, keeps the last
+  100 billed model turns, and overlays per-turn context usage.
 - **Conversation density:** the header control cycles **Focus → Balanced → Trace**;
   **Balanced** is the default. Focus hides successful tool work but keeps failures,
   Balanced collapses each turn's tool activity to a summary, and Trace exposes raw
@@ -255,8 +256,9 @@ jump pill / accent chips use `pill` (`999px`). `paperlike` softens `--r` to 6px.
   structured rule rows, active grants, pending requests, redacted audit, and an
   advanced validated source editor. The rail contains only its badge/launcher.
 - **Composer** — `.composer` is a full-width `surface-raised` writing block;
-  the textarea uses `surface-inset`, the action row has a quiet divider, and
-  image drag/drop gets an accent border without adding a new overlay.
+  the textarea uses `surface-inset`, the action row has a quiet divider, image
+  drag/drop gets an accent border without adding a new overlay, and a visible
+  Image action follows the selected model's image capability.
 - **Actions** — primary button / Send / jump pill: solid `primary` (Carolina
   Blue) with dark ink text.
 
@@ -286,8 +288,10 @@ extension policy remains authoritative; browser risk text is explanatory only.
   dismissal mean Deny. While a response is being acknowledged, controls disable
   without hiding the reviewed content; failure restores them with Retry.
 - A minimized or offscreen request leaves a persistent rail badge and status
-  text. Resolution, timeout, abort, another-tab response, Pi exit, or workspace
-  switch removes/neutralizes every duplicate surface.
+  text. The modal shows “Waiting for approval”, focuses its first actionable
+  control after async rendering, and restores focus to the prior control or
+  composer on close. Resolution, timeout, abort, another-tab response, Pi exit,
+  or workspace switch removes/neutralizes every duplicate surface.
 
 ### 8.2 Dedicated WebUI Permissions page
 
