@@ -10,9 +10,7 @@
  * <iframe> (HTML — empty sandbox + stripScripts defense-in-depth) ever touches
  * the DOM. No inline SVG, no srcdoc-without-sandbox, ever.
  */
-(function () {
-	"use strict";
-
+(() => {
 	// ---- content-type detection (R§2.1) ----
 	// extension → hljs language. Keys are lowercased exts without the dot.
 	var LANG = {
@@ -118,9 +116,7 @@
 			return `${name}: ${args.pattern || args.path || ""}`;
 		if (name === "todo") {
 			var a = args && args.action;
-			var n = function (x) {
-				return Array.isArray(x) ? x.length : 0;
-			};
+			var n = (x) => (Array.isArray(x) ? x.length : 0);
 			if (a === "plan" || a === "add")
 				return `todo ${a}: ${n(args.items)} task(s)`;
 			if (a === "update") return `todo update: ${n(args.updates)} change(s)`;
@@ -155,9 +151,7 @@
 				return args.url || "";
 			case "todo": {
 				var a = args.action;
-				var n = function (x) {
-					return Array.isArray(x) ? x.length : 0;
-				};
+				var n = (x) => (Array.isArray(x) ? x.length : 0);
 				if (a === "plan" || a === "add")
 					return a + " " + n(args.items) + " task(s)";
 				if (a === "update") return "update " + n(args.updates);
@@ -168,6 +162,20 @@
 			default:
 				return "";
 		}
+	}
+
+	// A compact, text-first turn summary keeps tool detail inspectable without
+	// making every result compete with the conversation.
+	function toolGroupSummary(count, running, errors, duration) {
+		count = Math.max(0, Number(count) || 0);
+		running = Math.max(0, Number(running) || 0);
+		errors = Math.max(0, Number(errors) || 0);
+		var parts = [count + (count === 1 ? " tool" : " tools")];
+		if (errors) parts.push(errors + (errors === 1 ? " error" : " errors"));
+		if (running) parts.push("working");
+		else if (!errors) parts.push("complete");
+		if (duration) parts.push(String(duration));
+		return parts.join(" · ");
 	}
 
 	// ---- bounded text preview (R§2.6) ----
@@ -196,11 +204,8 @@
 			btn.type = "button";
 			btn.className = "tool-more";
 			btn.textContent =
-				"view " +
-				p.remaining +
-				" more line" +
-				(p.remaining > 1 ? "s" : "");
-			btn.addEventListener("click", function () {
+				"view " + p.remaining + " more line" + (p.remaining > 1 ? "s" : "");
+			btn.addEventListener("click", () => {
 				pre.textContent = p.full;
 				btn.remove();
 			});
@@ -277,7 +282,7 @@
 		img.className = "tool-svg";
 		img.alt = "SVG preview";
 		img.src = src;
-			host.appendChild(img);
+		host.appendChild(img);
 	}
 
 	// ---- bounded CSV table (R§2.3) ----
@@ -332,7 +337,7 @@
 			btn.className = "tool-more csv-src";
 			btn.textContent = "view source";
 			var pre = null;
-			btn.addEventListener("click", function () {
+			btn.addEventListener("click", () => {
 				if (!pre) {
 					pre = document.createElement("pre");
 					pre.className = "tool-pre";
@@ -362,10 +367,7 @@
 			.replace(/<script\b[^>]*>(?:[\s\S]*?<\/script\s*>|[\s\S]*)/gi, "")
 			.replace(/<script\b[^>]*\/\s*>/gi, "")
 			.replace(/<\/script\s*>/gi, "")
-			.replace(
-				/\s+on[a-z][\w:-]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,
-				"",
-			)
+			.replace(/\s+on[a-z][\w:-]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
 			.replace(
 				/\s+(?:href|src|action|formaction|poster|xlink:href)\s*=\s*(?:"\s*javascript:[^"]*"|'\s*javascript:[^']*'|javascript:[^\s>]+)/gi,
 				"",
@@ -380,7 +382,7 @@
 		btn.className = "tool-more html-render";
 		btn.textContent = "render preview";
 		var frame = null;
-		btn.addEventListener("click", function () {
+		btn.addEventListener("click", () => {
 			if (!frame) {
 				frame = document.createElement("iframe");
 				frame.className = "html-prev";
@@ -461,7 +463,7 @@
 		if (previewObserver) return previewObserver;
 		if (!("IntersectionObserver" in window)) return null;
 		previewObserver = new IntersectionObserver(
-			function (entries) {
+			(entries) => {
 				for (var i = 0; i < entries.length; i++) {
 					var m = entries[i].target;
 					var s = previewState.get(m);
@@ -512,6 +514,7 @@
 		contentKindFromPath: contentKindFromPath,
 		describeToolCall: describeToolCall,
 		toolCallDetail: toolCallDetail,
+		toolGroupSummary: toolGroupSummary,
 		toolTextPreview: toolTextPreview,
 		renderTextPreview: renderTextPreview,
 		renderNumberedCode: renderNumberedCode,

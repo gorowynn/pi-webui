@@ -89,27 +89,73 @@
 		</script>
 		<header>
 			<span class="logo">◆ pi</span>
+			<div class="statusbar" id="statusbar">
+				<span class="sb-grp primary">
+					<span>repo <code id="sb-repo">…</code></span>
+					<span class="sep">·</span>
+					<span>model <code id="sb-model">…</code></span>
+				</span>
+				<span class="sb-inline" id="sb-inline">
+					<span class="sb-meta" data-sb-meta
+						>git <code id="sb-git">…</code></span
+					>
+					<span class="sb-meta" data-sb-meta
+						>think <code id="sb-think">…</code></span
+					>
+					<span class="sb-meta" data-sb-meta
+						>cache <code id="sb-cache">…</code></span
+					>
+					<span class="sb-meta" data-sb-meta
+						>tok <code id="sb-tok">…</code></span
+					>
+					<span class="sb-meta" data-sb-meta
+						>$<code id="sb-cost">…</code></span
+					>
+					<span class="sb-meta" data-sb-meta
+						>ide
+						<code id="sb-ide" title="IDE hosting this panel"
+							>…</code
+						></span
+					>
+				</span>
+				<details class="sb-sec" id="sb-sec">
+					<summary
+						class="sb-more"
+						title="more session status"
+						aria-label="more session status"
+					>
+						⋯
+					</summary>
+					<span class="sb-sec-items" id="sb-overflow"></span>
+				</details>
+			</div>
 			<span id="status"
 				><span id="dot"></span
 				><span id="status-text">connecting…</span></span
 			>
-			<button
-				id="refresh-btn"
-				title="reload page"
-				aria-label="reload page"
-			>
-				↻
-			</button>
-			<button id="settings-btn" title="settings" aria-label="settings">
-				⚙
-			</button>
-			<button
-				id="view-btn"
-				title="conversation detail (click to cycle)"
-				aria-label="conversation detail mode"
-			>
-				detailed
-			</button>
+			<div class="header-actions">
+				<button
+					id="refresh-btn"
+					title="reload page"
+					aria-label="reload page"
+				>
+					↻
+				</button>
+				<button
+					id="settings-btn"
+					title="settings"
+					aria-label="settings"
+				>
+					⚙
+				</button>
+				<button
+					id="view-btn"
+					title="conversation density: balanced (click to cycle)"
+					aria-label="conversation density: balanced"
+				>
+					balanced
+				</button>
+			</div>
 		</header>
 
 		<aside id="wsbar" aria-label="workspaces and sessions" tabindex="-1">
@@ -122,13 +168,21 @@
 			>
 				≪
 			</button>
-			<section class="ws-sec" id="ws-workspaces-sec">
-				<h4 class="ws-h">workspaces</h4>
+			<section
+				class="ws-sec"
+				id="ws-workspaces-sec"
+				aria-labelledby="ws-workspaces-title"
+			>
+				<h4 class="ws-h" id="ws-workspaces-title">workspaces</h4>
 				<div class="ws-list" id="ws-workspaces"></div>
 			</section>
-			<section class="ws-sec">
+			<section
+				class="ws-sec"
+				id="ws-sessions-sec"
+				aria-labelledby="ws-sessions-title"
+			>
 				<div class="ws-sh">
-					<h4 class="ws-h">sessions</h4>
+					<h4 class="ws-h" id="ws-sessions-title">sessions</h4>
 					<button
 						class="ws-mini"
 						id="ws-new"
@@ -471,6 +525,7 @@
 					aria-controls="palette"
 					aria-expanded="false"
 					aria-autocomplete="list"
+					enterkeyhint="send"
 					placeholder="Send a message…  ( / for commands/skills, Shift+Enter for newline )"
 					rows="1"
 				></textarea>
@@ -527,35 +582,6 @@
 						</span>
 					</details>
 				</div>
-			</div>
-			<div class="statusbar" id="statusbar">
-				<span class="sb-grp primary">
-					<span>repo <code id="sb-repo">…</code></span>
-					<span class="sep">·</span>
-					<span>model <code id="sb-model">…</code></span>
-				</span>
-				<details class="sb-sec" id="sb-sec" open>
-					<summary class="sb-more" title="more status">⋯</summary>
-					<span class="sb-sec-items">
-						<span class="sep">·</span>
-						<span>git <code id="sb-git">…</code></span>
-						<span class="sep">·</span>
-						<span>think <code id="sb-think">…</code></span>
-						<span class="sep">·</span>
-						<span>cache <code id="sb-cache">…</code></span>
-						<span class="sep">·</span>
-						<span>tok <code id="sb-tok">…</code></span>
-						<span class="sep">·</span>
-						<span>$<code id="sb-cost">…</code></span>
-						<span class="sep">·</span>
-						<span
-							>ide
-							<code id="sb-ide" title="IDE hosting this panel"
-								>…</code
-							></span
-						>
-					</span>
-				</details>
 			</div>
 		</footer>
 

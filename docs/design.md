@@ -172,12 +172,32 @@ second typeface.
 
 ## 4. Layout (Layout & Spacing)
 
-- **Frame:** a thin full-width header (model left-aligned, theme name + status
-  right-aligned in muted text) above the main area; a left **workspace/session
-  sidebar**; the **transcript** center; the **composer** input at the bottom; and
-  a compact right workspace-tools rail. Addressable utility views such as
-  `#permissions` reuse this shell and replace the center transcript/composer
-  region with a bounded page, rather than opening a nested modal.
+- **Frame:** a thin full-width header with the brand, continuously visible
+  **repo/model** context, connection state, and compact actions. Live secondary
+  telemetry is centered in the remaining header width and fills it in priority
+  order; only trailing non-fitting items move into the accessible `details`
+  popover. A left
+  **workspace/session sidebar**; the **transcript** center; and the **composer**
+  input at the bottom complete the shell. Addressable utility views such as
+  `#permissions` reuse it and replace the center transcript/composer region with
+  a bounded page, rather than opening a nested modal.
+- **Workspace/session sidebar:** workspace and session lists use separated
+  sections, clear active-row tint, compact metadata, and semantic labels. On
+  mid/narrow widths it remains the same keyboard-accessible drawer rather than
+  becoming a second navigation model.
+- **Inspector rail:** the right workspace-tools rail is a **64px compact**
+  strip with visible icon + text labels and readable status badges. Native hover
+  titles and accessible names remain as a fallback; selected state is a soft
+  background + accent icon with a quiet boundary, never a side stripe. The
+  selected tab opens a roomier calm inset detail pane with a prominent Usage
+  summary when selected.
+- **Conversation density:** the header control cycles **Focus → Balanced → Trace**;
+  **Balanced** is the default. Focus hides successful tool work but keeps failures,
+  Balanced collapses each turn's tool activity to a summary, and Trace exposes raw
+  result panels. Persisted internal values remain `simple` / `semi` / `detailed`.
+- **Turn hierarchy:** assistant prose is an open reading surface; user prompts are
+  compact right-aligned cards; tool and system turns retain their own containers
+  so errors, approvals, and operational notices stay prominent.
 - **User input block:** a distinct full-width container on a slightly lighter
   anthracite shade than the canvas, distinguished by background + a small muted
   "You" label — **no left accent stripe** (side-tab accent borders are a top slop tell).
@@ -191,7 +211,8 @@ second typeface.
 
 **Flat.** Visual hierarchy is carried by **1px hairline borders** (`hairline`)
 and **background contrast** between `canvas`, `surface`, and `surface-inset`,
-plus a single **neutral-black soft shadow** on cards (`pre`, `.think`, `.tool`):
+plus a single **neutral-black soft shadow** on standalone cards (`pre`, `.think`,
+and legacy `.tool`); turn-grouped tool rows intentionally remain flat:
 
 `0 1px 3px rgba(0,0,0,0.4), 0 4px 12px -4px rgba(0,0,0,0.5)`
 
@@ -208,15 +229,20 @@ jump pill / accent chips use `pill` (`999px`). `paperlike` softens `--r` to 6px.
 
 ## 7. Components
 
-- **Bubbles** — `.bubble` (assistant = `surface-inset`) and `.bubble.user`
-  (`surface-user`): 1px hairline, no side-stripe. The "You" label is muted mono.
+- **Bubbles** — `.bubble.user` (`surface-user`) is the compact user card;
+  assistant prose is an open `.assistant-turn` reading surface with no side
+  stripe. The "You" label is muted mono; thinking remains an inset panel.
 - **Cards** — `pre` code blocks and the shared card treatment: `surface`
   background, hairline, `--r` radius, neutral shadow.
 - **`.think`** (assistant reasoning) — `surface-think` inset panel, a `#21262D`
   border, a `done` (violet) label + spinner while streaming; mono body.
-- **`.tool` (status bar)** — a full-width banner for file mutations, carried by
-  the status icon on the left (`●` running / `✓` done / `✗` error) and the
-  tool-name color — **no left accent stripe**.
+- **Tool activity** — consecutive calls in an agent turn live in one native
+  `<details>` `.tool-group`, headed by `N tools · state · elapsed`. It has one
+  outer hairline; nested `.tool` rows are flat. Successful groups collapse in
+  Balanced, Trace opens them, and errors stay exposed.
+- **`.tool` (inside tool activity)** — a full-width row for file mutations,
+  carried by the status icon on the left (`●` running / `✓` done / `✗` error)
+  and the tool-name color — **no left accent stripe**.
 - **Code highlighting** — vendored **highlight.js v11 `github-dark`**: keywords
   red/purple, strings light blue, functions purple, numbers blue, comments gray.
   Degrades to uncolored if the vendor file is missing.
@@ -228,6 +254,9 @@ jump pill / accent chips use `pill` (`999px`). `paperlike` softens `--r` to 6px.
 - **Permissions page** — a full center utility page with compact overview cards,
   structured rule rows, active grants, pending requests, redacted audit, and an
   advanced validated source editor. The rail contains only its badge/launcher.
+- **Composer** — `.composer` is a full-width `surface-raised` writing block;
+  the textarea uses `surface-inset`, the action row has a quiet divider, and
+  image drag/drop gets an accent border without adding a new overlay.
 - **Actions** — primary button / Send / jump pill: solid `primary` (Carolina
   Blue) with dark ink text.
 

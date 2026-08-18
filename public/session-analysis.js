@@ -14,9 +14,7 @@
  * is optional and currently passed as {} — the analysis degrades gracefully
  * (durations undefined). Wiring live durations is a later enhancement.
  */
-(function () {
-	"use strict";
-
+(() => {
 	// tool-protocol helpers (toolCallsInMessage / toolResultInMessage /
 	// toolContentText / toolDataLength) — required in Node, global in browser.
 	var tp =
@@ -55,7 +53,8 @@
 	// Extracts the billed counters from a pi response/toolResult message, or null.
 	// cacheMiss = usage.input (tokens NOT served from cache); cacheRead = cached.
 	function messageUsage(message) {
-		var usage = isObject(message) && isObject(message.usage) ? message.usage : null;
+		var usage =
+			isObject(message) && isObject(message.usage) ? message.usage : null;
 		var cost = usage && isObject(usage.cost) ? usage.cost : null;
 		if (
 			!usage ||
@@ -126,13 +125,19 @@
 			var parts = [];
 			for (var i = 0; i < content.length; i++) {
 				var part = content[i];
-				if (isObject(part) && part.type === "text" && typeof part.text === "string")
+				if (
+					isObject(part) &&
+					part.type === "text" &&
+					typeof part.text === "string"
+				)
 					parts.push(part.text);
 			}
 			text = parts.join(" ");
 		}
 		var normalized = text.replace(/\s+/g, " ").trim();
-		return normalized.length > 90 ? normalized.slice(0, 89) + "…" : normalized || "Untitled request";
+		return normalized.length > 90
+			? normalized.slice(0, 89) + "…"
+			: normalized || "Untitled request";
 	}
 
 	function quantile(sortedValues, proportion) {
@@ -168,12 +173,10 @@
 			}
 		}
 		var arr = [];
-		summaries.forEach(function (s) {
+		summaries.forEach((s) => {
 			arr.push(s);
 		});
-		arr.sort(function (a, b) {
-			return b.count - a.count || a.name.localeCompare(b.name);
-		});
+		arr.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 		return arr;
 	}
 
@@ -236,7 +239,9 @@
 				for (var ci = 0; ci < callsIn.length; ci++) {
 					var call = callsIn[ci];
 					var execution = executionsByCallId.get(call.id);
-					var result = resultsByCallId.get(call.id) || (execution ? execution.result : undefined);
+					var result =
+						resultsByCallId.get(call.id) ||
+						(execution ? execution.result : undefined);
 					currentRequest.toolCalls.push({
 						id: call.id,
 						name: call.name,
@@ -288,7 +293,10 @@
 			});
 			seenToolCallIds.add(ex.id);
 		}
-		if (activeRequest.messageIndex === -1 && activeRequest.toolCalls.length > 0) {
+		if (
+			activeRequest.messageIndex === -1 &&
+			activeRequest.toolCalls.length > 0
+		) {
 			requests.push(activeRequest);
 		}
 
@@ -310,7 +318,8 @@
 			}
 		}
 		var attributedCost = 0;
-		for (var ac = 0; ac < requests.length; ac++) attributedCost += requests[ac].cost;
+		for (var ac = 0; ac < requests.length; ac++)
+			attributedCost += requests[ac].cost;
 
 		var statsCost = finiteNumber(stats ? stats.cost : undefined);
 		var attributionAvailable = false;
@@ -326,7 +335,7 @@
 		var turnMap = turnUsageByMessage(messages);
 		var turns = [];
 		var turnIdx = 0;
-		turnMap.forEach(function (usage, messageIndex) {
+		turnMap.forEach((usage, messageIndex) => {
 			turnIdx++;
 			turns.push({
 				messageIndex: messageIndex,
@@ -336,20 +345,18 @@
 				toolCallCount: calls(messages[messageIndex] || {}).length,
 			});
 		});
-		var turnCosts = turns
-			.map(function (turn) {
-				return turn.cost;
-			})
-			.sort(function (a, b) {
-				return a - b;
-			});
+		var turnCosts = turns.map((turn) => turn.cost).sort((a, b) => a - b);
 
 		var parsedUsage = emptyUsage();
-		for (var pu = 0; pu < requests.length; pu++) addUsage(parsedUsage, requests[pu].usage);
+		for (var pu = 0; pu < requests.length; pu++)
+			addUsage(parsedUsage, requests[pu].usage);
 		var sTokens = statsUsage(stats);
 		var tokens = sTokens || parsedUsage;
 
-		var totalToolCalls = Math.max(stats && stats.toolCalls ? stats.toolCalls : 0, toolCalls.length);
+		var totalToolCalls = Math.max(
+			stats && stats.toolCalls ? stats.toolCalls : 0,
+			toolCalls.length,
+		);
 
 		return {
 			requests: requests,
@@ -361,20 +368,23 @@
 			attributedCost: attributedCost,
 			attributionAvailable: attributionAvailable,
 			unattributedCost:
-				statsCost !== undefined && attributionAvailable ? Math.max(0, totalCost - attributedCost) : 0,
+				statsCost !== undefined && attributionAvailable
+					? Math.max(0, totalCost - attributedCost)
+					: 0,
 			averageTurnCost: turnCosts.length
-				? turnCosts.reduce(function (t, c) {
-						return t + c;
-					}, 0) / turnCosts.length
+				? turnCosts.reduce((t, c) => t + c, 0) / turnCosts.length
 				: 0,
 			medianTurnCost: quantile(turnCosts, 0.5),
 			turnCount: turnCosts.length,
-			averageToolCallsPerTurn: turnCosts.length ? totalToolCalls / turnCosts.length : 0,
+			averageToolCallsPerTurn: turnCosts.length
+				? totalToolCalls / turnCosts.length
+				: 0,
 			totalToolCalls: totalToolCalls,
-			failedToolCalls: toolCalls.filter(function (c) {
-				return c.isError;
-			}).length,
-			contextPercent: stats && stats.contextUsage ? finiteNumber(stats.contextUsage.percent) : undefined,
+			failedToolCalls: toolCalls.filter((c) => c.isError).length,
+			contextPercent:
+				stats && stats.contextUsage
+					? finiteNumber(stats.contextUsage.percent)
+					: undefined,
 			tokens: tokens,
 			tokensAvailable: sTokens !== null || attributionAvailable,
 		};
@@ -387,12 +397,22 @@
 		return "$" + s;
 	}
 	function formatTokens(value) {
-		return value >= 1000 ? Math.round(value / 1000) + "k" : String(value);
+		if (!isNumber(value)) return "0";
+		var abs = Math.abs(value);
+		if (abs >= 1000000000) return Math.round(value / 1000000000) + "B";
+		if (abs >= 1000000) return Math.round(value / 1000000) + "M";
+		if (abs >= 1000) return Math.round(value / 1000) + "k";
+		return String(Math.round(value));
 	}
 	function formatDuration(value) {
 		if (value < 1000) return Math.round(value) + " ms";
-		var locale = typeof navigator !== "undefined" && navigator.language ? navigator.language : "en-US";
-		return (value / 1000).toLocaleString(locale, { maximumFractionDigits: 1 }) + " s";
+		var locale =
+			typeof navigator !== "undefined" && navigator.language
+				? navigator.language
+				: "en-US";
+		return (
+			(value / 1000).toLocaleString(locale, { maximumFractionDigits: 1 }) + " s"
+		);
 	}
 
 	var api = {

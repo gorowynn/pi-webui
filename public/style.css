@@ -105,6 +105,8 @@ body {
 	flex-direction: column;
 }
 header {
+	position: relative;
+	z-index: 20;
 	display: flex;
 	gap: 8px;
 	align-items: center;
@@ -116,8 +118,15 @@ header {
 	flex: 0 0 auto;
 }
 header .logo {
+	flex: 0 0 auto;
 	font-weight: 700;
 	letter-spacing: 0.5px;
+}
+.header-actions {
+	display: flex;
+	gap: 4px;
+	align-items: center;
+	flex: 0 0 auto;
 }
 header select,
 header button {
@@ -135,10 +144,39 @@ header select {
 #status {
 	color: var(--muted);
 	font-size: 12px;
-	margin-left: auto;
+	margin-left: 0;
 	display: flex;
-	gap: 10px;
+	gap: 7px;
 	align-items: center;
+	flex: 0 1 auto;
+	min-width: 0;
+}
+header .statusbar {
+	flex: 1 1 auto;
+	min-width: 0;
+	justify-content: center;
+}
+header .statusbar .sb-grp.primary {
+	flex: 0 1 auto;
+	min-width: 0;
+}
+header .statusbar .sb-grp.primary > span {
+	display: inline-flex;
+	gap: 4px;
+	min-width: 0;
+}
+header .statusbar code {
+	display: inline-block;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	vertical-align: bottom;
+}
+#sb-repo {
+	max-width: min(32ch, 28vw);
+}
+#sb-model {
+	max-width: 22ch;
 }
 #dot {
 	width: 8px;
@@ -262,7 +300,34 @@ main {
 		visibility 0s;
 }
 .msg {
-	margin: 0 0 16px;
+	margin: 0 0 18px;
+}
+/* Turn hierarchy: assistant prose is the reading surface; user prompts are
+   compact, right-aligned cards. Tool/system turns keep their own containers. */
+.msg.assistant-turn {
+	padding-inline: 8px;
+}
+.msg.user-turn {
+	display: flex;
+	justify-content: flex-end;
+}
+.msg.user-turn .bubble {
+	max-width: min(88%, 820px);
+	padding: 11px 15px;
+}
+.msg.assistant-turn .bubble {
+	background: transparent;
+	border-color: transparent;
+	padding: 5px 0 7px;
+}
+.msg.assistant-turn .role {
+	margin-bottom: 8px;
+	font-weight: 600;
+	text-transform: none;
+	letter-spacing: 0.02em;
+}
+.msg.tool-turn {
+	margin-inline: 8px;
 }
 .bubble {
 	border: 1px solid var(--line);
@@ -472,6 +537,80 @@ pre code.hljs {
 }
 .compact-mark .cm-body > :last-child {
 	margin-bottom: 0;
+}
+/* Consecutive calls become one turn-local disclosure: the summary keeps the
+   transcript calm, while native <details> preserves all of the inspectable data. */
+.tool-group {
+	margin: 0 8px 14px;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	background: var(--surface);
+	overflow: hidden;
+}
+.tool-group.run {
+	border-color: var(--accent);
+}
+.tool-group.err {
+	border-color: var(--danger);
+}
+.tool-group-head {
+	cursor: pointer;
+	list-style: none;
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	padding: 7px 10px;
+	color: var(--muted);
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.6px;
+	user-select: none;
+}
+.tool-group-head::-webkit-details-marker {
+	display: none;
+}
+.tool-group-head:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+.tool-group-caret {
+	font-size: 10px;
+	line-height: 1;
+	color: var(--muted);
+	transition: transform 0.15s ease;
+}
+.tool-group-fold[open] .tool-group-caret {
+	transform: rotate(90deg);
+}
+.tool-group-label {
+	color: var(--ink);
+}
+.tool-group.run .tool-group-label {
+	color: var(--accent);
+}
+.tool-group.err .tool-group-label {
+	color: var(--danger);
+}
+.tool-group-meta {
+	margin-left: auto;
+	color: var(--muted);
+	font-size: 10px;
+	letter-spacing: 0.04em;
+	text-transform: none;
+	font-variant-numeric: tabular-nums;
+}
+.tool-group-list {
+	border-top: 1px solid var(--line);
+}
+.tool-group .tool {
+	margin: 0;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+	background: transparent;
+}
+.tool-group .tool + .tool {
+	border-top: 1px solid var(--line);
 }
 .tool {
 	margin: 0 0 10px;
@@ -1382,18 +1521,15 @@ footer {
 	padding-bottom: calc(10px + env(safe-area-inset-bottom));
 }
 .statusbar {
-	margin: 8px 0 0;
-	padding-top: 6px;
-	border-top: 1px solid var(--line);
 	color: var(--muted);
 	font-size: 11px;
 	display: flex;
-	gap: 14px;
+	gap: 10px;
 	align-items: center;
-	justify-content: center;
-	overflow-x: auto;
+	justify-content: flex-start;
+	min-width: 0;
+	overflow: visible;
 	white-space: nowrap;
-	scrollbar-width: thin;
 }
 .statusbar code {
 	color: var(--ink);
@@ -1402,33 +1538,84 @@ footer {
 .statusbar .sep {
 	opacity: 0.4;
 }
-/* ponytail: statusbar splits into a primary group (repo/model/ctx) always
-   visible and a secondary group (git/think/cache/tok/$cost/ide) that collapses
-   to a ⋯ popover under 720px (see @media below). Groups are inline-flex so the
-   wide layout reads exactly as the old flat row; <details> gives the narrow
-   toggle for free. default-open keeps wide inline without fighting the UA's
-   closed-details hiding; app.js closes it under 720px. */
+/* Telemetry uses every available header pixel before only trailing items spill
+   into …, so the compact chrome remains information-rich on wide screens. */
 .statusbar .sb-grp,
+.statusbar .sb-inline,
 .statusbar .sb-sec-items {
 	display: inline-flex;
 	align-items: center;
-	gap: 14px;
+	gap: 10px;
+}
+.statusbar .sb-inline {
+	flex: 0 1 auto;
+	max-width: 100%;
+	min-width: 0;
+	overflow: hidden;
+	justify-content: center;
+}
+.statusbar .sb-meta {
+	flex: 0 0 auto;
 }
 .statusbar .sb-sec {
-	display: inline-flex;
-	align-items: center;
+	position: relative;
+	flex: 0 0 auto;
 }
 .statusbar .sb-sec > summary {
 	list-style: none;
-	display: none; /* wide: secondary is inline, no toggle */
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 24px;
+	height: 20px;
+	padding: 0 6px;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	background: var(--surface-raised);
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1;
 	cursor: pointer;
 }
 .statusbar .sb-sec > summary::-webkit-details-marker {
 	display: none;
 }
+.statusbar .sb-sec > summary:hover,
+.statusbar .sb-sec[open] > summary {
+	color: var(--accent);
+	border-color: var(--accent);
+}
+.statusbar .sb-sec-items {
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px 0;
+	padding: 8px 12px;
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	box-shadow: var(--shadow);
+	z-index: 60;
+}
+.statusbar .sb-sec:not([open]) .sb-sec-items {
+	display: none;
+}
 .composer {
 	margin: 0;
 	position: relative;
+	padding: 8px 10px 7px;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	background: var(--surface-raised);
+}
+.composer:focus-within,
+.composer.dragging {
+	border-color: var(--accent);
+}
+.composer.dragging {
+	background: var(--accent-soft);
 }
 /* a11y: visually-hidden but announced — coarse progress (FR-9) */
 .sr-only {
@@ -1447,14 +1634,14 @@ footer {
    idiom as the #modal textarea:not(.sx-ta) rule below). */
 textarea:not(.sx-ta) {
 	width: 100%;
-	min-height: 48px;
+	min-height: 44px;
 	max-height: 200px;
 	resize: vertical;
-	background: var(--surface-raised);
+	background: var(--surface-inset);
 	color: var(--ink);
 	border: 1px solid var(--line);
-	border-radius: var(--r);
-	padding: 10px 12px;
+	border-radius: calc(var(--r) - 2px);
+	padding: 9px 10px;
 	font: inherit;
 	outline: none;
 }
@@ -1463,18 +1650,21 @@ textarea:focus {
 }
 .bar {
 	display: flex;
-	gap: 8px;
+	gap: 6px;
 	align-items: center;
-	margin-top: 8px;
+	margin-top: 7px;
+	padding-top: 7px;
+	border-top: 1px solid var(--line);
 }
 .bar button {
 	background: var(--surface-raised);
 	color: var(--ink);
 	border: 1px solid var(--line);
 	border-radius: var(--r);
-	padding: 6px 12px;
+	padding: 5px 10px;
 	cursor: pointer;
 	font-size: 13px;
+	white-space: nowrap;
 }
 .bar button.primary {
 	background: var(--accent);
@@ -2169,17 +2359,19 @@ body.page-open #modal {
 	text-align: center;
 }
 
-/* conversation detail modes (plan 3.2 / U§2.1) — #transcript[data-view]
-   simple = messages only (reading mode); semi = tool headers only (outputs
-   hidden); detailed = current. Pure CSS, no JS per-tool. */
-#transcript[data-view="simple"] .tool {
+/* Conversation density: focus keeps only messages and failed work; balanced
+   keeps tool summaries; trace exposes every result. The values stay legacy-safe
+   (simple / semi / detailed) because sessions persist them in localStorage. */
+#transcript[data-view="simple"] .tool-group:not(.err),
+#transcript[data-view="simple"] .tool:not(.err) {
 	display: none;
 }
-#transcript[data-view="semi"] .tool > .out {
+#transcript[data-view="semi"] .tool:not(.err) .out-wrap,
+#transcript[data-view="semi"] .tool:not(.err) > .out {
 	display: none;
 }
 #view-btn {
-	min-width: 64px;
+	min-width: 72px;
 }
 
 /* W1: todo list — the rail Todos widget panel (was the in-flow #todopanel;
@@ -2391,71 +2583,21 @@ textarea:focus-visible,
    script — spec FR-11). Status chips wrap instead of forcing horizontal scroll;
    the side-by-side edit diff stacks old-above-new; the header reflows. */
 body.w-narrow .statusbar {
-	justify-content: flex-start;
-	overflow: visible; /* let the popover clear the bar */
-	gap: 10px;
+	gap: 6px;
 }
-/* primary readouts stay inline (scroll internally if the repo path is long);
-   secondary readouts collapse into a ⋯ popover above the bar. */
-body.w-narrow .statusbar .sb-grp.primary {
-	flex: 1 1 auto;
-	min-width: 0;
-	overflow-x: auto;
-	scrollbar-width: none;
-}
-body.w-narrow .statusbar .sb-grp.primary::-webkit-scrollbar {
-	display: none;
-}
-body.w-narrow .statusbar .sb-sec {
-	position: relative;
-	flex: 0 0 auto;
-}
-body.w-narrow .statusbar .sb-sec > summary {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	min-width: 24px;
-	height: 20px;
-	padding: 0 6px;
-	border: 1px solid var(--line);
-	border-radius: var(--r);
-	background: var(--surface);
-	color: var(--muted);
-	font-size: 12px;
-	line-height: 1;
-}
-body.w-narrow .statusbar .sb-sec > summary:hover {
-	color: var(--ink);
-	border-color: var(--accent);
-}
-body.w-narrow .statusbar .sb-sec[open] > summary {
-	color: var(--accent);
-	border-color: var(--accent);
-}
-body.w-narrow .statusbar .sb-sec-items {
-	position: absolute;
-	bottom: calc(100% + 6px);
-	right: 0;
-	flex-direction: column;
-	align-items: flex-start;
-	gap: 4px 0;
-	padding: 8px 12px;
-	background: var(--surface);
-	border: 1px solid var(--line);
-	border-radius: var(--r);
-	box-shadow: var(--shadow);
-	white-space: nowrap;
-	z-index: 60;
-}
-body.w-narrow .statusbar .sb-sec:not([open]) .sb-sec-items {
-	display: none;
-}
-body.w-narrow .statusbar .sb-sec-items .sep {
+/* The model remains visible at narrow widths; the full repo path is inspectable
+   from the workspace sidebar instead of forcing the header onto a second row. */
+body.w-narrow .statusbar .sb-grp.primary > span:first-child,
+body.w-narrow .statusbar .sb-grp.primary > .sep,
+body.w-narrow #status-text,
+body.w-narrow #refresh-btn {
 	display: none;
 }
 body.w-narrow header {
-	flex-wrap: wrap;
-	gap: 6px;
+	flex-wrap: nowrap;
+	gap: 4px;
+	padding-left: calc(8px + env(safe-area-inset-left));
+	padding-right: calc(8px + env(safe-area-inset-right));
 }
 body.w-narrow .sxs {
 	grid-template-columns: 1fr;
@@ -2844,9 +2986,13 @@ body.no-switch #ws-workspaces-sec {
 		600 10px / 1 "JetBrains Mono",
 		ui-monospace,
 		monospace;
-	text-transform: lowercase;
-	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
 	color: var(--muted);
+}
+.ws-sec + .ws-sec {
+	padding-top: 12px;
+	border-top: 1px solid var(--line);
 }
 .ws-sh {
 	display: flex;
@@ -2875,8 +3021,8 @@ body.no-switch #ws-workspaces-sec {
 .ws-list {
 	display: flex;
 	flex-direction: column;
-	gap: 1px;
-	margin-top: 4px;
+	gap: 2px;
+	margin-top: 6px;
 }
 /* ponytail: ws-row / srow are now <button>s (semantic + keyboard/AT for free,
    per the review). Reset UA button chrome so they render like the old divs; their
@@ -2894,7 +3040,7 @@ body.no-switch #ws-workspaces-sec {
 	color: inherit;
 }
 .ws-row {
-	border: 0; /* ws-row had no border; drop the UA button border (srow keeps its own) */
+	border: 1px solid transparent;
 }
 .ws-row .ws-name,
 .ws-row .ws-meta,
@@ -2910,17 +3056,22 @@ body.no-switch #ws-workspaces-sec {
 	cursor: default;
 }
 .ws-row {
-	padding: 6px 8px;
-	border-radius: 5px;
+	padding: 7px 9px;
+	border-radius: var(--r);
 	cursor: pointer;
 	line-height: 1.25;
 	color: var(--ink);
+	transition:
+		background-color 0.12s ease,
+		border-color 0.12s ease;
 }
 .ws-row:not(:disabled):hover {
 	background: var(--surface-raised);
+	border-color: var(--line);
 }
 .ws-row.active {
-	background: var(--surface-raised);
+	background: var(--accent-soft);
+	border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
 	cursor: default;
 }
 .ws-row.active .ws-name {
@@ -3029,10 +3180,10 @@ body.w-narrow.ws-on #ws-scrim {
 	padding-top: env(safe-area-inset-top);
 	padding-bottom: env(safe-area-inset-bottom);
 }
-/* W1: collapsed widget strip — 108px total, 84px usable after the 24px
-   resize-hit-zone reservation (was 88px/64px: labels + badges cramped). */
+/* Compact inspector strip: 64px leaves a 36px icon target after the 24px
+   resize hit zone, freeing transcript width without sacrificing keyboard names. */
 body {
-	--rail-strip: 108px;
+	--rail-strip: 64px;
 }
 body.rail-on {
 	margin-right: var(--rail-strip);
@@ -3043,12 +3194,12 @@ body.rail-on #toolsbar {
 }
 body.rail-on.rail-open {
 	margin-right: min(
-		var(--rail-width, min(400px, 58vw)),
+		var(--rail-width, min(440px, 60vw)),
 		calc(100vw - var(--wsbar-w, 0px) - 560px)
 	);
 }
 body.rail-on.rail-open #toolsbar {
-	width: var(--rail-width, min(400px, 58vw));
+	width: var(--rail-width, min(440px, 60vw));
 }
 /* w-mid / w-narrow: the open pane overlays content — the rail keeps its strip
    reservation (--rail-strip) and never pushes the transcript (spec FR-3.2). */
@@ -3098,29 +3249,31 @@ body.w-narrow.rail-on.rail-open {
 	}
 }
 .tools-rail {
-	flex: 0 0 var(--rail-strip, 108px);
+	flex: 0 0 var(--rail-strip, 64px);
 	display: flex;
 	flex-direction: column;
-	padding: 10px 0 8px;
+	padding: 10px 0 8px 0;
+	background: var(--surface);
 	padding-left: 24px; /* a11y FR-11: reserves the resize handle's hit zone */
-	gap: 3px;
+	gap: 4px;
 	overflow-y: auto;
 	border-left: 1px solid var(--line);
 }
-/* W1: widget tab (one per table entry). Icon + small label stacked; the
-   selected tab carries a left accent bar + accent icon (IDE convention).
-   Badge rides top-right. NOTE: theme tokens only — --fg/-dim/bg-hover/
-   bg-elev DO NOT exist and silently invalidate colors (seen live). */
+/* Icon-first inspector tabs reserve labels for native hover titles and assistive
+   technology. Selection uses tint + accent text, never a side stripe. */
 .rail-tab {
 	position: relative;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 3px;
+	justify-content: center;
+	gap: 1px;
 	width: 100%;
-	padding: 7px 2px 6px;
-	border: 0;
-	border-radius: 8px;
+	min-width: 32px;
+	min-height: 46px;
+	padding: 7px 2px;
+	border: 1px solid transparent;
+	border-radius: var(--r);
 	background: transparent;
 	color: var(--muted);
 	cursor: pointer;
@@ -3130,6 +3283,7 @@ body.w-narrow.rail-on.rail-open {
 }
 .rail-tab:hover {
 	background: rgba(127, 127, 127, 0.12);
+	border-color: var(--line);
 	color: var(--ink);
 }
 .rail-tab:hover .rt-ic {
@@ -3142,22 +3296,10 @@ body.w-narrow.rail-on.rail-open {
 .rail-tab.sel {
 	color: var(--ink);
 	background: var(--accent-soft);
-}
-.rail-tab.sel::before {
-	content: "";
-	position: absolute;
-	left: -2px;
-	top: 24%;
-	bottom: 24%;
-	width: 3px;
-	border-radius: 3px;
-	background: var(--accent);
+	border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
 }
 .rail-tab.sel .rt-ic {
 	color: var(--accent);
-}
-.rail-tab.sel .rt-lbl {
-	font-weight: 700;
 }
 .rt-ic {
 	font-size: 16px;
@@ -3165,41 +3307,74 @@ body.w-narrow.rail-on.rail-open {
 	color: var(--muted);
 }
 .rt-lbl {
-	font-size: 10px;
-	letter-spacing: 0.02em;
-	color: inherit;
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+	border: 0;
+}
+/* Labels stay visible in the compact rail: icon → name → readable status. */
+#toolsbar .rt-lbl {
+	position: static;
+	width: auto;
+	height: auto;
+	max-width: 100%;
+	padding: 0;
+	margin: 1px 0 0;
+	overflow: hidden;
+	clip: auto;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font:
+		700 9px / 1 "JetBrains Mono",
+		ui-monospace,
+		monospace;
+	letter-spacing: 0.01em;
+	text-align: center;
+	color: var(--muted);
+}
+#toolsbar .rail-tab.sel .rt-lbl,
+#toolsbar .rail-tab:hover .rt-lbl,
+#toolsbar .rail-tab:focus-visible .rt-lbl {
+	color: var(--accent);
 }
 .rt-badge {
-	position: absolute;
-	top: 2px;
-	right: 3px;
-	max-width: 62px;
+	position: static;
+	display: block;
+	max-width: 100%;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-size: 9px;
-	line-height: 1.6;
-	font-family: ui-monospace, "JetBrains Mono", monospace;
-	padding: 0 5px;
-	border-radius: 9px;
+	font:
+		700 9px / 1.15 "JetBrains Mono",
+		ui-monospace,
+		monospace;
+	letter-spacing: -0.02em;
+	padding: 1px 2px;
+	margin-top: 1px;
+	border-radius: 4px;
 	border: 1px solid var(--line);
-	background: var(--surface-inset);
-	color: var(--muted);
+	background: var(--surface-raised);
+	color: var(--ink);
 }
 .rt-badge.b-warn {
-	color: var(--warning);
+	color: var(--warning-strong);
 	border-color: var(--warning);
-	background: var(--warning-strong);
+	background: var(--surface-raised);
 }
 .rt-badge.b-err {
 	color: var(--danger);
 	border-color: var(--danger);
-	background: var(--danger-soft);
+	background: var(--surface-raised);
 }
 .rt-badge.b-ok {
 	color: var(--success);
 	border-color: var(--success);
-	background: var(--success-soft);
+	background: var(--surface-raised);
 }
 /* FR-7: permissions launcher — pinned below the widget tabs, visually
    detached from them. */
@@ -3285,6 +3460,7 @@ body.w-narrow.rail-on.rail-open {
 	min-width: 0;
 	display: none;
 	flex-direction: column;
+	background: var(--surface-inset);
 }
 #toolsbar.open .tools-pane {
 	display: flex;
@@ -3293,11 +3469,12 @@ body.w-narrow.rail-on.rail-open {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	padding: 8px 10px;
+	padding: 10px 12px;
 	border-bottom: 1px solid var(--line);
-	background: var(--surface-raised);
+	background: var(--surface);
 	font-size: 12px;
 	font-weight: 700;
+	letter-spacing: 0.04em;
 	text-transform: lowercase;
 }
 .tools-title {
@@ -3311,6 +3488,7 @@ body.w-narrow.rail-on.rail-open {
 .tools-close {
 	background: none;
 	border: none;
+	border-radius: var(--r);
 	color: var(--muted);
 	font-size: 18px;
 	line-height: 1;
@@ -3320,6 +3498,7 @@ body.w-narrow.rail-on.rail-open {
 	min-height: 24px;
 }
 .tools-close:hover {
+	background: var(--accent-soft);
 	color: var(--ink);
 }
 #toolsbar .doc-body {
@@ -3327,7 +3506,7 @@ body.w-narrow.rail-on.rail-open {
 	min-height: 0;
 	max-height: none;
 	overflow: auto;
-	padding: 10px 14px;
+	padding: 12px 14px 18px;
 	font-size: 13px;
 	line-height: 1.55;
 }
@@ -3539,6 +3718,13 @@ body.w-narrow.rail-on.rail-open {
 	border: 1px solid var(--line);
 	border-radius: calc(var(--r) - 2px);
 }
+.an-stat.primary {
+	background: var(--accent-soft);
+	border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+.an-stat.primary .an-val {
+	color: var(--accent);
+}
 .an-val {
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	font-size: 15px;
@@ -3568,11 +3754,33 @@ body.w-narrow.rail-on.rail-open {
 }
 /* cost-per-turn bars: a flex row of vertical <button>s, baseline-aligned */
 .an-bars {
+	position: relative;
 	display: flex;
 	align-items: flex-end;
 	gap: 1px;
 	min-height: 64px;
+	height: 64px;
 	padding: 4px 0;
+}
+.an-context-line {
+	position: absolute;
+	inset: 4px 0;
+	width: 100%;
+	height: calc(100% - 8px);
+	overflow: visible;
+	pointer-events: none;
+}
+.an-context-line polyline {
+	fill: none;
+	stroke: var(--warning);
+	stroke-width: 1.5;
+	vector-effect: non-scaling-stroke;
+}
+.an-context-line circle {
+	fill: var(--warning);
+	stroke: var(--surface);
+	stroke-width: 0.6;
+	vector-effect: non-scaling-stroke;
 }
 .an-bar {
 	flex: 1 1 0;
@@ -3629,6 +3837,49 @@ body.w-narrow.rail-on.rail-open {
 		grid-template-columns: 1fr;
 	}
 }
+/* The rail is narrower than the modal: use a readable two-column summary
+   instead of six cramped flex cards. */
+#toolsbar .analysis {
+	gap: 16px;
+}
+#toolsbar .an-head {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 6px;
+}
+#toolsbar .an-stat {
+	align-items: flex-start;
+	min-width: 0;
+	padding: 8px;
+	background: var(--surface-raised);
+}
+#toolsbar .an-stat.primary {
+	grid-column: 1 / -1;
+	background: var(--accent-soft);
+}
+#toolsbar .an-val {
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: 14px;
+}
+#toolsbar .an-lbl {
+	font-size: 10px;
+}
+#toolsbar .an-toks {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 6px;
+}
+#toolsbar .an-tok {
+	min-width: 0;
+	padding: 8px;
+	background: var(--surface-raised);
+}
+#toolsbar .an-sec-h {
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
 .an-item {
 	display: flex;
 	justify-content: space-between;
@@ -3681,7 +3932,7 @@ body.w-narrow.rail-on.rail-open {
 	display: none;
 	flex-wrap: wrap;
 	gap: 6px;
-	padding: 4px 0 2px;
+	padding: 2px 0 7px;
 }
 .imgthumb {
 	position: relative;

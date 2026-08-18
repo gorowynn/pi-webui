@@ -4,6 +4,65 @@
 > orientation doc stays lean. One entry per meaningful chunk of work:
 > `### YYYY-MM-DD — <area>: <one-line summary>` then bullet detail (what + why + file).
 
+## History
+
+### 2026-08-18 — feat(webui): compact context header and inspector rail
+
+- `#statusbar` now lives in the header beside the connection state, keeping repo
+  and model visible while the composer stays focused on writing. Secondary
+  git/thinking/cache/token/cost/IDE data is centered in the spare header width
+  and consumes it in order; only trailing non-fitting entries move into the
+  accessible `details` popover. A `ResizeObserver` plus live status updates
+  rebalance it without
+  duplicating DOM values or reopening a dismissed popover.
+- The right inspector strip is now 64px and icon-first (`style.css`): labels stay
+  in the accessibility tree and native titles retain hover discoverability,
+  badges remain visible, and selected tabs use tint + accent icon instead of the
+  prohibited side stripe. The expanded resizable pane is unchanged.
+- Added `test/shell-layout.test.js`; `test/a11y-contract.test.js` and
+  `test/rail.test.js` confirm the layout keeps its accessibility, adaptive
+  overflow, and rail contracts.
+- Transcript turns now carry explicit hierarchy (`assistant-turn`, `user-turn`,
+  `system-turn`, `tool-turn`): assistant prose is open and calm, user prompts
+  are compact right-aligned cards, and tool/system containers remain prominent.
+  Assistant usage telemetry now starts with a muted inline `turn N` label. Added
+  `test/transcript-layout.test.js` for the visual contract.
+- The composer is now one calm writing block: the input uses an inset surface,
+  actions sit behind a quiet divider, mobile keyboards get `enterkeyhint="send"`,
+  and image drag/drop visibly highlights the drop target. Added
+  `test/composer-layout.test.js`.
+- Both sidebars now share the same restrained hierarchy: the workspace/session
+  drawer has separated sections and clearer active rows; the inspector rail has
+  quiet tab boundaries, visible compact labels, higher-contrast readable badges,
+  a roomier inset pane, and a more deliberate pane head. Workspace sections
+  gained semantic labels; `test/sidebar-layout.test.js` covers the
+  visual/accessibility contract.
+- The Usage rail widget now gives the total cost a primary treatment and uses a
+  readable two-column summary for the roomier pane, with token cards retaining
+  their labels instead of collapsing into a cramped six-card row. Missing
+  provider cost data is now explicit, with output-token and no-turn fallbacks
+  instead of an empty cost section. The per-turn bars also have a definite chart
+  height, so their percentage heights render instead of collapsing to zero. A
+  current-context line now overlays the cost bars point-for-point by turn, with
+  the legend identifying it separately from cost. Turn tooltips include context
+  percentage, and token counts use compact `k`/`M`/`B` notation.
+
+### 2026-08-18 — feat(webui): calm conversation density and grouped tool activity
+
+- `public/app.js` now presents the persisted detail modes as **Focus / Balanced /
+  Trace**, with Balanced (`semi`) as the new default; legacy saved values remain
+  compatible. The header and command palette no longer expose the implementation
+  names `simple / headers / detailed`.
+- Consecutive live and replayed tool calls are wrapped in a native turn-local
+  `.tool-group` disclosure (`N tools · state · elapsed`). Running calls open the
+  group; successful groups collapse outside Trace; errors remain open and visible.
+  Crash finalization also settles the group state, so reconnect replay cannot leave
+  a stale "working" summary.
+- `style.css` removes nested card shadows inside the group and makes Balanced hide
+  successful raw outputs (the prior selector did not match the `.out-wrap` DOM).
+  `public/tool-presentation.js#toolGroupSummary` is pure and covered by the new
+  `test/tool-presentation.test.js`.
+
 ### 2026-08-17 — feat(webui): usage bar + todo panel moved fully into the rail
 
 - Header `#usagebar` and in-flow `#todopanel` are GONE; quota windows and the

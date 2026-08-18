@@ -3,7 +3,6 @@
  * Covers usage extraction, request/turn/tool reconstruction, cost attribution,
  * tool summaries, the stats fallback, and formatters. Plan 4.2.
  */
-"use strict";
 
 const assert = require("assert/strict");
 const A = require("../public/session-analysis.js");
@@ -31,7 +30,12 @@ function assistant(text, usage, calls) {
 	if (text) content.push({ type: "text", text });
 	if (calls)
 		for (const c of calls)
-			content.push({ type: "toolCall", id: c.id, name: c.name, arguments: c.args });
+			content.push({
+				type: "toolCall",
+				id: c.id,
+				name: c.name,
+				arguments: c.args,
+			});
 	return { role: "assistant", content, usage };
 }
 function toolResult(callId, name, text, isError) {
@@ -44,23 +48,53 @@ function toolResult(callId, name, text, isError) {
 	};
 }
 function usage(input, cacheRead, output, cost) {
-	return { input, cacheRead, cacheWrite: 0, output, reasoning: 0, cost: { total: cost || 0 } };
+	return {
+		input,
+		cacheRead,
+		cacheWrite: 0,
+		output,
+		reasoning: 0,
+		cost: { total: cost || 0 },
+	};
 }
 
 // ===== messageUsage =====
-(function () {
-	eq("messageUsage extracts fields", A.messageUsage(assistant("x", usage(100, 50, 10, 0.005))).cost, 0.005);
-	eq("messageUsage cacheMiss = input", A.messageUsage(assistant("x", usage(100, 50, 10))).cacheMiss, 100);
-	eq("messageUsage cacheRead", A.messageUsage(assistant("x", usage(100, 50, 10))).cacheRead, 50);
-	ok("messageUsage null when no usage", A.messageUsage(assistant("x", null)) === null);
-	ok("messageUsage null when cost missing", A.messageUsage({ role: "assistant", usage: { input: 1, cacheRead: 0, output: 1 } }) === null);
+(() => {
+	eq(
+		"messageUsage extracts fields",
+		A.messageUsage(assistant("x", usage(100, 50, 10, 0.005))).cost,
+		0.005,
+	);
+	eq(
+		"messageUsage cacheMiss = input",
+		A.messageUsage(assistant("x", usage(100, 50, 10))).cacheMiss,
+		100,
+	);
+	eq(
+		"messageUsage cacheRead",
+		A.messageUsage(assistant("x", usage(100, 50, 10))).cacheRead,
+		50,
+	);
+	ok(
+		"messageUsage null when no usage",
+		A.messageUsage(assistant("x", null)) === null,
+	);
+	ok(
+		"messageUsage null when cost missing",
+		A.messageUsage({
+			role: "assistant",
+			usage: { input: 1, cacheRead: 0, output: 1 },
+		}) === null,
+	);
 })();
 
 // ===== basic reconstruction: user -> assistant(+tool) -> toolResult -> assistant =====
-(function () {
+(() => {
 	const messages = [
 		user("do a thing"),
-		assistant("running it", usage(200, 100, 20, 0.01), [{ id: "c1", name: "bash", args: { command: "ls" } }]),
+		assistant("running it", usage(200, 100, 20, 0.01), [
+			{ id: "c1", name: "bash", args: { command: "ls" } },
+		]),
 		toolResult("c1", "bash", "file1\nfile2", false),
 		assistant("done", usage(300, 250, 15, 0.02)),
 	];
@@ -70,7 +104,11 @@ function usage(input, cacheRead, output, cost) {
 	eq("attributed cost sums turns", Math.round(a.attributedCost * 1000), 30);
 	eq("one tool call", a.toolCalls.length, 1);
 	eq("tool input length > 0", a.toolCalls[0].inputLength > 0, true);
-	eq("tool output length = text length", a.toolCalls[0].outputLength, "file1\nfile2".length);
+	eq(
+		"tool output length = text length",
+		a.toolCalls[0].outputLength,
+		"file1\nfile2".length,
+	);
 	eq("tool not pending (result present)", a.toolCalls[0].pending, false);
 	eq("tool not error", a.toolCalls[0].isError, false);
 	eq("no failed tool calls", a.failedToolCalls, 0);
@@ -81,12 +119,14 @@ function usage(input, cacheRead, output, cost) {
 })();
 
 // ===== multiple requests (two user cycles) =====
-(function () {
+(() => {
 	const messages = [
 		user("first"),
 		assistant("a1", usage(100, 0, 10, 0.001)),
 		user("second"),
-		assistant("a2", usage(200, 0, 10, 0.002), [{ id: "x", name: "read", args: { path: "f" } }]),
+		assistant("a2", usage(200, 0, 10, 0.002), [
+			{ id: "x", name: "read", args: { path: "f" } },
+		]),
 		toolResult("x", "read", "contents", false),
 	];
 	const a = A.analyzeSession(messages, null, false);
@@ -97,16 +137,24 @@ function usage(input, cacheRead, output, cost) {
 })();
 
 // ===== running flag marks last request incomplete =====
-(function () {
+(() => {
 	const messages = [user("hi"), assistant("hey", usage(10, 0, 5, 0.0001))];
 	const a = A.analyzeSession(messages, null, true);
-	eq("last request incomplete when running", a.requests[a.requests.length - 1].complete, false);
+	eq(
+		"last request incomplete when running",
+		a.requests[a.requests.length - 1].complete,
+		false,
+	);
 	const a2 = A.analyzeSession(messages, null, false);
-	eq("last request complete when not running", a2.requests[a2.requests.length - 1].complete, true);
+	eq(
+		"last request complete when not running",
+		a2.requests[a2.requests.length - 1].complete,
+		true,
+	);
 })();
 
 // ===== failed tool call tracking =====
-(function () {
+(() => {
 	const messages = [
 		user("go"),
 		assistant("try", usage(10, 0, 5, 0.001), [
@@ -123,10 +171,12 @@ function usage(input, cacheRead, output, cost) {
 })();
 
 // ===== pending tool call (no result) =====
-(function () {
+(() => {
 	const messages = [
 		user("go"),
-		assistant("trying", usage(10, 0, 5, 0.001), [{ id: "p", name: "bash", args: {} }]),
+		assistant("trying", usage(10, 0, 5, 0.001), [
+			{ id: "p", name: "bash", args: {} },
+		]),
 	];
 	const a = A.analyzeSession(messages, null, true);
 	const p = a.toolCalls.find((c) => c.id === "p");
@@ -135,7 +185,7 @@ function usage(input, cacheRead, output, cost) {
 })();
 
 // ===== tool summaries sorted by count =====
-(function () {
+(() => {
 	const messages = [
 		user("go"),
 		assistant("a", usage(1, 0, 1, 0), [
@@ -156,7 +206,7 @@ function usage(input, cacheRead, output, cost) {
 })();
 
 // ===== stats fallback: tokens/cost from stats when per-message usage absent =====
-(function () {
+(() => {
 	const messages = [user("hi"), assistant("hey")]; // no usage on assistant
 	const stats = {
 		cost: 0.123,
@@ -171,11 +221,14 @@ function usage(input, cacheRead, output, cost) {
 	eq("tokens from stats cacheRead", a.tokens.cacheRead, 4000);
 	eq("contextPercent from stats", a.contextPercent, 42);
 	eq("totalToolCalls from stats", a.totalToolCalls, 5);
-	ok("attribution NOT available (no per-message usage)", !a.attributionAvailable);
+	ok(
+		"attribution NOT available (no per-message usage)",
+		!a.attributionAvailable,
+	);
 })();
 
 // ===== empty messages =====
-(function () {
+(() => {
 	const a = A.analyzeSession([], null, false);
 	eq("no requests", a.requests.length, 0);
 	eq("no turns", a.turnCount, 0);
@@ -184,14 +237,14 @@ function usage(input, cacheRead, output, cost) {
 })();
 
 // ===== median cost =====
-(function () {
+(() => {
 	const messages = [
 		user("1"),
-		assistant("a", usage(1, 0, 1, 0.010)),
+		assistant("a", usage(1, 0, 1, 0.01)),
 		user("2"),
-		assistant("b", usage(1, 0, 1, 0.030)),
+		assistant("b", usage(1, 0, 1, 0.03)),
 		user("3"),
-		assistant("c", usage(1, 0, 1, 0.020)),
+		assistant("c", usage(1, 0, 1, 0.02)),
 	];
 	const a = A.analyzeSession(messages, null, false);
 	// sorted costs [0.01, 0.02, 0.03], median (q=0.5, ceil(3*0.5)-1=idx1) = 0.02
@@ -199,10 +252,12 @@ function usage(input, cacheRead, output, cost) {
 })();
 
 // ===== formatters =====
-(function () {
+(() => {
 	eq("formatTurnCost normal", A.formatTurnCost(0.03), "$0.03");
 	eq("formatTurnCost tiny (4 digits)", A.formatTurnCost(0.001), "$0.0010");
 	eq("formatTokens k", A.formatTokens(8400), "8k");
+	eq("formatTokens million", A.formatTokens(1200000), "1M");
+	eq("formatTokens billion", A.formatTokens(2300000000), "2B");
 	eq("formatTokens small", A.formatTokens(410), "410");
 	ok("formatDuration ms", A.formatDuration(500) === "500 ms");
 	ok("formatDuration seconds", /\.?\d?\s/.test(A.formatDuration(2500)));

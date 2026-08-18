@@ -8,6 +8,7 @@ function setSafeHtml(el, html) {
 const transcript = $("transcript");
 const feedEl = $("tfeed"); // role="feed" wrapper — turns render as articles (FR-8)
 const turnId = { n: 0 }; // incremented per turn — stable ids for role labels
+const assistantTurnId = { n: 0 }; // visible assistant-turn sequence
 const inputEl = $("input");
 const sendBtn = $("send");
 const stopBtn = $("stop");
@@ -288,6 +289,7 @@ if (jumpBottom)
 function addUser(text, images) {
 	const m = document.createElement("article");
 	m.className = "msg";
+	m.classList.add("user-turn");
 	const roleId = "turn-" + ++turnId.n + "-role";
 	m.setAttribute("aria-labelledby", roleId);
 	setSafeHtml(
@@ -327,7 +329,9 @@ function addUser(text, images) {
 function addAssistantText(text) {
 	const m = document.createElement("article");
 	m.className = "msg";
+	m.classList.add("assistant-turn");
 	const roleId = "turn-" + ++turnId.n + "-role";
+	const turnNo = ++assistantTurnId.n;
 	m.setAttribute("aria-labelledby", roleId);
 	setSafeHtml(
 		m,
@@ -335,7 +339,9 @@ function addAssistantText(text) {
 	);
 	const p = document.createElement("div");
 	setSafeHtml(p, md(text));
-	m.querySelector(".bubble").appendChild(p);
+	const bubble = m.querySelector(".bubble");
+	bubble.appendChild(p);
+	renderUsageStrip(bubble, null, turnNo);
 	feedEl.appendChild(m);
 	scrollDown();
 }
@@ -343,7 +349,9 @@ function addAssistantText(text) {
 function newAssistantBubble() {
 	const m = document.createElement("article");
 	m.className = "msg";
+	m.classList.add("assistant-turn");
 	const roleId = "turn-" + ++turnId.n + "-role";
+	const turnNo = ++assistantTurnId.n;
 	m.setAttribute("aria-labelledby", roleId);
 	setSafeHtml(
 		m,
@@ -352,6 +360,7 @@ function newAssistantBubble() {
 	feedEl.appendChild(m);
 	cur = {
 		bubble: m.querySelector(".bubble"),
+		turnNo,
 		textPar: null,
 		textBuf: "",
 		thinkEl: null,
@@ -503,21 +512,22 @@ function renderAssistantContent(content) {
 // the two can't diverge regardless of transport hiccups.
 // Per-turn usage strip (plan 4.4): a thin muted-mono line under each
 // assistant turn — cache-miss · cache-read · output · $cost — so cost/cache is
-// visible per-turn without a separate panel. Skipped when there's no token
-// signal (no usage, or all-zero). Uses sessionAnalysis.messageUsage/formatTokens.
-function renderUsageStrip(bubble, message) {
-	if (!bubble || !message) return;
+// visible per-turn without a separate panel. The turn number remains visible
+// even when token usage is unavailable. Uses sessionAnalysis.messageUsage/formatTokens.
+function renderUsageStrip(bubble, message, turnNo) {
+	if (!bubble || turnNo == null) return;
 	const SA = window.sessionAnalysis;
-	if (!SA || !SA.messageUsage) return;
-	const u = SA.messageUsage(message);
-	if (!u) return;
-	if (!u.cacheMiss && !u.cacheRead && !u.output && !u.cost) return;
-	const parts = [
-		"cache-miss " + SA.formatTokens(u.cacheMiss),
-		"cache-read " + SA.formatTokens(u.cacheRead),
-		"output " + SA.formatTokens(u.output),
-	];
-	if (u.cost > 0) parts.push(SA.formatTurnCost(u.cost));
+	if (!SA) return;
+	const u = message && SA.messageUsage ? SA.messageUsage(message) : null;
+	const parts = ["turn " + turnNo];
+	if (u && (u.cacheMiss || u.cacheRead || u.output || u.cost)) {
+		parts.push(
+			"cache-miss " + SA.formatTokens(u.cacheMiss),
+			"cache-read " + SA.formatTokens(u.cacheRead),
+			"output " + SA.formatTokens(u.output),
+		);
+		if (u.cost > 0) parts.push(SA.formatTurnCost(u.cost));
+	}
 	const strip = document.createElement("div");
 	strip.className = "turn-usage";
 	strip.textContent = parts.join(" · ");
@@ -530,7 +540,10 @@ function finalizeBubble(content, message) {
 	// so no stray "assistant" label is left. cur.bubble is .bubble; .msg wraps it.
 	if (!nonEmptyContent(src).length) {
 		const msg = cur.bubble.parentElement;
-		if (msg) msg.remove();
+		if (msg) {
+			msg.remove();
+			assistantTurnId.n = Math.max(0, assistantTurnId.n - 1);
+		}
 		return;
 	}
 	const role = cur.bubble.querySelector(".role");
@@ -546,7 +559,7 @@ function finalizeBubble(content, message) {
 	cur.thinkCount = null;
 	cur.thinkBuf = "";
 	renderAssistantContent(src);
-	renderUsageStrip(cur.bubble, message);
+	renderUsageStrip(cur.bubble, message, cur.turnNo);
 }
 // ponytail: thinking-block lifecycle. The <details> carries its own
 // state: the .thinking class swaps the summary indicator from caret to
@@ -635,6 +648,73 @@ function scheduleRender() {
 	});
 }
 
+// Consecutive tool calls belong to one compact turn-local disclosure. The DOM
+// itself is the scope: a non-tool turn or agent boundary naturally starts fresh.
+function sealLatestToolGroup() {
+	const last = feedEl.lastElementChild;
+	if (last && last.classList.contains("tool-group"))
+		last.dataset.sealed = "true";
+}
+function ensureToolGroup() {
+	const last = feedEl.lastElementChild;
+	if (
+		last &&
+		last.classList.contains("tool-group") &&
+		last.dataset.sealed !== "true" &&
+		last.__toolGroup
+	)
+		return last.__toolGroup;
+	const el = document.createElement("article");
+	el.className = "tool-group";
+	el.setAttribute("aria-label", "tool activity");
+	const fold = document.createElement("details");
+	fold.className = "tool-group-fold";
+	fold.open = true;
+	setSafeHtml(
+		fold,
+		'<summary class="tool-group-head"><span class="tool-group-caret">▸</span><span class="tool-group-label">tool activity</span><span class="tool-group-meta"></span></summary><div class="tool-group-list"></div>',
+	);
+	const group = {
+		el,
+		fold,
+		meta: fold.querySelector(".tool-group-meta"),
+		list: fold.querySelector(".tool-group-list"),
+		count: 0,
+		running: 0,
+		errors: 0,
+		startedAt: Date.now(),
+	};
+	el.__toolGroup = group;
+	el.appendChild(fold);
+	feedEl.appendChild(el);
+	return group;
+}
+function refreshToolGroup(group) {
+	if (!group) return;
+	const duration = group.startedAt
+		? fmtToolDur(Date.now() - group.startedAt)
+		: "";
+	group.el.classList.toggle("run", group.running > 0);
+	group.el.classList.toggle("err", group.errors > 0);
+	group.meta.textContent = toolPresent.toolGroupSummary(
+		group.count,
+		group.running,
+		group.errors,
+		duration,
+	);
+	if (group.errors) group.fold.open = true;
+	else if (!group.running && transcript.dataset.view !== "detailed")
+		group.fold.open = false;
+}
+function settleToolGroup(wrap, isError) {
+	if (!wrap || !wrap.group || wrap.groupSettled) return;
+	wrap.groupSettled = true;
+	const group = wrap.group;
+	if (wrap.groupRunning) group.running = Math.max(0, group.running - 1);
+	if (isError) group.errors++;
+	refreshToolGroup(group);
+}
+
 function toolBlock(id, name, args, running) {
 	let wrap = toolBlocks.get(id);
 	if (!wrap) {
@@ -652,15 +732,25 @@ function toolBlock(id, name, args, running) {
 		const head = el.querySelector(".head");
 		const toggle = () => openTool(wrap, !el.classList.contains("open"));
 		head.addEventListener("click", toggle); // Enter/Space are native on <button>
-		feedEl.appendChild(el);
+		const group = ensureToolGroup();
+		group.list.appendChild(el);
+		group.count++;
+		if (running) {
+			group.running++;
+			group.fold.open = true;
+		}
 		wrap = {
 			el,
 			out: el.querySelector(".out"),
 			head,
 			dur: el.querySelector(".dur"),
 			startedAt: running ? Date.now() : 0,
+			group,
+			groupRunning: !!running,
+			groupSettled: false,
 		};
 		toolBlocks.set(id, wrap);
+		refreshToolGroup(group);
 	}
 	if (args != null) wrap.args = args;
 	autoscroll();
@@ -1443,6 +1533,7 @@ updateEmptyState(); // initial paint: fresh session -> visible
 function note(text, cls) {
 	const m = document.createElement("article");
 	m.className = "msg";
+	m.classList.add("system-turn");
 	const b = document.createElement("div");
 	b.className = "bubble";
 	if (cls) b.style.color = `var(--${cls})`;
@@ -3679,7 +3770,7 @@ function renderMessage(msg) {
 		if (nonEmptyContent(msg.content).length) {
 			newAssistantBubble();
 			renderAssistantContent(msg.content);
-			renderUsageStrip(cur.bubble, msg);
+			renderUsageStrip(cur.bubble, msg, cur.turnNo);
 		}
 		cur = null;
 	} else if (msg.role === "toolResult") {
@@ -3700,6 +3791,7 @@ function renderMessage(msg) {
 			text: t,
 			isError: msg.isError,
 		});
+		settleToolGroup(w, msg.isError);
 	} else if (msg.role === "custom") {
 		// pi-subagents notices (async completion / steering / control) get a
 		// dedicated card BEFORE the generic compaction-style marker — both live
@@ -3750,7 +3842,8 @@ function renderMessage(msg) {
 		cur = null;
 	} else if (msg.role === "bashExecution") {
 		const turn = document.createElement("article");
-		turn.className = "msg"; // FR-8: a turn — article wrapper, unstyled
+		turn.className = "msg"; // FR-8: a turn — article wrapper
+		turn.classList.add("tool-turn");
 		const el = document.createElement("details");
 		el.className = "tool done";
 		setSafeHtml(
@@ -3819,6 +3912,7 @@ function handle(payload) {
 	switch (payload.type) {
 		case "agent_start":
 			agentStarts++;
+			sealLatestToolGroup();
 			announceStatus("agent_start");
 			setStreaming(true);
 			setActivity("thinking…", true);
@@ -3834,6 +3928,7 @@ function handle(payload) {
 			// setStreaming(false) below then nulls cur.
 			announceStatus("agent_end");
 			if (cur) finalizeBubble();
+			sealLatestToolGroup();
 			setStreaming(false);
 			setActivity("ready", false);
 			break;
@@ -4123,6 +4218,7 @@ function handle(payload) {
 					}
 				}
 			}
+			settleToolGroup(w, payload.isError);
 			// clear the per-tool snapshot now that this tool is done — prevents a
 			// stale edit/write diff leaking onto an unrelated later select/confirm
 			curToolName = null;
@@ -4206,33 +4302,68 @@ const sb = ["repo", "git", "model", "think", "cache", "tok", "cost"].reduce(
 	(o, k) => ((o[k] = $("sb-" + k)), o),
 	{},
 );
-// ponytail: statusbar secondary group (git/think/cache/tok/$cost/ide) collapses
-// to a ⋯ popover on narrow (body.w-narrow, set by the inline width script).
-// <details> is default-open so the wide layout is inline without fighting the
-// UA's closed-details hiding; we just close it on narrow and when the user
-// shrinks into one (widthchange fires only on an actual w-narrow crossing).
+// The header spends its available width on live session telemetry first, then
+// moves only trailing items into the native … popover. DOM moves keep the
+// existing status-node references live; no duplicate values can drift.
 const sbSec = $("sb-sec");
+const sbInline = $("sb-inline");
+const sbOverflow = $("sb-overflow");
+const sbMeta = sbInline ? [...sbInline.querySelectorAll("[data-sb-meta]")] : [];
+const sbBar = $("statusbar");
 const barOvf = $("bar-ovf"); // composer overflow ⋯ (spec FR-4)
 let sbNarrow = document.body.classList.contains("w-narrow");
-if (sbSec) sbSec.open = !sbNarrow; // wide: inline (open); narrow: popover starts closed
-if (barOvf) barOvf.open = !sbNarrow; // same: wide inline, narrow popover closed
+let sbOverflowRaf = 0;
+function syncHeaderStatusOverflow() {
+	if (!sbSec || !sbInline || !sbOverflow || !sbMeta.length) return;
+	const wasOpen = sbSec.open;
+	for (const item of sbMeta) sbInline.appendChild(item);
+	sbSec.hidden = true;
+	const overflows = () => sbInline.scrollWidth > sbInline.clientWidth + 1;
+	while (overflows() && sbInline.lastElementChild)
+		sbOverflow.prepend(sbInline.lastElementChild);
+	if (!sbOverflow.childElementCount) {
+		sbSec.open = false;
+		return;
+	}
+	// Showing … costs width too; move further items only if that makes them fit.
+	sbSec.hidden = false;
+	while (overflows() && sbInline.lastElementChild)
+		sbOverflow.prepend(sbInline.lastElementChild);
+	sbSec.open = wasOpen;
+}
+function queueSbOverflow() {
+	if (sbOverflowRaf) return;
+	sbOverflowRaf = requestAnimationFrame(() => {
+		sbOverflowRaf = 0;
+		syncHeaderStatusOverflow();
+	});
+}
+if (sbSec) sbSec.open = false;
+if (barOvf) barOvf.open = !sbNarrow; // wide: inline; narrow: starts closed
 function syncSbOverflow() {
 	if (!sbSec && !barOvf) return;
 	const n = document.body.classList.contains("w-narrow");
 	if (n !== sbNarrow) {
-		// only react to actual wide<->narrow crossings, not every resize tick, so
-		// a user-opened popover isn't snapped shut by a same-mode window nudge.
+		// Only react to a real width-mode crossing, never a same-mode resize.
 		sbNarrow = n;
-		if (sbSec) sbSec.open = !n; // wide -> open (inline); narrow -> closed
+		if (sbSec && n) sbSec.open = false;
 		if (barOvf) barOvf.open = !n;
 	}
+	queueSbOverflow();
 }
 document.body.addEventListener("widthchange", syncSbOverflow);
+if (sbBar && typeof ResizeObserver === "function") {
+	const observer = new ResizeObserver(queueSbOverflow);
+	observer.observe(sbBar);
+} else window.addEventListener("resize", queueSbOverflow);
+queueSbOverflow();
 function refreshSbModel() {
 	sb.model.textContent = (modelSel.selectedOptions[0] || {}).textContent || "…";
+	queueSbOverflow();
 }
 function refreshSbThink() {
 	sb.think.textContent = thinkSel.value || "—";
+	queueSbOverflow();
 }
 // ponytail: header dropdowns for thinking level (set_thinking_level RPC) and
 // ponytail mode (/ponytail extension command). Both sync from pi on load;
@@ -4290,6 +4421,7 @@ function refreshHealth() {
 			} else {
 				sb.git.textContent = "—";
 			}
+			queueSbOverflow();
 		})
 		.catch(() => {});
 }
@@ -4314,6 +4446,7 @@ function updateIdeBadge(info) {
 		el.classList.add("off");
 		el.classList.remove("on");
 	}
+	queueSbOverflow();
 }
 window.piWebuiIdeStatus = updateIdeBadge;
 updateIdeBadge(window.piWebuiIdeInfo || null);
@@ -4385,6 +4518,7 @@ function applyState(data) {
 function applyMessages(messages) {
 	if (!Array.isArray(messages)) return;
 	lastMessages = messages;
+	assistantTurnId.n = 0;
 	// a11y FR-9: bracket the synchronous DOM mutation with aria-busy so
 	// screen readers don't traverse a half-replaced conversation
 	feedEl.setAttribute("aria-busy", "true");
@@ -4426,6 +4560,7 @@ function applyStats(data) {
 		"cache: read↓ (from cache) / write↑ (newly created); % = reads ÷ (reads + fresh input)";
 	sb.cost.textContent = data.cost != null ? data.cost.toFixed(3) : "…";
 	updateCtxMeter(data.contextUsage); // spec FR-10 — same event that refreshes the readout
+	queueSbOverflow();
 }
 // fetch the bundled bootstrap object (state+messages+commands+models+stats) in
 // one round-trip and apply it. Fire-and-forget at every call site (like the old
@@ -4516,6 +4651,7 @@ function finalizeDeadTurn() {
 		if (b.el.classList.contains("run")) {
 			b.el.classList.remove("run");
 			b.el.classList.add("done");
+			settleToolGroup(b, false);
 		}
 }
 // replay the current-turn buffer (plan F§5.2): re-apply each buffered event's
@@ -5390,22 +5526,35 @@ themeSel.onchange = () => {
 	localStorage.setItem("pi:theme", t);
 };
 
-// conversation detail modes (plan 3.2 / U§2.1): simple (messages only) / semi
-// (tool headers only) / detailed (current). data-view on #transcript + CSS
-// hides tools/outputs; persisted in localStorage. Cycled by the header #view-btn
-// and the Alt+K palette command.
+// Conversation density is progressive disclosure, not a loss of information:
+// focus hides successful tool work, balanced summarizes it, trace exposes it.
+// Keep the persisted values for existing sessions; only their names/default move.
 const viewBtn = $("view-btn");
-const VIEW_MODES = ["detailed", "semi", "simple"];
+const VIEW_MODES = ["semi", "detailed", "simple"];
+const VIEW_MODE_LABELS = {
+	simple: "focus",
+	semi: "balanced",
+	detailed: "trace",
+};
 let viewMode = localStorage.getItem("pi:view-mode");
-if (!VIEW_MODES.includes(viewMode)) viewMode = "detailed";
+if (!VIEW_MODES.includes(viewMode)) viewMode = "semi";
 function applyViewMode(m) {
-	if (!VIEW_MODES.includes(m)) m = "detailed";
+	if (!VIEW_MODES.includes(m)) m = "semi";
 	viewMode = m;
 	localStorage.setItem("pi:view-mode", m);
 	transcript.setAttribute("data-view", m);
-	if (viewBtn)
-		viewBtn.textContent =
-			m === "detailed" ? "detailed" : m === "semi" ? "headers" : "simple";
+	const label = VIEW_MODE_LABELS[m];
+	if (viewBtn) {
+		viewBtn.textContent = label;
+		viewBtn.title = `conversation density: ${label} (click to cycle)`;
+		viewBtn.setAttribute("aria-label", `conversation density: ${label}`);
+	}
+	for (const fold of transcript.querySelectorAll(".tool-group-fold")) {
+		const group = fold.parentElement;
+		if (m === "detailed") fold.open = true;
+		else if (m === "semi" && group && !group.classList.contains("err"))
+			fold.open = false;
+	}
 }
 if (viewBtn)
 	viewBtn.onclick = () => {
@@ -5513,10 +5662,21 @@ inputEl.addEventListener("paste", (e) => {
 // drag-drop onto the composer
 const composerEl = document.querySelector(".composer");
 if (composerEl) {
+	const draggingFiles = (e) =>
+		e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+	composerEl.addEventListener("dragenter", (e) => {
+		if (draggingFiles(e)) composerEl.classList.add("dragging");
+	});
 	composerEl.addEventListener("dragover", (e) => {
 		e.preventDefault();
+		if (draggingFiles(e)) composerEl.classList.add("dragging");
+	});
+	composerEl.addEventListener("dragleave", (e) => {
+		if (!e.relatedTarget || !composerEl.contains(e.relatedTarget))
+			composerEl.classList.remove("dragging");
 	});
 	composerEl.addEventListener("drop", (e) => {
+		composerEl.classList.remove("dragging");
 		const dt = e.dataTransfer;
 		if (dt && dt.files && dt.files.length) {
 			e.preventDefault();
@@ -6235,15 +6395,35 @@ function analysisBody() {
 	const useCost = a.attributedCost > 0;
 	const metric = useCost ? (t) => t.cost : (t) => t.usage.output;
 	const shown = turns.slice(-Math.min(80, turns.length));
+	const contextWindow =
+		lastStats &&
+		lastStats.contextUsage &&
+		Number.isFinite(lastStats.contextUsage.contextWindow) &&
+		lastStats.contextUsage.contextWindow > 0
+			? lastStats.contextUsage.contextWindow
+			: null;
+	const contextForTurn = (t) => {
+		if (!contextWindow) return null;
+		const u = t.usage || {};
+		const tokens = [u.cacheMiss, u.cacheRead, u.cacheWrite, u.output].reduce(
+			(sum, value) => sum + (Number.isFinite(value) ? value : 0),
+			0,
+		);
+		return Math.max(0, Math.min(100, (tokens / contextWindow) * 100));
+	};
 	const maxV = shown.reduce((m, t) => Math.max(m, metric(t)), 0);
 	const bars = shown
 		.map((t) => {
 			const v = metric(t);
 			const h = maxV > 0 ? Math.max(3, Math.round((v / maxV) * 100)) : 3;
+			const context = contextForTurn(t);
 			const lbl =
 				"turn " +
 				t.number +
-				(useCost ? " · " + SA.formatTurnCost(v) : " · " + v + " out tok");
+				(useCost
+					? " · " + SA.formatTurnCost(v)
+					: " · " + SA.formatTokens(v) + " out tok") +
+				(context != null ? " · " + Math.round(context) + "% context" : "");
 			return (
 				'<button type="button" class="an-bar' +
 				(useCost && v === maxV && maxV > 0 ? " peak" : "") +
@@ -6261,6 +6441,39 @@ function analysisBody() {
 		a.tokens.cacheRead,
 		a.tokens.cacheMiss + a.tokens.cacheRead,
 	);
+	const contextPoints = contextWindow
+		? shown.map((t, i) => {
+				const pct = contextForTurn(t);
+				return {
+					x: shown.length > 1 ? (i / (shown.length - 1)) * 100 : 50,
+					y: 100 - pct,
+					pct,
+					turn: t.number,
+				};
+			})
+		: [];
+	const contextLine = contextPoints.length
+		? '<svg class="an-context-line" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="context usage by turn"><title>Context usage by turn</title><polyline points="' +
+			contextPoints
+				.map((p) => p.x.toFixed(2) + "," + p.y.toFixed(2))
+				.join(" ") +
+			'" />' +
+			contextPoints
+				.map(
+					(p) =>
+						'<circle cx="' +
+						p.x.toFixed(2) +
+						'" cy="' +
+						p.y.toFixed(2) +
+						'" r="1.1"><title>turn ' +
+						p.turn +
+						" · " +
+						Math.round(p.pct) +
+						"% context</title></circle>",
+				)
+				.join("") +
+			"</svg>"
+		: "";
 	const costliest = turns
 		.slice()
 		.sort((x, y) => y.cost - x.cost)
@@ -6268,8 +6481,10 @@ function analysisBody() {
 		.filter((t) => t.cost > 0);
 	const failed = a.toolCalls.filter((c) => c.isError);
 	const topTools = a.tools.slice(0, 6);
-	const stat = (val, lbl) =>
-		'<div class="an-stat"><span class="an-val">' +
+	const stat = (val, lbl, cls) =>
+		'<div class="an-stat' +
+		(cls ? " " + cls : "") +
+		'"><span class="an-val">' +
 		esc(val) +
 		'</span><span class="an-lbl">' +
 		esc(lbl) +
@@ -6294,14 +6509,28 @@ function analysisBody() {
 	// stat row
 	parts.push('<div class="an-head">');
 	parts.push(
-		stat(a.costAvailable ? SA.formatTurnCost(a.totalCost) : "—", "total"),
+		stat(
+			a.costAvailable ? SA.formatTurnCost(a.totalCost) : "not reported",
+			"total",
+			"primary",
+		),
 	);
 	parts.push(stat(String(a.turnCount), "turns"));
 	parts.push(
-		stat(a.turnCount ? SA.formatTurnCost(a.averageTurnCost) : "—", "avg/turn"),
+		stat(
+			a.attributedCost > 0 && a.turnCount
+				? SA.formatTurnCost(a.averageTurnCost)
+				: "not reported",
+			"avg/turn",
+		),
 	);
 	parts.push(
-		stat(a.turnCount ? SA.formatTurnCost(a.medianTurnCost) : "—", "median"),
+		stat(
+			a.attributedCost > 0 && a.turnCount
+				? SA.formatTurnCost(a.medianTurnCost)
+				: "not reported",
+			"median",
+		),
 	);
 	parts.push(
 		stat(
@@ -6320,10 +6549,21 @@ function analysisBody() {
 				' <span class="an-sec-sub">(last ' +
 				shown.length +
 				(turns.length > shown.length ? " of " + turns.length : "") +
+				(contextLine ? " · line = context" : "") +
 				" · click to jump)</span></div>",
 		);
-		parts.push('<div class="an-bars">' + bars + "</div>");
+		parts.push('<div class="an-bars">' + bars + contextLine + "</div>");
+		if (!useCost) {
+			parts.push(
+				'<p class="um-hint">Provider cost is not available; showing output tokens per turn.</p>',
+			);
+		}
 		parts.push("</div>");
+	} else {
+		parts.push(
+			'<div class="an-section"><div class="an-sec-h">cost per turn</div>' +
+				'<p class="um-hint">No completed model turns yet; cost appears after pi reports usage.</p></div>',
+		);
 	}
 	// token breakdown
 	if (a.tokensAvailable) {
@@ -6841,7 +7081,7 @@ registerCommand(
 registerCommand(
 	"view-cycle",
 	"cycle detail mode",
-	"simple / headers / detailed",
+	"focus / balanced / trace",
 	() => (viewBtn ? viewBtn.click() : null),
 );
 
