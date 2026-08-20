@@ -86,6 +86,7 @@ import webui from "./webui.js";
 import safeguard from "./safeguard.js";
 import todo from "./todo.js";
 import discipline from "./discipline.js";
+import browser from "./browser.js";
 
 // typeof guard keeps this safe at runtime; no @types/node types needed.
 const envMarker =
@@ -288,6 +289,7 @@ export default function (pi: ExtensionAPI) {
 	safeguard(pi);
 	todo(pi);
 	discipline(pi);
+	browser(pi);
 	pi.registerTool({
 		name: "ask_user_question",
 		label: "Ask User Question",

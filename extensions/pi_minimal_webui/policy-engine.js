@@ -548,6 +548,12 @@ const DEFAULT_CONFIG = {
 	// read: allow; sensitivePaths gates secrets above.
 	read: { "*": "allow" },
 
+	// --- browser inspection: local, bounded, and read-only ---
+	browser_snapshot: "allow",
+	browser_screenshot: "allow",
+	browser_console: "allow",
+	browser_open: "ask",
+
 	// --- mutation: always ask ---
 	edit: "ask",
 	write: "ask",
@@ -968,7 +974,16 @@ module.exports.bashSensitiveFor = bashSensitiveFor;
 // ---------------------------------------------------------------------------
 
 /** Recon/read-only tools — allowed by read-only mode (FR-13). */
-const READ_TOOLS = new Set(["read", "grep", "find", "ls", "glob"]);
+const READ_TOOLS = new Set([
+	"read",
+	"grep",
+	"find",
+	"ls",
+	"glob",
+	"browser_snapshot",
+	"browser_screenshot",
+	"browser_console",
+]);
 /**
  * Coordination tools — exempt from read-only mode (FR-16): they have no side
  * effects, and blocking them would break agent↔user coordination. Yolo never

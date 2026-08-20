@@ -1452,6 +1452,9 @@ const {
 
 {
 	assert.deepEqual([...READ_TOOLS].sort(), [
+		"browser_console",
+		"browser_screenshot",
+		"browser_snapshot",
 		"find",
 		"glob",
 		"grep",
