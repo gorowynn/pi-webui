@@ -296,8 +296,8 @@ function classifyPart(part) {
 	if (PROBES.has(cmd)) {
 		return toks[1] === "--version" || toks[1] === "-v" || toks[1] === "--help";
 	}
-	if (Object.prototype.hasOwnProperty.call(ARG_SENSITIVE, cmd)) {
-		const handler = ARG_SENSITIVE[cmd];
+	if (ARG_SENSITIVE.has(cmd)) {
+		const handler = ARG_SENSITIVE.get(cmd);
 		if (typeof handler === "function") return handler(toks);
 	}
 	return READONLY.has(cmd);
