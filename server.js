@@ -10,6 +10,7 @@ const { spawn, execFileSync } = require("child_process");
 const os = require("os");
 const { JsonLineDecoder, encodeJsonLine } = require("./jsonl.js"); // strict JSONL codec (plan F§4.5)
 const { createLiveBuffer } = require("./livebuf.js"); // current-turn buffer for reconnect replay (plan F§5.2)
+const { createSseDelivery } = require("./sse-queue.js"); // bounded per-client SSE backpressure
 const { activeSessionMessages } = require("./session-entries.js"); // compaction-aware history (plan F§5.3)
 const { listRecentSessions } = require("./recent-sessions.js"); // head/tail session reader (plan F§4.1)
 const {
@@ -227,7 +228,7 @@ let shuttingDown = false;
 let restartAttempts = 0;
 let startStamp = 0;
 let deliberateRestart = false; // ponytail: workspace switch — exit handler respawns in the new cwd, skipping crash backoff
-const clients = new Set(); // open SSE responses
+const clients = new Set(); // open SSE deliveries
 // current-turn event buffer (plan F§5.2): survives a pi CRASH so a reconnecting
 // tab can rebuild in-flight tool cards; cleared on workspace switch (old
 // project's turn must not leak) and on agent_end (turn committed → get_messages).
@@ -235,54 +236,13 @@ const lb = createLiveBuffer();
 
 function broadcast(obj) {
 	const line = "data: " + JSON.stringify(obj) + "\n\n";
-	for (const res of clients) {
-		// ponytail: per-client queue. write()==false is backpressure (socket
-		// saturated / main-thread stall), NOT a dead socket — buffer the line in
-		// _piQ and flush on 'drain' instead of dropping it. Dropping was the old
-		// bug: a saturated client skipped both text deltas AND the text_end heal
-		// event, so words vanished until a full SSE reconnect/resync. A client
-		// stuck >20s (backgrounded/slept tab) is still cut loose to reconnect.
+	for (const client of clients) {
 		try {
-			if (res._piPaused) {
-				(res._piQ ||= []).push(line);
-			} else if (!res.write(line)) {
-				pause(res);
-			}
+			client.push(line);
 		} catch {
-			clients.delete(res);
-			/* drop, onclose cleans up */
+			client.close("write-error");
 		}
 	}
-}
-
-// ponytail: buffer _piQ until the socket drains, then flush; re-pause if it
-// saturates again mid-flush. Recurses safely — once('drain') fires per saturation.
-function pause(res) {
-	res._piPaused = true;
-	res._piQ = res._piQ || [];
-	const deadline = setTimeout(() => {
-		clients.delete(res);
-		try {
-			res.end();
-		} catch {}
-	}, 20000);
-	res.once("drain", () => {
-		res._piPaused = false;
-		clearTimeout(deadline);
-		const q = res._piQ;
-		res._piQ = [];
-		for (const l of q) {
-			try {
-				if (!res.write(l)) {
-					pause(res);
-					return;
-				}
-			} catch {
-				clients.delete(res);
-				return;
-			}
-		}
-	});
 }
 
 // exponential backoff for the crash-loop guard: 1s, 2s, 4s, ... capped at 30s.
@@ -393,7 +353,7 @@ function startPi() {
 	});
 	pi.on("exit", (code, sig) => {
 		if (shuttingDown) return shutdownNow();
-		rejectAllRpc("pi exited"); // fail fast: pending awaitable RPCs won't resolve
+		rejectAllRpc(); // fail fast: pending awaitable RPCs won't resolve
 		broker.clear(); // no dangling approvals after a crash/restart (FR-20)
 		broadcast({ source: "pi_exit", payload: { code, sig } });
 		if (deliberateRestart) {
@@ -428,7 +388,6 @@ function startPi() {
 	// reader is ready, so the response is always from the booted pi.
 	broadcast({ source: "server", type: "pi_ready" });
 }
-startPi();
 
 // ponytail: cross-platform process-tree termination (plan F§4.7). Centralized
 // so workspace switch (graceful), stop (force), and future isolated-prompt
@@ -496,11 +455,7 @@ function stopServer() {
 // drop every SSE client + close the HTTP server, then exit. Called from the pi
 // exit handler (after pi is reaped) or directly if no pi is running.
 function shutdownNow() {
-	for (const c of clients) {
-		try {
-			c.end();
-		} catch {}
-	}
+	for (const c of clients) c.close("shutdown");
 	try {
 		server.close();
 	} catch {}
@@ -831,9 +786,52 @@ function listSessions() {
 	}));
 }
 
+class PiUnavailableError extends Error {
+	constructor() {
+		super("pi not running");
+		this.name = "PiUnavailableError";
+		this.code = "PI_UNAVAILABLE";
+	}
+}
+const STREAM_UNAVAILABLE_CODES = new Set([
+	"EPIPE",
+	"ERR_STREAM_DESTROYED",
+	"ERR_STREAM_WRITE_AFTER_END",
+]);
 function sendToPi(obj) {
-	if (!pi || !pi.stdin.writable) throw new Error("pi not running");
-	pi.stdin.write(encodeJsonLine(obj));
+	if (!pi || !pi.stdin || !pi.stdin.writable) throw new PiUnavailableError();
+	try {
+		pi.stdin.write(encodeJsonLine(obj));
+	} catch (error) {
+		if (
+			STREAM_UNAVAILABLE_CODES.has(error && error.code) ||
+			!pi ||
+			!pi.stdin ||
+			!pi.stdin.writable
+		)
+			throw new PiUnavailableError();
+		throw error;
+	}
+}
+function boundedErrorText(error) {
+	const message =
+		error && typeof error.message === "string"
+			? error.message
+			: "request failed";
+	return message.slice(0, 256);
+}
+function respondForwardError(res, error) {
+	if (res.writableEnded) return;
+	const unavailable = error instanceof PiUnavailableError;
+	res.writeHead(unavailable ? 503 : 500, {
+		"Content-Type": "application/json",
+	});
+	res.end(
+		JSON.stringify({
+			ok: false,
+			error: unavailable ? "pi not running" : boundedErrorText(error),
+		}),
+	);
 }
 
 // ── awaitable RPC registry (plan F§5.1 — the keystone) ──────────────────────
@@ -880,10 +878,10 @@ function resolveRpc(obj) {
 
 // fail every pending awaitable RPC fast (pi exited/crashed — no response will
 // come) instead of letting each wait out its 30s timeout.
-function rejectAllRpc(reason) {
+function rejectAllRpc() {
 	for (const p of rpcPending.values()) {
 		clearTimeout(p.timer);
-		p.reject(new Error(reason));
+		p.reject(new PiUnavailableError());
 	}
 	rpcPending.clear();
 }
@@ -1044,17 +1042,18 @@ const server = http.createServer(async (req, res) => {
 			Connection: "keep-alive",
 			"X-Accel-Buffering": "no",
 		});
-		res.write(": connected\n\n");
-		const hb = setInterval(() => {
-			try {
-				res.write(": hb\n\n");
-			} catch {}
-		}, 15000);
-		clients.add(res);
-		req.on("close", () => {
-			clearInterval(hb);
-			clients.delete(res);
+		let heartbeat = null;
+		let delivery;
+		delivery = createSseDelivery(res, {
+			onClose: () => {
+				clients.delete(delivery);
+				if (heartbeat) clearInterval(heartbeat);
+			},
 		});
+		clients.add(delivery);
+		heartbeat = setInterval(() => delivery.push(": hb\n\n"), 15000);
+		delivery.push(": connected\n\n");
+		req.on("close", () => delivery.close("client-close"));
 		return;
 	}
 
@@ -1088,6 +1087,8 @@ const server = http.createServer(async (req, res) => {
 							}),
 						);
 					}
+					const { marker: _m, ...fwd } = obj;
+					sendToPi(fwd);
 					const r = broker.resolve(obj.id, obj.value);
 					if (!r.ok) {
 						res.writeHead(410, {
@@ -1104,10 +1105,6 @@ const server = http.createServer(async (req, res) => {
 							toolCallId: rec.toolCallId,
 							at: Date.now(),
 						});
-					// forward to pi the UNCHANGED payload (the marker is a
-					// browser↔server contract; safeguard.ts never sees it)
-					const { marker: _m, ...fwd } = obj;
-					sendToPi(fwd);
 					broadcast({
 						source: "server",
 						type: "approval_resolved",
@@ -1121,8 +1118,7 @@ const server = http.createServer(async (req, res) => {
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end('{"ok":true}');
 		} catch (e) {
-			res.writeHead(500, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ ok: false, error: e.message }));
+			respondForwardError(res, e);
 		}
 		return;
 	}
@@ -1192,10 +1188,15 @@ const server = http.createServer(async (req, res) => {
 	if (req.method === "DELETE" && url.pathname === "/api/permissions/grants") {
 		// clear all session grants — routes through the extension's own command so
 		// the authoritative sessionAllow is what actually clears (FR-32)
-		grantsMirror.length = 0;
-		sendToPi({ type: "prompt", message: "/safeguard reset" });
-		res.writeHead(200, { "Content-Type": "application/json" });
-		return res.end('{"ok":true}');
+		try {
+			sendToPi({ type: "prompt", message: "/safeguard reset" });
+			grantsMirror.length = 0;
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end('{"ok":true}');
+		} catch (e) {
+			respondForwardError(res, e);
+			return;
+		}
 	}
 
 	const grantRevoke = url.pathname.match(
@@ -1206,10 +1207,15 @@ const server = http.createServer(async (req, res) => {
 		// the extension's /safeguard revoke <n> is the authority; grants made in
 		// the TUI may shift indices — the page mirrors what the broker saw)
 		const n = parseInt(grantRevoke[1], 10);
-		grantsMirror.splice(n - 1, 1);
-		sendToPi({ type: "prompt", message: `/safeguard revoke ${n}` });
-		res.writeHead(200, { "Content-Type": "application/json" });
-		return res.end('{"ok":true}');
+		try {
+			sendToPi({ type: "prompt", message: `/safeguard revoke ${n}` });
+			grantsMirror.splice(n - 1, 1);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end('{"ok":true}');
+		} catch (e) {
+			respondForwardError(res, e);
+			return;
+		}
 	}
 
 	if (req.method === "POST" && url.pathname === "/api/permissions/explain") {
@@ -1300,17 +1306,23 @@ const server = http.createServer(async (req, res) => {
 
 	if (req.method === "POST" && url.pathname === "/api/rpc") {
 		// awaitable single RPC (plan F§5.1): like /api/cmd but resolves with pi's
-		// {type:"response"} payload instead of fire-and-forget. Body = the command
-		// obj (id optional — one is minted if absent). 200 + ok:false on error so
-		// the client's fetch resolves cleanly (mirrors /api/file's posture).
+		// {type:"response"} payload instead of fire-and-forget. Pi-forwarding
+		// failures use the shared bounded 503/500 boundary; body parsing keeps its
+		// existing 200 + ok:false posture for compatibility.
+		let obj;
 		try {
-			const obj = JSON.parse((await readBody(req)) || "{}");
+			obj = JSON.parse((await readBody(req)) || "{}");
+		} catch (e) {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			res.end(JSON.stringify({ ok: false, error: boundedErrorText(e) }));
+			return;
+		}
+		try {
 			const resp = await rpcRequest(obj);
 			res.writeHead(200, { "Content-Type": "application/json" });
 			res.end(JSON.stringify({ ok: true, id: resp.id, data: resp.data }));
 		} catch (e) {
-			res.writeHead(200, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ ok: false, error: e.message }));
+			respondForwardError(res, e);
 		}
 		return;
 	}
@@ -1904,8 +1916,13 @@ server.on("error", (e) => {
 	process.exit(1);
 });
 
-server.listen(PORT, "127.0.0.1", () => {
-	console.log(
-		`pi-webui on http://127.0.0.1:${PORT}  (pi: ${PI_BIN} ${["--mode", "rpc", ...PI_ARGS].join(" ")})`,
-	);
-});
+if (require.main === module) {
+	startPi();
+	server.listen(PORT, "127.0.0.1", () => {
+		console.log(
+			`pi-webui on http://127.0.0.1:${PORT}  (pi: ${PI_BIN} ${["--mode", "rpc", ...PI_ARGS].join(" ")})`,
+		);
+	});
+}
+
+module.exports = { PiUnavailableError, boundedErrorText, respondForwardError };

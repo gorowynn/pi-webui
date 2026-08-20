@@ -14,6 +14,7 @@
     "livebuf.js",
     "recent-sessions.js",
     "session-entries.js",
+    "sse-queue.js",
     "subagents.js",
     "workspace-file.js",
     "workspaces.js",

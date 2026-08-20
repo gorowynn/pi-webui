@@ -6,6 +6,22 @@
 
 ## History
 
+### 2026-08-20 — fix(extension): restore argument-sensitive bash dispatch
+
+- `bash-classifier.js` now dispatches the object-backed `ARG_SENSITIVE` validators
+  with own-key lookup and property access instead of Set methods. Added direct
+  `classifyPart` regression assertions; the full classifier/policy/safeguard suite
+  is green again.
+
+### 2026-08-20 — fix(server): bound runtime failures and SSE backpressure
+
+- SSE clients now retain FIFO queue tails across repeated backpressure, count UTF-8
+  bytes against a 1 MiB cap, and reconnect cleanly after overflow, stalls, or
+  isolated write failures. Covered by `sse-queue.js` and the SSE transport tests.
+- Pi-forwarding routes now return bounded `503` JSON when the child is unavailable,
+  contain unexpected failures, and commit permission-grant mirrors only after a
+  successful write. Added `test/runtime-resilience.test.js`.
+
 ### 2026-08-18 — fix(extension): keep discipline prompt cache-stable
 
 - `discipline.ts` now appends one fixed process-discipline suffix on prompted

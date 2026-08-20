@@ -311,6 +311,12 @@ const ok = (name) => {
 	assert.equal(classifyPart("git remote -v"), true);
 	assert.equal(classifyPart("git remote remove origin"), false);
 	assert.equal(classifyPart(""), true);
+	assert.equal(classifyPart("env"), true, "ARG_SENSITIVE object dispatch");
+	assert.equal(
+		classifyPart("sort -o out f"),
+		false,
+		"ARG_SENSITIVE handler sees mutating arguments",
+	);
 	assert.equal(
 		classifyPart("NODE_ENV=prod node server.js"),
 		false,
