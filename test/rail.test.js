@@ -46,6 +46,43 @@ check(
 	);
 }
 
+// ---- FR-4: legacy width migration + normalization ----
+{
+	const st = memStorage({
+		"pi:sddbar": JSON.stringify({ open: false }),
+		"pi:rail-width": "360",
+	});
+	const s = rail.createRailState({ storage: st }).load();
+	check(s.width === 360, "legacy pi:rail-width migrates into pi:rail");
+	check(
+		JSON.parse(st.getItem("pi:rail") || "{}").width === 360,
+		"legacy migration writes canonical width",
+	);
+}
+{
+	const st = memStorage();
+	rail.createRailState({ storage: st }).save({
+		widget: "git",
+		open: "yes",
+		width: -10,
+	});
+	const saved = JSON.parse(st.getItem("pi:rail") || "{}");
+	check(
+		saved.open === false && saved.width === 88,
+		"invalid state normalizes safely",
+	);
+	const st2 = memStorage();
+	rail.createRailState({ storage: st2 }).save({
+		widget: "git",
+		open: true,
+		width: "320",
+	});
+	check(
+		!Object.hasOwn(JSON.parse(st2.getItem("pi:rail") || "{}"), "width"),
+		"non-numeric width is ignored",
+	);
+}
+
 // ---- FR-4: unknown widget id -> closed panel ----
 {
 	const st = memStorage({
@@ -205,6 +242,11 @@ console.log(`rail: ${n} checks`);
 	);
 	check(app.includes("openRailWidget"), "app.js has the generic widget opener");
 	check(app.includes('"pi:rail:sdd"'), "sdd doc pointer moved to pi:rail:sdd");
+	check(
+		app.includes("persistRailWidth") &&
+			!app.includes('localStorage.getItem("pi:rail-width")'),
+		"app uses canonical rail state for width persistence",
+	);
 }
 
 // ---- W1 chunk 4: pure badge builders (# FR-6, FR-7) ----
@@ -279,19 +321,7 @@ console.log(`rail: ${n} checks`);
 	);
 }
 
-// ---- W1 chunk 5: palette parity routing (# FR-10) ----
-{
-	const railFn = () => "rail";
-	const modalFn = () => "modal";
-	check(
-		rail.paletteRoute(true, railFn, modalFn) === railFn,
-		"paletteRoute: parity true -> rail widget",
-	);
-	check(
-		rail.paletteRoute(false, railFn, modalFn) === modalFn,
-		"paletteRoute: parity false -> legacy modal",
-	);
-}
+// ---- W1 final command routing + analysis widget contract --------------------
 {
 	const fs = require("node:fs");
 	const app = fs.readFileSync(
@@ -299,16 +329,18 @@ console.log(`rail: ${n} checks`);
 		"utf8",
 	);
 	check(
-		app.includes("const PARITY"),
-		"PARITY flags defined (FR-10 migration gates)",
-	);
-	check(
-		/paletteRoute\(\s*PARITY\.analysis/.test(app),
-		"session usage command routes through parity (# FR-10)",
+		!app.includes("PARITY") &&
+			!app.includes("showAnalysisModal") &&
+			!app.includes("showGitModal") &&
+			/registerCommand\(\s*"usage",\s*"session usage"/.test(app) &&
+			app.includes('registerCommand("git", "git status"') &&
+			app.includes('openRailWidget("analysis")') &&
+			app.includes('openRailWidget("git")'),
+		"all inspection commands use the verified rail paths (# FR-7, FR-10)",
 	);
 	check(
 		app.includes("function analysisBody"),
-		"analysis body extracted (shared modal/rail renderer)",
+		"analysis body remains the shared rail renderer (# FR-8)",
 	);
 }
 
@@ -328,8 +360,9 @@ console.log(`rail: ${n} checks`);
 		"git badge fed from the fetched snapshot (# FR-6)",
 	);
 	check(
-		app.includes("paletteRoute(PARITY.git"),
-		"git command routes through parity (# FR-10)",
+		app.includes('openRailWidget("git")') &&
+			!app.includes("function showGitModal"),
+		"git command and detail path are rail-only (# FR-10)",
 	);
 	check(
 		app.includes("gitConfirm(action") &&
@@ -352,12 +385,12 @@ console.log(`rail: ${n} checks`);
 	check(
 		app.includes("function todosRender") &&
 			app.includes("function todoRowHtml"),
-		"todos rail render shares the row builder with the in-flow panel (# FR-11)",
+		"todos rail render shares the canonical row builder (# FR-11)",
 	);
 	check(
-		app.includes('() => openRailWidget("quotas")') &&
-			app.includes('() => openRailWidget("todos")'),
-		"quotas + todos palette commands open the rail widget directly (W1)",
+		app.includes('openRailWidget("quotas")') &&
+			app.includes('openRailWidget("todos")'),
+		"quotas + todos palette commands open the rail widget (W1)",
 	);
 	check(
 		!app.includes("todopanel") &&
@@ -382,4 +415,4 @@ console.log(`rail: ${n} checks`);
 	);
 }
 
-console.log(`rail: ${n} checks (chunks 3-7 included)`);
+console.log(`rail: ${n} checks (final workspace-tools rail)`);

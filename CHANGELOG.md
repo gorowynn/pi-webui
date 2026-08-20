@@ -6,6 +6,15 @@
 
 ## History
 
+### 2026-08-20 — feat(webui): finish the workspace-tools rail
+
+- The existing five-widget rail now has a canonical persisted state, narrow
+  bottom-sheet layout, focus trapping/restoration, and reload-safe open-widget
+  restoration. Analysis, Git, Quotas, and Todos command routes use the verified
+  rail; action-specific confirmation modals remain.
+- Removed retired Git/token/cost status slots and legacy detail fallbacks. Updated
+  rail guidance, gotchas, design notes, and W1 verification coverage.
+
 ### 2026-08-20 — fix(extension): restore argument-sensitive bash dispatch
 
 - `bash-classifier.js` now dispatches the object-backed `ARG_SENSITIVE` validators

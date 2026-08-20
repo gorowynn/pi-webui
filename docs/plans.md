@@ -17,7 +17,7 @@ Their record remains in `CHANGELOG.md` and Git.
 | Phase | Roadmap IDs | Outcome | Status |
 | --- | --- | --- | --- |
 | A | U1, U2, U3, U4, U5, U6 | Correct, adaptive, accessible foundation, diff editing, and permission safety | Not started |
-| B | W1 | Unified workspace-tools rail and calmer chrome | Blocked by A |
+| B | W1 | Unified workspace-tools rail and calmer chrome | Delivered 2026-08-20 |
 | C | C1, G1, S1 | Conversation, change-review, and session workflow | Blocked by A; follows B shell |
 | D | X1, J1 | Explicit context, templates, and native IDE integration | Blocked by A/C contracts |
 | E | P1, O1 | Long-session performance and richer observability | Blocked by U4/C1 |
@@ -363,7 +363,7 @@ All of the following must be true before Phase B:
 
 ## 4. Phase B — Unified workspace-tools rail
 
-### B1. Define the shell — W1
+### B1. Define the shell — W1 (delivered 2026-08-20)
 
 **Primary files:** `public/index.html`, `public/style.css`, `public/app.js`; add a
 small pure rail-state module only if it materially reduces `app.js` state risk.
@@ -371,7 +371,7 @@ small pure rail-state module only if it materially reduces `app.js` state risk.
 1. Rename/generalize SDD-specific outer DOM to a workspace-tools rail.
 2. Define a fixed widget table: ID, label, icon, badge provider, render/open,
    refresh policy, and command ID.
-3. Persist active widget, expanded state, and width separately.
+3. Persist active widget, expanded state, and width in one canonical rail preference.
 4. Keep only one mounted active panel unless preserving a widget DOM is required
    for unsaved input.
 5. Add accessible tab/rail selection and command-palette registration.
@@ -394,11 +394,14 @@ Order minimizes risk:
 Permissions remains a dedicated page rather than a sixth squeezed widget. The
 rail owns only its status badge/launcher and pending-attention indication.
 
-Each widget keeps its existing modal path until the rail version passes desktop,
-narrow drawer, reconnect, and keyboard smokes. Remove duplicate modal entry
-only after parity.
+**Status:** delivered 2026-08-20; all five widget routes now use the rail, with
+action-specific confirmation modals retained where needed.
 
-### B3. Narrow behavior and status consolidation
+The desktop, narrow-drawer, reconnect, and keyboard smoke gate has passed for
+each widget. Detail routes now open the rail; only action-specific confirmation
+modals remain.
+
+### B3. Narrow behavior and status consolidation (delivered 2026-08-20)
 
 1. Render the active widget as a focus-trapped drawer/bottom sheet when the
    content-width class requires it.
@@ -410,9 +413,10 @@ only after parity.
 ### Phase B exit gate
 
 All five widgets are reachable by rail, command palette, and keyboard; the
-Permissions launcher reaches its full page and announces pending/config-error
-state; narrow content is not obscured; old SDD/Todo/Git behavior is unchanged;
-no status detail remains duplicated in three surfaces.
+Permissions launcher reaches its full page and announces pending attention;
+narrow content is not permanently obscured; existing SDD/Git/analysis/quota/
+todo behavior and confirmation semantics remain intact; no retired status
+detail remains duplicated in three surfaces.
 
 ## 5. Phase C — Conversation, changes, and sessions
 

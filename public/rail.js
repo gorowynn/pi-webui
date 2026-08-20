@@ -12,7 +12,30 @@
 	var WIDGET_IDS = Object.freeze(["sdd", "analysis", "git", "quotas", "todos"]);
 
 	var LEGACY_KEY = "pi:sddbar";
+	var LEGACY_WIDTH_KEY = "pi:rail-width";
 	var STATE_KEY = "pi:rail";
+	var MIN_WIDTH = 88;
+	var MAX_WIDTH = 720;
+
+	function normalizeWidth(value) {
+		if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+		return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, value));
+	}
+
+	function normalizeState(state) {
+		var widget = isWidgetId(state && state.widget) ? state.widget : null;
+		return {
+			widget: widget,
+			open:
+				widget && state && typeof state.open === "boolean" ? state.open : false,
+			width: normalizeWidth(state && state.width),
+		};
+	}
+
+	function legacyWidth(value) {
+		if (value === null || value === "") return undefined;
+		return normalizeWidth(Number(value));
+	}
 
 	function isWidgetId(id) {
 		return WIDGET_IDS.indexOf(id) >= 0;
@@ -44,45 +67,43 @@
 
 		function load() {
 			var raw = get(STATE_KEY);
-			if (raw) {
+			if (raw !== null) {
 				try {
-					var s = JSON.parse(raw);
-					var widget = isWidgetId(s.widget) ? s.widget : null;
-					return {
-						widget: widget,
-						open: widget ? !!s.open : false,
-						width: typeof s.width === "number" ? s.width : undefined,
-					};
+					var state = normalizeState(JSON.parse(raw));
+					save(state);
+					return state;
 				} catch {
-					// corrupt — fall through to legacy/closed
+					// corrupt canonical state — fail closed without reviving legacy UI
+					return { widget: null, open: false, width: undefined };
 				}
 			}
-			// one-time legacy migration: an open sddbar meant the SDD pane
+
+			// One-time legacy migration: an open sddbar meant the SDD pane. The
+			// standalone width key was introduced by the resize seam later.
+			var migrated = { widget: null, open: false, width: undefined };
 			var lraw = get(LEGACY_KEY);
-			if (lraw) {
+			if (lraw !== null) {
 				try {
 					var l = JSON.parse(lraw);
-					return {
-						widget: l.open ? "sdd" : null,
-						open: !!l.open,
-						width: typeof l.width === "number" ? l.width : undefined,
-					};
+					migrated = normalizeState({
+						widget: l && l.open === true ? "sdd" : null,
+						open: l && l.open === true,
+						width: normalizeWidth(l && l.width),
+					});
 				} catch {
-					/* corrupt legacy — closed */
+					/* corrupt legacy — keep the closed state */
 				}
 			}
-			return { widget: null, open: false, width: undefined };
+			if (migrated.width === undefined) {
+				migrated.width = legacyWidth(get(LEGACY_WIDTH_KEY));
+			}
+			save(migrated);
+			return migrated;
 		}
 
 		function save(state) {
-			set(
-				STATE_KEY,
-				JSON.stringify({
-					widget: isWidgetId(state.widget) ? state.widget : null,
-					open: !!state.open,
-					width: typeof state.width === "number" ? state.width : undefined,
-				}),
-			);
+			var normalized = normalizeState(state || {});
+			set(STATE_KEY, JSON.stringify(normalized));
 		}
 
 		return { load: load, save: save };
@@ -162,12 +183,6 @@
 		return NO_BADGE;
 	}
 
-	/** FR-10: palette command routing under a per-widget parity flag —
-	 * rail version once smokes pass, legacy modal until then. */
-	function paletteRoute(parity, railFn, modalFn) {
-		return parity ? railFn : modalFn;
-	}
-
 	var api = {
 		WIDGET_IDS: WIDGET_IDS,
 		isWidgetId: isWidgetId,
@@ -180,7 +195,6 @@
 		todosBadge: todosBadge,
 		approvalsBadge: approvalsBadge,
 		quotaBadge: quotaBadge,
-		paletteRoute: paletteRoute,
 	};
 
 	if (typeof module !== "undefined" && module.exports) module.exports = api;

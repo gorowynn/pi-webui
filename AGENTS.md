@@ -46,10 +46,11 @@ runtime. Edit `public/app.js`/`public/style.css`/`public/index.html` + refresh =
 | File | Role |
 |------|------|
 | `server.js` | Bridge. CommonJS, ~no deps. Serves assets, frames JSONL (split on `\n` only), spawns/respawns `pi --mode rpc` (live `let PI_CWD`; `POST /api/workspace` tree-kills + respawns in a new project and broadcasts `workspace_changed` to all tabs), CSRF + DNS-rebinding gate, `safePath`, 1MB body cap. `PI_WEBUI_NO_SWITCH` gates switching. `/api/snapshot` returns `{state, messages, commands, models, stats, liveEvents}` — messages derived from `get_entries` (parent-chain, compaction-aware), liveEvents = current-turn buffer. |
-| `public/index.html` | Markup only. Load order: `vendor/markdown-it.min.js` → `md.js` → `vendor/highlight.min.js` → `csv-preview.js` → `tool-protocol.js` → `session-analysis.js` → `composer-images.js` → `tool-presentation.js` → `app.js`. |
+| `public/index.html` | Markup only. Load order: `vendor/markdown-it.min.js` → `md.js` → `vendor/highlight.min.js` → feature modules → `rail.js` → `app.js`. |
 | `public/style.css` | All styling. **dark** theme (black + anthracite, GitHub-dark neutrals/blue accent) by default + switchable `paperlike` (`[data-theme]`) — see [`docs/design.md`](docs/design.md). |
 | `public/md.js` | Thin shim over vendored markdown-it 14.x: `md(markdown)` (`html:false`/`breaks:true`/`linkify:true`, links `target=_blank`) + `esc()` (project-wide HTML-escaper source of truth, null-safe→`""`). Loads AFTER `markdown-it.min.js`; `require`-able in Node (self-test: `node -e "console.log(require('./public/md.js').md('**x**'))"`). |
-| `public/app.js` | Entire frontend (vanilla JS): SSE, rendering, modals, diffs, commands palette, left workspace/session sidebar (`#wsbar`). Uses `md()`/`esc()` globals from md.js. |
+| `public/app.js` | Entire frontend (vanilla JS): SSE, rendering, rail widgets, modals, diffs, commands palette, left workspace/session sidebar (`#wsbar`). Uses `md()`/`esc()` globals from md.js. |
+| `public/rail.js` | Zero-dep dual-mode workspace-tools rail state seam: fixed five-widget table contract, canonical `pi:rail` persistence with legacy migration, generation stamps, SDD visibility, and text badges. Loaded before `app.js`; covered by `test/rail.test.js`. |
 | `public/usage-telemetry.js` | Dual-mode, zero-dep Usage sampler and metric renderer: normalized numeric samples (60 minutes/361 samples), event durations, rolling views, timestamp-aware sparklines capped at 100 rendered points, and browser-local v2 persistence for the 12 most recently saved session histories. Legacy v1 single-record storage migrates on the next save; safeguard permission-prompt waits are excluded from tool runtime; see [`docs/usage-telemetry.md`](docs/usage-telemetry.md). |
 | `workspaces.js` | Pure workspace discovery + switch validation (CommonJS, fs-only). `discoverWorkspaces` scans `~/.pi/agent/sessions/--<cwd>--/` and recovers each root from the newest `.jsonl`'s `{type:"session"}.cwd` (NOT the encoded folder name); `isKnownWorkspacePath` is the `POST /api/workspace` security gate (realpath must match a discovered workspace). Unit-tested (`test/workspaces.test.js`). |
 | `jsonl.js` | Strict JSONL codec (plan F§4.5): `encodeJsonLine(obj)` + `JsonLineDecoder` (split on `\n`, strip `\r`, buffer incomplete UTF-8 via StringDecoder, per-record cap). Zero-dep CommonJS. |
@@ -69,7 +70,7 @@ runtime. Edit `public/app.js`/`public/style.css`/`public/index.html` + refresh =
 | `public/subagents-ux.js` | Zero-dep dual-mode pure helpers for the `#fleet` page (run/step rows, state chips) + the plugin's custom-message notices (`subagent-notify`, steering/control). 27 unit tests. |
 | `docs/` | Specs: [`design.md`](docs/design.md) (UI/UX, visual source of truth), [`README.md`](docs/README.md) (index + SSOT). |
 | `package.json` | `keywords:["pi-package"]` → `pi install`-able. `pi` manifest declares `extensions`+`skills` (package-relative); `files:` whitelist ships both. |
-| `skills/sdd/` | 4-phase Spec-Driven Dev + TiCoder (Plan→Spec→Impl-Plan→Code+Test, approval between phases). Artifacts use **`.sdd/{type}_{slug}_{DDMMYYYY}.md`** (plan/spec/tasks/verify) so multiple runs coexist as history; `server.js /api/plan-state` globs `.sdd` and returns `{phase,slug,date,rel,mtime}` newest-first (legacy fixed names like `plan.md`/`verify-report.md` still match for back-compat). Discovered via `pi.skills` manifest (ships + auto-discovered); `/skill:sdd`. A **right rail** (`#sddbar`) shows the **latest active** set's **phase stepper** (`● reached / ○ pending`, current in accent; the rail hides once a set reaches `verify`, at which point the skill archives the set's files into `.sdd/archive/`) — narrow by default, click a reached phase to expand its doc as rendered markdown (state persists in `localStorage`); todos + quota usage live **only** in their own rail widgets (the in-flow todo panel and header usage bar were removed — W1 moved them fully into the rail). Advisory only (size gate lives in the `description`). |
+| `skills/sdd/` | 4-phase Spec-Driven Dev + TiCoder (Plan→Spec→Impl-Plan→Code+Test, approval between phases). Artifacts use **`.sdd/{type}_{slug}_{DDMMYYYY}.md`** (plan/spec/tasks/verify) so multiple runs coexist as history; `server.js /api/plan-state` globs `.sdd` and returns `{phase,slug,date,rel,mtime}` newest-first (legacy fixed names like `plan.md`/`verify-report.md` still match for back-compat). Discovered via `pi.skills` manifest (ships + auto-discovered); `/skill:sdd`. A **right workspace-tools rail** (`#toolsbar`) shows the **latest active** set's **phase stepper** (`● reached / ○ pending`, current in accent; the rail hides once a set reaches `verify`, at which point the skill archives the set's files into `.sdd/archive/`) — compact by default, click a reached phase to expand its doc as rendered markdown (state persists in `localStorage`); todos + quota usage live **only** in their own rail widgets (the in-flow todo panel and header usage bar were removed — W1 moved them fully into the rail). Advisory only (size gate lives in the `description`). |
 | `extensions/pi_minimal_webui/` | pi extension — see below. |
 | `jetbrains/` | Standalone Gradle plugin (separate project; zero-build invariant preserved). See [`jetbrains/README.md`](jetbrains/README.md). |
 
@@ -156,6 +157,7 @@ entry — these are load-bearing invariants. Numbers match `GOTCHAS.md #N`.
 | workspace switch (`/api/workspace`, `workspace_changed`, `#wsbar`), `PI_WEBUI_NO_SWITCH` | 4, 9 |
 | security: CSRF, DNS-rebinding, `validateLink`, body cap | 10 |
 | asset load order, markdown-it / md.js / highlight, vendor whitelist; **new `public/*.js` module: STATIC entry + IIFE + guarded exports** | 11, 20 |
+| workspace-tools rail, `#toolsbar`, `rail.js`, `pi:rail`, narrow sheet, parity cleanup | 24 |
 | `esc()` HTML escaper, shadowing/drift | 12 |
 | assistant text/thinking streaming, `finalizeBubble`, `message_end`, render bugs | 13 |
 | subagent live view, `partialResult.details`, density toggle | 14 |
@@ -228,14 +230,16 @@ entry — these are load-bearing invariants. Numbers match `GOTCHAS.md #N`.
   collapsible "Context compacted" markers between turns (not a silent gap); the
   pre-compact messages pi dropped from `get_messages` are gone but the marker
   records the boundary.
-- **Session analysis (4.2–4.4)** — Alt+K → "session usage": a modal with
-  cost-per-turn bars, token/cache breakdown, tool + failed-call ranked lists
-  (click a bar/turn → scroll to it). Each assistant turn shows a muted mono
+- **Session analysis (4.2–4.4)** — open the workspace-tools rail's Usage
+  widget (or the "session usage" command): cost-per-turn bars, token/cache
+  breakdown, tool + failed-call ranked lists (click a bar/turn → scroll to it).
+  Each assistant turn shows a muted mono
   `cache-miss · cache-read · output · $cost` strip beneath it. `node
   test/session-analysis.test.js` covers the math.
-- **Git sidebar (4.5/4.6)** — Alt+K → "git status": branch, changed files
-  (+/− counts, status badges), unpushed commits; click a file → colored diff.
-  Commit (message modal) / Push / Discard-all are confirm-gated. Scoped to
+- **Git rail (4.5/4.6)** — open the workspace-tools rail's Git widget (or
+  the "git status" command): branch, changed files (+/− counts, status badges),
+  unpushed commits; click a file → colored diff. Commit (message modal) /
+  Push / Discard-all are confirm-gated. Scoped to
   `PI_CWD`; `node test/git.test.js` covers the porcelain parsers.
 - **Image input (4.10)** — paste or drag-drop an image into the composer;
   thumbnail strip with remove buttons; sends as compressed JPEG base64 (max 4).

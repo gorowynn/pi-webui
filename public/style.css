@@ -3223,11 +3223,45 @@ body.rail-on.rail-open {
 body.rail-on.rail-open #toolsbar {
 	width: var(--rail-width, min(440px, 60vw));
 }
-/* w-mid / w-narrow: the open pane overlays content — the rail keeps its strip
-   reservation (--rail-strip) and never pushes the transcript (spec FR-3.2). */
+/* w-mid / w-narrow: the rail becomes a bottom sheet. Its tab strip moves
+   inside the sheet, so the transcript gets the full width behind it. */
 body.w-mid.rail-on.rail-open,
 body.w-narrow.rail-on.rail-open {
-	margin-right: var(--rail-strip);
+	margin-right: 0;
+}
+body.w-mid.rail-on.rail-open #toolsbar,
+body.w-narrow.rail-on.rail-open #toolsbar {
+	top: auto;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	width: 100vw;
+	height: min(72vh, 560px);
+	height: min(72dvh, 560px);
+	max-height: calc(100dvh - env(safe-area-inset-top));
+	flex-direction: column;
+	border-left: 0;
+	border-top: 1px solid var(--line);
+	box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.28);
+}
+body.w-mid.rail-on.rail-open #toolsbar > .rail-resize,
+body.w-narrow.rail-on.rail-open #toolsbar > .rail-resize {
+	display: none;
+}
+body.w-mid.rail-on.rail-open .tools-rail,
+body.w-narrow.rail-on.rail-open .tools-rail {
+	flex: 0 0 auto;
+	flex-direction: row;
+	padding: 6px 8px;
+	border-left: 0;
+	border-bottom: 1px solid var(--line);
+	overflow-x: auto;
+	overflow-y: hidden;
+}
+body.w-mid.rail-on.rail-open .rail-tab,
+body.w-narrow.rail-on.rail-open .rail-tab {
+	flex: 0 0 64px;
+	width: 64px;
 }
 /* right-rail drag-resize handle (plan 3.5 / U§2.6) — on the bar's left edge;
    width persists via the --rail-width CSS var (set by app.js). Flat surface,

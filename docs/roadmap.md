@@ -61,7 +61,6 @@ from the current work context.
 | U5 | Correct and resilient editable diff | Now | 5 | M | none |
 | U6 | Trustworthy permission policy and approval broker | Now | 5 | L | none; UI reuses U4/U5 |
 | U7 | Security-review remediation and release unblocking | Now | 5 | M | none |
-| W1 | Unified workspace-tools rail | Next | 5 | L | U1, U2 |
 | C1 | Conversation actions and navigation | Next | 5 | M | U2 |
 | G1 | Request-scoped change review and complete Git UI | Next | 5 | M–L | C1, U5 |
 | S1 | Rich session navigation and branch workflow | Next | 4 | M–L | C1, U4 |
@@ -156,7 +155,7 @@ Scope:
 - refresh current session metadata after `agent_end` and rename events;
 - surface `auto_retry_end` and `extension_error` without toast spam;
 - preserve reconnect replay, compaction markers, and multi-tab ordering;
-- define one authoritative client state path before W1/O1 depend on it.
+- define one authoritative client state path before O1 depends on it.
 
 ### U5 — Correct and resilient editable diff
 
@@ -315,26 +314,6 @@ Scope, in remediation order:
 verified as strong" list stands.
 
 ## 5. Next — workbench and workflow
-
-### W1 — Unified workspace-tools rail
-
-**Outcome:** Git, Analysis, Quotas, SDD, and agent Todos share one persistent,
-resizable inspection surface instead of competing modals/footer space.
-
-Scope:
-
-- generalize `#sddbar` into a 44–48px rail plus one active panel;
-- persist active widget, width, and collapse state;
-- add meaningful badges without color-only state;
-- lazy-fetch expensive widget data when opened;
-- migrate SDD first, then Git, Analysis, Quotas, and agent Todos;
-- register each widget with the command palette;
-- show U6 pending/config-error badges and a launcher to the dedicated
-  `#permissions` page; do not squeeze the rule editor into the rail panel;
-- use a focus-trapped drawer/bottom sheet at narrow widths;
-- retain modal fallback until each migration passes its smoke tests.
-
-**Non-goal:** a runtime plugin marketplace. Use an explicit fixed widget table.
 
 ### C1 — Conversation actions and navigation
 

@@ -256,4 +256,14 @@ un-0\session.jsonl` = artifact filename
     Safe (ask only, never loosens), but prompts. Migration: a v1-era user bash
     table should adopt the floor's anchored verb regexes (see
     `DEFAULT_CONFIG.bash` in `policy-engine.js`); the user config at
-    `~/.pi/agent/safeguard.json` (rev 5) is migrated — don't regress it.
+     `~/.pi/agent/safeguard.json` (rev 5) is migrated — don't regress it.
+
+24. **The workspace-tools rail is one persisted, focus-contained surface.**
+    `#toolsbar` owns the fixed SDD/Analysis/Git/Quotas/Todos table; Permissions
+    is a launcher, not a widget. `localStorage["pi:rail"]` is canonical for
+    `{widget,open,width}`; `pi:sddbar` and `pi:rail-width` are migration inputs.
+    In `w-mid`/`w-narrow`, the active panel is a bottom sheet with dialog
+    semantics and a document-level Tab/Escape guard that must restore the rail
+    trigger. Do not reintroduce modal detail routes or Git/token/cost header
+    duplicates after parity is verified; action-specific confirmation modals
+    (such as Git commit) remain allowed.

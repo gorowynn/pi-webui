@@ -377,7 +377,7 @@ filesystem path from a browser chip.
 
 ### Right workspace-tools rail
 
-Generalize `#sddbar` into one rail with one active panel:
+W1 now provides the unified `#toolsbar` surface with one active panel:
 
 - Git;
 - session analysis;
@@ -387,9 +387,10 @@ Generalize `#sddbar` into one rail with one active panel:
 - Permissions status only: pending/config-error badge + launcher to the full
   page, not a rule-editor widget.
 
-A 44–48px collapsed rail is enough for icons/badges. Panels can use a persisted
-280–480px width. At narrow widths they become focus-trapped drawers or bottom
-sheets. Each widget registers a command-palette entry automatically.
+The 44–48px collapsed rail persists `{widget,open,width}` under `pi:rail` and
+keeps each widget's command-palette route aligned with the visible tab. At
+narrow widths the active panel is a focus-contained bottom sheet; detailed Git,
+quota, cost, and todo data stays out of the always-visible statusbar.
 
 ### Permissions page
 

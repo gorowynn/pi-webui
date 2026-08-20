@@ -2350,12 +2350,10 @@ function activeSet() {
 }
 // ---- W1 workspace-tools rail: fixed widget table + shell (spec FR-1..FR-4) ----
 // Five entries, no runtime registration; permissions is a launcher (chunk 4),
-// not a widget. Width persists separately as pi:rail-width (the resize handle
-// owns it); rail state {widget, open} persists via rail.js (pi:rail + one-time
-// legacy pi:sddbar migration).
-// FR-10 migration gates: a palette command opens the rail widget only after
-// its four smokes pass (chunk 9 flips these); the modal stays until then.
-const PARITY = { analysis: false, git: false, quotas: false, todos: false };
+// not a widget. Rail state {widget, open, width} persists via rail.js
+// (pi:rail + one-time pi:sddbar/pi:rail-width migration).
+// W1 parity is complete: all inspection commands open their mounted rail
+// widgets; action-specific confirmation modals (for example Git commit) remain.
 const railState = rail.createRailState();
 const railGen = rail.createGen();
 let railSt = railState.load();
@@ -2364,6 +2362,8 @@ let sddRel = null; // SDD doc pointer (the open artifact)
 let sddInit = false; // restore-once guard so the 30s poll can't reopen a user-closed pane
 let gitBadgeSnap = null; // {changed} once the git widget caches a snapshot (chunk 6) — MUST be let (assigned on fetch)
 let quotaBadgePct = null; // max window pct once the 60s poll resolves — MUST be let (assigned in refreshUsageBar)
+let railReturnFocus = null;
+let railReturnWidget = null;
 
 function sddSummaryFor() {
 	const set = activeSet();
@@ -2377,17 +2377,85 @@ function sddSummaryFor() {
 function widgetVisible(w) {
 	return w.id === "sdd" ? rail.sddVisibility(sddSummaryFor()) : true;
 }
-
-// placeholder render for widgets migrating in chunks 5-7 (temporary, FR-10)
-function placeholderRender(el, label, hint) {
-	setSafeHtml(
-		el,
-		'<p class="w-placeholder">' +
-			esc(label) +
-			" migrates into this rail next. " +
-			esc(hint) +
-			"</p>",
+function railNarrow() {
+	return (
+		document.body.classList.contains("w-mid") ||
+		document.body.classList.contains("w-narrow")
 	);
+}
+function railPanelFocusables() {
+	const pane = document.querySelector("#toolsbar .tools-pane");
+	if (!pane) return [];
+	return Array.from(
+		pane.querySelectorAll(
+			'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+		),
+	).filter((el) => !el.disabled && el.offsetParent !== null);
+}
+function setRailSheetSemantics(open) {
+	const bar = $("toolsbar");
+	if (!bar) return;
+	if (open && railNarrow()) {
+		bar.setAttribute("role", "dialog");
+		bar.setAttribute("aria-modal", "true");
+		bar.setAttribute("aria-labelledby", "tools-title");
+	} else {
+		bar.removeAttribute("role");
+		bar.removeAttribute("aria-modal");
+		bar.removeAttribute("aria-labelledby");
+	}
+}
+function focusRailSheet() {
+	if (!railWidget || !railNarrow()) return;
+	requestAnimationFrame(() => {
+		if (!railWidget || !railNarrow()) return;
+		const first = railPanelFocusables()[0];
+		if (first) first.focus();
+	});
+}
+function restoreRailFocus(widgetId) {
+	const direct = railReturnFocus;
+	if (direct && direct.isConnected && typeof direct.focus === "function") {
+		direct.focus();
+		return;
+	}
+	const nav = $("tools-rail");
+	if (!nav) return;
+	const tabs = Array.from(nav.querySelectorAll('[role="tab"]'));
+	const target =
+		tabs.find((tab) => tab.getAttribute("data-widget") === widgetId) || tabs[0];
+	if (target) target.focus();
+}
+function onRailSheetKey(e) {
+	if (
+		!railWidget ||
+		!railSt.open ||
+		!railNarrow() ||
+		!document.body.classList.contains("rail-open") ||
+		modal.style.display === "flex"
+	)
+		return;
+	if (e.key === "Escape") {
+		e.preventDefault();
+		e.stopImmediatePropagation();
+		closeRail();
+		return;
+	}
+	if (e.key !== "Tab") return;
+	const focusables = railPanelFocusables();
+	if (!focusables.length) return;
+	const first = focusables[0];
+	const last = focusables[focusables.length - 1];
+	if (!focusables.includes(document.activeElement)) {
+		e.preventDefault();
+		(e.shiftKey ? last : first).focus();
+	} else if (e.shiftKey && document.activeElement === first) {
+		e.preventDefault();
+		last.focus();
+	} else if (!e.shiftKey && document.activeElement === last) {
+		e.preventDefault();
+		first.focus();
+	}
 }
 
 const WIDGETS = [
@@ -2526,6 +2594,7 @@ function renderRail(renderPanel = true) {
 		bar.classList.remove("open");
 		document.body.classList.remove("rail-on", "rail-open");
 		railWidget = null;
+		setRailSheetSemantics(false);
 		return;
 	}
 	bar.setAttribute("aria-hidden", "false");
@@ -2544,6 +2613,8 @@ function renderRail(renderPanel = true) {
 		b.className = "rail-tab" + (sel ? " sel" : "");
 		b.setAttribute("role", "tab");
 		b.setAttribute("aria-selected", sel ? "true" : "false");
+		b.setAttribute("aria-controls", "tools-body");
+		b.setAttribute("data-widget", w.id);
 		b.tabIndex = sel ? 0 : -1;
 		b.title = w.label;
 		// selected tab click collapses (keeps the old stepper toggle)
@@ -2597,6 +2668,8 @@ function renderRail(renderPanel = true) {
 		railWidget = open;
 		bar.classList.add("open");
 		document.body.classList.add("rail-open");
+		setRailSheetSemantics(true);
+		$("tools-title").textContent = open.label;
 		open.onOpen(railGen.cur());
 		open.render($("tools-body"));
 		return;
@@ -2605,25 +2678,40 @@ function renderRail(renderPanel = true) {
 		railWidget = null;
 		bar.classList.remove("open");
 		document.body.classList.remove("rail-open");
+		setRailSheetSemantics(false);
 	}
 }
 
 function openRailWidget(id) {
 	const w = WIDGETS.find((x) => x.id === id);
 	if (!w || !widgetVisible(w)) return;
+	const active = document.activeElement;
+	railReturnFocus =
+		active &&
+		typeof active.closest === "function" &&
+		active.closest('#tools-rail [role="tab"]')
+			? active
+			: null;
+	railReturnWidget = id;
 	if (railWidget && railWidget !== w) railWidget.onClose();
 	railWidget = w;
 	railSt = { ...railSt, widget: id, open: true };
 	railState.save(railSt);
 	w.onOpen(railGen.open());
 	renderRail();
+	focusRailSheet();
 }
 function closeRail() {
+	const returnWidget = railReturnWidget || (railWidget && railWidget.id);
+	const shouldRestore = !!returnWidget || !!railReturnFocus;
 	if (railWidget) railWidget.onClose();
 	railWidget = null;
 	railSt = { ...railSt, open: false };
 	railState.save(railSt);
 	renderRail();
+	if (shouldRestore) restoreRailFocus(returnWidget);
+	railReturnFocus = null;
+	railReturnWidget = null;
 }
 
 // W1 auto-refresh (FR-8): the open widget's body re-renders on its declared
@@ -2655,15 +2743,6 @@ function refreshRailWidget(w) {
 }
 function refreshOpenAnalysis() {
 	if (railWidget && railWidget.id === "analysis") refreshRailWidget(railWidget);
-	if (modalFree && card.classList.contains("an-card")) {
-		const st = card.scrollTop;
-		setSafeHtml(
-			card,
-			analysisBody() || '<p class="w-placeholder">no session data yet</p>',
-		);
-		card.scrollTop = st;
-		wireAnalysis(card, hideModal);
-	}
 }
 setInterval(() => {
 	if (railWidget && railRenderDue(railWidget)) refreshRailWidget(railWidget);
@@ -2675,8 +2754,8 @@ function openSddPhase(art) {
 	} catch {}
 	openRailWidget("sdd");
 }
-function closeSddPane() {
-	closeRail(); // legacy name kept for the Esc handler / resize guards
+function closeRailPane() {
+	closeRail();
 }
 
 // W1 FR-5: roving tabindex over the #tools-rail tabs (WAI tabs pattern).
@@ -2700,12 +2779,13 @@ function initRailTabs() {
 			focus(tabs[(cur - 1 + tabs.length) % tabs.length]);
 		else if (e.key === "Home") focus(tabs[0]);
 		else if (e.key === "End") focus(tabs[tabs.length - 1]);
-		else if (e.key === "Esc") {
-			closeSddPane();
+		else if (e.key === "Esc" || e.key === "Escape") {
+			closeRailPane();
 			const selected = railNav.querySelector('[aria-selected="true"]');
 			focus(selected || tabs[0]);
 		}
 	});
+	document.addEventListener("keydown", onRailSheetKey, true);
 }
 initRailTabs();
 function refreshPlanState() {
@@ -2728,7 +2808,7 @@ function refreshPlanState() {
 			}
 			// SDD keeps its poll-sync (doc re-render while open); other widgets
 			// own their refresh policy (chunks 5-7)
-			renderRail(railWidget && railWidget.id === "sdd");
+			renderRail(!railWidget || railWidget.id === "sdd");
 		})
 		.catch(() => {});
 }
@@ -2748,9 +2828,9 @@ async function renderPlanDoc(container, rel) {
 	setSafeHtml(container, md(j.content || "_(empty)_"));
 	highlightCode(container);
 }
-(function initSddBar() {
+(function initToolsBar() {
 	const close = $("tools-close");
-	if (close) close.addEventListener("click", closeSddPane);
+	if (close) close.addEventListener("click", closeRailPane);
 	refreshPlanState();
 	// ponytail: the 30s poll is declared with the other timers below so it joins
 	// the visibilitychange pause/resume (idle-waste fix, c34fb6f family).
@@ -6948,7 +7028,7 @@ function analysisBody() {
 	return parts.join("");
 }
 // wire click→scroll on every [data-mi] inside a container (skip -1
-// placeholders); onJump lets the modal close itself, the rail stay open
+// placeholders); the rail stays open while a jump targets the transcript
 function wireAnalysis(container, onJump) {
 	container.querySelectorAll('[data-mi]:not([data-mi="-1"])').forEach((el) => {
 		el.addEventListener("click", () => {
@@ -6957,12 +7037,6 @@ function wireAnalysis(container, onJump) {
 			setTimeout(() => scrollToMessage(mi), 60);
 		});
 	});
-}
-function showAnalysisModal() {
-	if (!analysisBody()) return;
-	showModal(analysisBody(), true);
-	card.classList.add("an-card");
-	wireAnalysis(card, hideModal);
 }
 function analysisRender(el) {
 	if (!el) return;
@@ -6973,46 +7047,15 @@ function analysisRender(el) {
 	wireAnalysis(el, null); // rail: keep the panel open, just scroll
 }
 
-// ---- git sidebar, read-only (plan 4.5) ----
-// An on-demand modal (Alt+K → 'git status') reviewing the repo without leaving
-// the UI: branch, ahead count, changed files (+/- counts, status badges), and
-// unpushed commits with their files. Click a file → unified diff view (colored
-// +/− lines) with a back button. §6.3: ~60% of git-sidebar value, no mutation risk.
-async function showGitModal() {
-	gitEl = null; // modal mode
-	showModal(
-		'<div class="git"><h3>Git</h3><p class="um-hint">loading…</p></div>',
-		true,
-	);
-	card.classList.add("git-card");
-	let data;
-	try {
-		data = await (await fetch("/api/git")).json();
-	} catch (e) {
-		data = { ok: false, error: e.message };
-	}
-	if (!data.ok) {
-		setSafeHtml(
-			card,
-			'<div class="git"><h3>Git</h3><p class="um-hint">' +
-				esc(data.error || "failed to load") +
-				"</p></div>",
-		);
-		return;
-	}
-	renderGitList(data.snapshot);
-}
-
-// W1 chunk 6: git renders into EITHER the modal card or the rail panel body.
-let gitEl = null; // rail panel target (null = modal mode)
+// ---- git rail ---------------------------------------------------------------
+// The detail, diff, and mutation renderers all target the mounted rail panel.
+let gitEl = null;
 function gEl() {
-	return gitEl || card;
+	return gitEl;
 }
 let gitLastSnap = null; // last list snapshot (back-button re-render)
 function gitBack() {
-	// re-render the last list into the SAME target (rail stays rail)
-	if (gitEl) renderGitList(gitLastSnap);
-	else showGitModal();
+	if (gitLastSnap) renderGitList(gitLastSnap);
 }
 function renderGitList(s) {
 	gitLastSnap = s;
@@ -7267,7 +7310,8 @@ function gitCommitModal() {
 			const r = await gitPost("/api/git/commit", { message: message });
 			if (r.ok) {
 				toast("committed", "ok");
-				showGitModal();
+				hideModal();
+				await gitRefresh();
 			} else {
 				go.disabled = false;
 				toast("commit failed: " + (r.error || "unknown"), "err");
@@ -7335,11 +7379,8 @@ registerCommand(
 	"open the spec-driven development rail widget",
 	() => openRailWidget("sdd"),
 );
-registerCommand(
-	"git",
-	"git status",
-	"review changes & unpushed commits",
-	rail.paletteRoute(PARITY.git, () => openRailWidget("git"), showGitModal),
+registerCommand("git", "git status", "review changes & unpushed commits", () =>
+	openRailWidget("git"),
 );
 registerCommand(
 	"rename-session",
@@ -7351,23 +7392,13 @@ registerCommand(
 	"usage",
 	"session usage",
 	"cost/tool/cache breakdown for this session",
-	rail.paletteRoute(
-		PARITY.analysis,
-		() => openRailWidget("analysis"),
-		showAnalysisModal,
-	),
+	() => openRailWidget("analysis"),
 );
-registerCommand(
-	"quotas",
-	"quota usage",
-	"provider quotas and limits",
-	() => openRailWidget("quotas"), // fully moved to the rail (W1)
+registerCommand("quotas", "quota usage", "provider quotas and limits", () =>
+	openRailWidget("quotas"),
 );
-registerCommand(
-	"todos",
-	"agent todos",
-	"the agent's todo list",
-	() => openRailWidget("todos"), // fully moved to the rail (W1)
+registerCommand("todos", "agent todos", "the agent's todo list", () =>
+	openRailWidget("todos"),
 );
 registerCommand(
 	"scroll-bottom",
@@ -7433,8 +7464,14 @@ function clampRailWidth() {
 	const max = railMaxWidth();
 	if (cur > max) {
 		document.documentElement.style.setProperty("--rail-width", max + "px");
-		localStorage.setItem("pi:rail-width", String(max));
+		persistRailWidth(max);
 	}
+}
+function persistRailWidth(width) {
+	const value = Number(width);
+	if (!Number.isFinite(value)) return;
+	railSt = { ...railSt, width: value };
+	railState.save(railSt);
 }
 function initRailResize() {
 	const bar = $("toolsbar");
@@ -7450,8 +7487,8 @@ function initRailResize() {
 	handle.tabIndex = 0; // focusable separator — keyboard-resizable (a11y FR-6)
 	handle.title = "drag to resize";
 	bar.appendChild(handle);
-	const saved = parseFloat(localStorage.getItem("pi:rail-width"));
-	if (saved >= 240 && saved <= 720)
+	const saved = railSt.width;
+	if (typeof saved === "number")
 		document.documentElement.style.setProperty("--rail-width", saved + "px");
 	clampRailWidth(); // a stale wide save must not exceed the current floor cap
 	let dragging = false,
@@ -7499,7 +7536,7 @@ function initRailResize() {
 		const w = 88 + (pct / 100) * (mx - 88);
 		applyWidth(w);
 		clampRailWidth();
-		localStorage.setItem("pi:rail-width", String(bar.offsetWidth));
+		persistRailWidth(bar.offsetWidth);
 	});
 	const up = () => {
 		if (!dragging) return;
@@ -7508,7 +7545,7 @@ function initRailResize() {
 		document.body.style.userSelect = "";
 		document.body.style.cursor = "";
 		clampRailWidth(); // final safety pass
-		localStorage.setItem("pi:rail-width", String(bar.offsetWidth));
+		persistRailWidth(bar.offsetWidth);
 	};
 	handle.addEventListener("mousedown", (e) => {
 		if (down(e.clientX)) e.preventDefault();
@@ -7533,8 +7570,11 @@ function initRailResize() {
 		{ passive: false },
 	);
 	document.addEventListener("touchend", up);
-	// re-clamp the persisted width when the viewport crosses width modes
-	document.body.addEventListener("widthchange", clampRailWidth);
+	// Re-clamp width and update dialog semantics when the viewport crosses modes.
+	document.body.addEventListener("widthchange", () => {
+		clampRailWidth();
+		setRailSheetSemantics(!!railWidget && railSt.open);
+	});
 }
 initRailResize();
 

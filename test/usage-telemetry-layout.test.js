@@ -63,7 +63,8 @@ for (const id of [
 	assert.match(app, new RegExp('"' + id + '"'));
 assert.match(app, /TURN HISTORY/);
 assert.match(app, /function analysisRender\(el\)[\s\S]*analysisBody\(\)/);
-assert.match(app, /function showAnalysisModal\(\)[\s\S]*analysisBody\(\)/);
+assert.match(app, /openRailWidget\("analysis"\)/);
+assert.doesNotMatch(app, /function showAnalysisModal\(\)/);
 assert.match(app, /pendingApproval/);
 assert.match(app, /payload\.isError/);
 assert.match(

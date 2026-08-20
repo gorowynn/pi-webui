@@ -64,36 +64,34 @@ useful current backlog.
 
 ## 3. Fresh source findings
 
-### 3.1 The right-rail adoption is partial
+### 3.1 The workspace-tools rail is complete
 
-The historical plan described the right-rail widget system, session analysis,
-and Git sidebar as complete. The current source implements only the reusable
-outline of that idea:
+The W1 migration now has the persistent multi-widget shape described by the
+comparison:
 
-- `public/index.html` has a single-purpose `#sddbar`;
-- `showAnalysisModal()` in `public/app.js` renders analysis into the shared modal;
-- `showGitModal()` renders Git into the shared modal;
-- `initRailResize()` still describes SDD as the rail for "future" widgets.
+- `public/index.html` exposes `#toolsbar` with a fixed five-widget tab rail;
+- `public/rail.js` owns canonical state, legacy migration, generation stamps,
+  badges, and SDD visibility;
+- `public/app.js` mounts one active panel, lazy-refreshes Git/Quotas, and routes
+  Analysis, Git, Quotas, and Todos commands to the rail;
+- narrow `w-mid`/`w-narrow` layouts use a contained bottom sheet with focus
+  trapping and trigger restoration; Permissions remains a dedicated page.
 
-pi-livecraft's `src/features/right-sidebar/RightSidebar.tsx` is materially
-richer: one persistent panel hosts Analysis, Git, Quotas, and Todos; a narrow
-rail provides badges and custom actions; width, active widget, and collapse
-state persist independently.
-
-**Conclusion:** generalize the existing SDD rail instead of considering this
-adoption complete.
+The remaining analysis-freshness concern in §3.2 is separate from rail shape:
+its renderer still depends on the existing live-message model and should be
+addressed with the U4/A1 work rather than by adding another widget state path.
 
 ### 3.2 Session analysis can be stale
 
 `lastMessages` is assigned by `applyMessages()` during snapshot/bootstrap.
 Live `message_end` and `tool_execution_end` events update the DOM but do not
-update that message array. `showAnalysisModal()` analyzes `lastMessages`, so a
+update that message array. The Usage rail widget analyzes `lastMessages`, so a
 turn completed after bootstrap can be absent until a reconnect, session switch,
 or reload performs another snapshot.
 
-Fix this before making analysis a live rail widget. Maintain one canonical
-client message model, or fetch only current messages after `agent_end` without
-rerendering the transcript.
+Fix this as part of U4/A1: maintain one canonical client message model, or fetch
+only current messages after `agent_end` without rerendering the transcript. The
+rail migration deliberately leaves that data-freshness concern separate.
 
 ### 3.3 Main Pi JSONL records are capped too low and fail silently
 
@@ -178,31 +176,20 @@ dialog still lacks pi-webui's policy/diff semantics; U6 owns those.
 
 ### P1 — workbench structure and productivity
 
-#### 4.1 Unified workspace-tools rail
+#### 4.1 Unified workspace-tools rail — delivered 2026-08-20
 
-Generalize `#sddbar` into a compact rail plus one active panel. Initial widgets:
+The comparison's rail recommendation is now implemented as `#toolsbar` with
+one active panel and fixed SDD, Git, Session analysis, provider-quota, and
+agent-todo widgets. Badges cover Git changes, analysis failures, quota pressure,
+todo count, and SDD phase/chunk state; Permissions remains a launcher to its
+full page.
 
-- SDD;
-- Git;
-- Session analysis;
-- provider-quota details;
-- the existing agent-owned todo panel.
-
-Useful badges:
-
-- Git: changed files + unpushed commits;
-- Analysis: failed tool calls;
-- Quotas: remaining percentage or stale state;
-- Todos: unfinished count;
-- SDD: active phase/chunk.
-
-Persist width, active widget, and collapse state. Register each widget in the
-existing command registry. On narrow screens and in slim JCEF tool windows,
-render the active panel as a drawer or bottom sheet rather than squeezing a
-three-column layout.
-
-This is also the cleanest solution to status-bar density: detailed Git, quota,
-cost, cache, and todo information can leave the always-visible footer.
+`public/rail.js` persists `{widget,open,width}` under `pi:rail` and registers
+all widget routes through the existing command registry. On narrow screens and
+slim JCEF tool windows, the active panel is a focus-contained bottom sheet
+rather than a squeezed three-column layout. Detailed Git, quota, cost, and todo
+information has left the always-visible statusbar; only action confirmations
+remain modal.
 
 #### 4.2 Composer productivity
 

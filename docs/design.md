@@ -189,9 +189,10 @@ second typeface.
   strip with visible icon + text labels and readable status badges. Native hover
   titles and accessible names remain as a fallback; selected state is a soft
   background + accent icon with a quiet boundary, never a side stripe. The
-  selected tab opens a roomier calm inset detail pane with a prominent Usage
-  summary when selected. Its graph is headed `TURN HISTORY`, keeps the last
-  100 billed model turns, and overlays per-turn context usage.
+  selected tab opens a roomier calm inset detail pane; on mid/narrow widths it
+  becomes a contained bottom sheet with trapped focus and an Escape/close path
+  that restores the rail trigger. The Usage view is headed `TURN HISTORY`,
+  keeps the last 100 billed model turns, and overlays per-turn context usage.
 - **Conversation density:** the header control cycles **Focus → Balanced → Trace**;
   **Balanced** is the default. Focus hides successful tool work but keeps failures,
   Balanced collapses each turn's tool activity to a summary, and Trace exposes raw

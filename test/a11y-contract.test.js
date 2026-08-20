@@ -253,16 +253,55 @@ assert.ok(
 );
 // NB: substring 'roving' matches "approving" — assert the real handler symbol
 assert.ok(
-	app.includes("function initRailTabs") && app.includes("document.activeElement"),
+	app.includes("function initRailTabs") &&
+		app.includes("document.activeElement"),
 	"roving tabindex handler exists (initRailTabs)",
 );
-for (const key of ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"]) {
+for (const key of [
+	"ArrowRight",
+	"ArrowDown",
+	"ArrowLeft",
+	"ArrowUp",
+	"Home",
+	"End",
+]) {
 	assert.ok(app.includes(`e.key === "${key}"`), `rail tabs handle ${key}`);
 }
 assert.ok(
-	app.includes('e.key === "Esc"') && app.includes("closeSddPane()"),
+	app.includes('e.key === "Esc"') && app.includes("closeRailPane()"),
 	"Esc closes the tools panel",
 );
+
+// ---- W1 finish FR-1..FR-3: narrow sheet focus lifecycle --------------------
+assert.ok(
+	app.includes("function onRailSheetKey") &&
+		app.includes('e.key === "Escape"') &&
+		app.includes('e.key !== "Tab"') &&
+		app.includes("e.shiftKey") &&
+		app.includes("stopImmediatePropagation"),
+	"narrow rail traps Escape and Tab",
+);
+assert.ok(
+	app.includes("railPanelFocusables()") &&
+		app.includes("restoreRailFocus") &&
+		app.includes("railReturnFocus"),
+	"narrow rail stores and restores focus",
+);
+assert.ok(
+	app.includes('bar.setAttribute("role", "dialog")') &&
+		app.includes('bar.setAttribute("aria-modal", "true")') &&
+		app.includes('bar.setAttribute("aria-labelledby", "tools-title")'),
+	"narrow rail exposes labelled dialog semantics",
+);
+assert.ok(
+	css.includes("body.w-narrow.rail-on.rail-open #toolsbar") &&
+		css.includes("flex-direction: column") &&
+		css.includes("overflow-x: auto"),
+	"narrow rail uses a contained bottom-sheet layout",
+);
+for (const id of ["sb-git", "sb-tok", "sb-cost"]) {
+	assert.ok(!html.includes(`id="${id}"`), `${id} retired after rail parity`);
+}
 
 assert.ok(app.includes('role="feed"'), "transcript feed wrapper exists");
 assert.ok(
