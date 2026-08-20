@@ -4728,6 +4728,9 @@ function updateCtxMeter(cu) {
 			ctxLabel.textContent = `${p.toFixed(0)}% (${fmt(cu.tokens)}/${fmt(
 				cu.contextWindow,
 			)})`;
+	} else {
+		document.documentElement.style.setProperty("--ctx-pct", "0%");
+		if (ctxLabel) ctxLabel.textContent = "context —";
 	}
 }
 function applyState(data) {

@@ -1,5 +1,3 @@
-
-
 const crypto = require("node:crypto");
 
 const DEFAULT_MAX_PAYLOAD = 2 * 1024 * 1024;
@@ -27,7 +25,16 @@ function asBuffer(payload) {
 }
 
 function validateOpcode(opcode) {
-	if (![OPCODE_CONTINUATION, OPCODE_TEXT, OPCODE_BINARY, OPCODE_CLOSE, OPCODE_PING, OPCODE_PONG].includes(opcode)) {
+	if (
+		![
+			OPCODE_CONTINUATION,
+			OPCODE_TEXT,
+			OPCODE_BINARY,
+			OPCODE_CLOSE,
+			OPCODE_PING,
+			OPCODE_PONG,
+		].includes(opcode)
+	) {
 		throw new CdpProtocolError(`unsupported WebSocket opcode: ${opcode}`);
 	}
 }
@@ -43,7 +50,9 @@ function encodeFrame(payload, options = {}) {
 	const mask = options.mask !== false;
 	validateOpcode(opcode);
 	if (isControl(opcode) && (!fin || data.length > CONTROL_MAX_PAYLOAD)) {
-		throw new CdpProtocolError("WebSocket control frames must be final and <= 125 bytes");
+		throw new CdpProtocolError(
+			"WebSocket control frames must be final and <= 125 bytes",
+		);
 	}
 
 	let lengthBytes;
@@ -67,10 +76,12 @@ function encodeFrame(payload, options = {}) {
 	lengthBytes.copy(header, 2);
 
 	if (!mask) return Buffer.concat([header, data]);
-	const key = options.maskingKey == null
-		? crypto.randomBytes(4)
-		: asBuffer(options.maskingKey);
-	if (key.length !== 4) throw new CdpProtocolError("WebSocket masking key must be 4 bytes");
+	const key =
+		options.maskingKey == null
+			? crypto.randomBytes(4)
+			: asBuffer(options.maskingKey);
+	if (key.length !== 4)
+		throw new CdpProtocolError("WebSocket masking key must be 4 bytes");
 	key.copy(header, 2 + lengthBytes.length);
 	const masked = Buffer.allocUnsafe(data.length);
 	for (let i = 0; i < data.length; i++) masked[i] = data[i] ^ key[i % 4];
@@ -79,17 +90,21 @@ function encodeFrame(payload, options = {}) {
 
 function decodeClosePayload(payload) {
 	if (payload.length === 0) return { code: null, reason: "" };
-	if (payload.length === 1) throw new CdpProtocolError("WebSocket close payload has one byte");
+	if (payload.length === 1)
+		throw new CdpProtocolError("WebSocket close payload has one byte");
 	const code = payload.readUInt16BE(0);
 	const validCode =
 		code === 1000 ||
 		(code >= 1001 && code <= 1003) ||
 		(code >= 1007 && code <= 1014) ||
 		(code >= 3000 && code <= 4999);
-	if (!validCode) throw new CdpProtocolError(`invalid WebSocket close code: ${code}`);
+	if (!validCode)
+		throw new CdpProtocolError(`invalid WebSocket close code: ${code}`);
 	let reason = "";
 	try {
-		reason = new (require("node:util").TextDecoder)("utf-8", { fatal: true }).decode(payload.subarray(2));
+		reason = new (require("node:util").TextDecoder)("utf-8", {
+			fatal: true,
+		}).decode(payload.subarray(2));
 	} catch {
 		throw new CdpProtocolError("WebSocket close reason is not valid UTF-8");
 	}
@@ -122,12 +137,14 @@ class FrameDecoder {
 		if (this.buffer.length < 2) return null;
 		const first = this.buffer[0];
 		const second = this.buffer[1];
-		if ((first & 0x70) !== 0) throw new CdpProtocolError("WebSocket reserved bits are set");
+		if ((first & 0x70) !== 0)
+			throw new CdpProtocolError("WebSocket reserved bits are set");
 		const fin = (first & 0x80) !== 0;
 		const opcode = first & 0x0f;
 		validateOpcode(opcode);
 		const masked = (second & 0x80) !== 0;
-		if (masked && !this.allowMasked) throw new CdpProtocolError("masked server frame");
+		if (masked && !this.allowMasked)
+			throw new CdpProtocolError("masked server frame");
 		const shortLength = second & 0x7f;
 		let headerLength = 2;
 		let payloadLength;
@@ -141,15 +158,23 @@ class FrameDecoder {
 			headerLength += 8;
 			if (this.buffer.length < headerLength) return null;
 			const length = this.buffer.readBigUInt64BE(2);
-			if ((length & 0x8000000000000000n) !== 0n || length > BigInt(this.maxPayload)) {
-				throw new CdpProtocolError("WebSocket payload length exceeds the configured cap");
+			if (
+				(length & 0x8000000000000000n) !== 0n ||
+				length > BigInt(this.maxPayload)
+			) {
+				throw new CdpProtocolError(
+					"WebSocket payload length exceeds the configured cap",
+				);
 			}
 			payloadLength = Number(length);
 		}
 		if (isControl(opcode) && (!fin || payloadLength > CONTROL_MAX_PAYLOAD)) {
 			throw new CdpProtocolError("invalid WebSocket control frame");
 		}
-		if (payloadLength > this.maxPayload) throw new CdpProtocolError("WebSocket payload exceeds the configured cap");
+		if (payloadLength > this.maxPayload)
+			throw new CdpProtocolError(
+				"WebSocket payload exceeds the configured cap",
+			);
 		const maskLength = masked ? 4 : 0;
 		const total = headerLength + maskLength + payloadLength;
 		if (this.buffer.length < total) return null;
@@ -163,15 +188,18 @@ class FrameDecoder {
 		} else {
 			const key = this.buffer.subarray(maskOffset, payloadOffset);
 			payload = Buffer.allocUnsafe(payloadLength);
-			for (let i = 0; i < payloadLength; i++) payload[i] = source[i] ^ key[i % 4];
+			for (let i = 0; i < payloadLength; i++)
+				payload[i] = source[i] ^ key[i % 4];
 		}
 		this.buffer = this.buffer.subarray(total);
 		return { fin, opcode, payload };
 	}
 
 	finish() {
-		if (this.buffer.length) throw new CdpProtocolError("truncated WebSocket frame");
-		if (this.fragmentOpcode != null) throw new CdpProtocolError("truncated fragmented WebSocket message");
+		if (this.buffer.length)
+			throw new CdpProtocolError("truncated WebSocket frame");
+		if (this.fragmentOpcode != null)
+			throw new CdpProtocolError("truncated fragmented WebSocket message");
 	}
 
 	#accept(frame, events) {
@@ -183,16 +211,23 @@ class FrameDecoder {
 			return events.push({ type: "close", payload, ...close });
 		}
 		if (opcode === OPCODE_CONTINUATION) {
-			if (this.fragmentOpcode == null) throw new CdpProtocolError("unexpected WebSocket continuation frame");
+			if (this.fragmentOpcode == null)
+				throw new CdpProtocolError("unexpected WebSocket continuation frame");
 		} else {
-			if (this.fragmentOpcode != null) throw new CdpProtocolError("new WebSocket data frame during fragmentation");
+			if (this.fragmentOpcode != null)
+				throw new CdpProtocolError(
+					"new WebSocket data frame during fragmentation",
+				);
 			if (opcode !== OPCODE_TEXT && opcode !== OPCODE_BINARY) {
 				throw new CdpProtocolError("invalid WebSocket data opcode");
 			}
 			this.fragmentOpcode = opcode;
 		}
 		this.fragmentBytes += payload.length;
-		if (this.fragmentBytes > this.maxPayload) throw new CdpProtocolError("fragmented WebSocket message exceeds the configured cap");
+		if (this.fragmentBytes > this.maxPayload)
+			throw new CdpProtocolError(
+				"fragmented WebSocket message exceeds the configured cap",
+			);
 		this.fragments.push(payload);
 		if (!fin) return;
 		const message = Buffer.concat(this.fragments, this.fragmentBytes);
@@ -204,7 +239,8 @@ class FrameDecoder {
 			type: "message",
 			opcode: messageOpcode,
 			payload: message,
-			text: messageOpcode === OPCODE_TEXT ? message.toString("utf8") : undefined,
+			text:
+				messageOpcode === OPCODE_TEXT ? message.toString("utf8") : undefined,
 		});
 	}
 }
@@ -238,12 +274,17 @@ function httpJson(url, options = {}) {
 	try {
 		parsed = new URL(url);
 	} catch {
-		return Promise.reject(cdpError("target-unavailable", "CDP discovery URL is invalid"));
+		return Promise.reject(
+			cdpError("target-unavailable", "CDP discovery URL is invalid"),
+		);
 	}
 	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-		return Promise.reject(cdpError("target-unavailable", "CDP discovery requires HTTP(S)"));
+		return Promise.reject(
+			cdpError("target-unavailable", "CDP discovery requires HTTP(S)"),
+		);
 	}
-	const client = parsed.protocol === "https:" ? require("node:https") : require("node:http");
+	const client =
+		parsed.protocol === "https:" ? require("node:https") : require("node:http");
 	const timeoutMs = options.timeoutMs ?? DEFAULT_HTTP_TIMEOUT;
 	const maxBytes = options.maxBytes ?? DEFAULT_MAX_JSON_BYTES;
 	return new Promise((resolve, reject) => {
@@ -263,7 +304,12 @@ function httpJson(url, options = {}) {
 				bytes += chunk.length;
 				if (bytes > maxBytes) {
 					request.destroy();
-					finish(cdpError("output-limit", "CDP discovery response exceeds its limit"));
+					finish(
+						cdpError(
+							"output-limit",
+							"CDP discovery response exceeds its limit",
+						),
+					);
 					return;
 				}
 				chunks.push(chunk);
@@ -271,18 +317,31 @@ function httpJson(url, options = {}) {
 			response.on("end", () => {
 				if (settled) return;
 				if (response.statusCode !== 200) {
-					finish(cdpError("target-unavailable", `CDP discovery returned HTTP ${response.statusCode || 0}`));
+					finish(
+						cdpError(
+							"target-unavailable",
+							`CDP discovery returned HTTP ${response.statusCode || 0}`,
+						),
+					);
 					return;
 				}
 				try {
 					finish(null, JSON.parse(Buffer.concat(chunks).toString("utf8")));
 				} catch {
-					finish(cdpError("cdp-protocol", "CDP discovery returned invalid JSON"));
+					finish(
+						cdpError("cdp-protocol", "CDP discovery returned invalid JSON"),
+					);
 				}
 			});
 		});
 		request.once("error", (error) => {
-			if (!settled) finish(cdpError("target-unavailable", `CDP discovery failed: ${error.message}`));
+			if (!settled)
+				finish(
+					cdpError(
+						"target-unavailable",
+						`CDP discovery failed: ${error.message}`,
+					),
+				);
 		});
 		request.setTimeout(timeoutMs, () => {
 			request.destroy();
@@ -316,9 +375,13 @@ async function discoverTarget(endpoint, options = {}) {
 	const root = `${base.origin}`;
 	await httpJson(`${root}/json/version`, options);
 	const targets = await httpJson(`${root}/json/list`, options);
-	if (!Array.isArray(targets)) throw cdpError("target-unavailable", "CDP target list is invalid");
+	if (!Array.isArray(targets))
+		throw cdpError("target-unavailable", "CDP target list is invalid");
 	const target = targets.find(
-		(item) => item && item.type === "page" && typeof item.webSocketDebuggerUrl === "string",
+		(item) =>
+			item &&
+			item.type === "page" &&
+			typeof item.webSocketDebuggerUrl === "string",
 	);
 	if (!target) throw cdpError("target-unavailable", "CDP has no page target");
 	return {
@@ -335,14 +398,22 @@ function connectWebSocket(target, options = {}) {
 	try {
 		ws = new URL(target.webSocketDebuggerUrl);
 	} catch {
-		return Promise.reject(cdpError("target-unavailable", "CDP target has an invalid WebSocket URL"));
+		return Promise.reject(
+			cdpError("target-unavailable", "CDP target has an invalid WebSocket URL"),
+		);
 	}
 	if (ws.protocol !== "ws:" && ws.protocol !== "wss:") {
-		return Promise.reject(cdpError("target-unavailable", "CDP target has an invalid WebSocket URL"));
+		return Promise.reject(
+			cdpError("target-unavailable", "CDP target has an invalid WebSocket URL"),
+		);
 	}
-	const client = ws.protocol === "wss:" ? require("node:https") : require("node:http");
+	const client =
+		ws.protocol === "wss:" ? require("node:https") : require("node:http");
 	const key = crypto.randomBytes(16).toString("base64");
-	const expectedAccept = crypto.createHash("sha1").update(key + WS_GUID).digest("base64");
+	const expectedAccept = crypto
+		.createHash("sha1")
+		.update(key + WS_GUID)
+		.digest("base64");
 	const timeoutMs = options.handshakeTimeoutMs ?? DEFAULT_HTTP_TIMEOUT;
 	return new Promise((resolve, reject) => {
 		let settled = false;
@@ -354,32 +425,48 @@ function connectWebSocket(target, options = {}) {
 			if (error) reject(error);
 			else resolve(session);
 		};
-		const request = client.request({
-			protocol: ws.protocol === "wss:" ? "https:" : "http:",
-			hostname: ws.hostname,
-			port: ws.port || (ws.protocol === "wss:" ? 443 : 80),
-			path: `${ws.pathname || "/"}${ws.search}`,
-			headers: {
-				Connection: "Upgrade",
-				Upgrade: "websocket",
-				Host: ws.host,
-				"Sec-WebSocket-Version": "13",
-				"Sec-WebSocket-Key": key,
+		const request = client.request(
+			{
+				protocol: ws.protocol === "wss:" ? "https:" : "http:",
+				hostname: ws.hostname,
+				port: ws.port || (ws.protocol === "wss:" ? 443 : 80),
+				path: `${ws.pathname || "/"}${ws.search}`,
+				headers: {
+					Connection: "Upgrade",
+					Upgrade: "websocket",
+					Host: ws.host,
+					"Sec-WebSocket-Version": "13",
+					"Sec-WebSocket-Key": key,
+				},
 			},
-		}, (response) => {
-			response.resume();
-			finish(cdpError("target-unavailable", `CDP WebSocket upgrade returned HTTP ${response.statusCode || 0}`));
-		});
+			(response) => {
+				response.resume();
+				finish(
+					cdpError(
+						"target-unavailable",
+						`CDP WebSocket upgrade returned HTTP ${response.statusCode || 0}`,
+					),
+				);
+			},
+		);
 		request.once("upgrade", (response, socket, head) => {
 			if (response.headers["sec-websocket-accept"] !== expectedAccept) {
 				socket.destroy();
-				finish(cdpError("cdp-protocol", "CDP WebSocket handshake was rejected"));
+				finish(
+					cdpError("cdp-protocol", "CDP WebSocket handshake was rejected"),
+				);
 				return;
 			}
 			finish(null, new CdpSession(socket, head, options));
 		});
 		request.once("error", (error) => {
-			if (!settled) finish(cdpError("target-unavailable", `CDP WebSocket failed: ${error.message}`));
+			if (!settled)
+				finish(
+					cdpError(
+						"target-unavailable",
+						`CDP WebSocket failed: ${error.message}`,
+					),
+				);
 		});
 		request.setTimeout(timeoutMs, () => {
 			request.destroy();
@@ -404,7 +491,9 @@ function connectWebSocket(target, options = {}) {
 class CdpSession {
 	constructor(socket, head, options = {}) {
 		this.socket = socket;
-		this.decoder = new FrameDecoder({ maxPayload: options.maxPayload ?? DEFAULT_MAX_PAYLOAD });
+		this.decoder = new FrameDecoder({
+			maxPayload: options.maxPayload ?? DEFAULT_MAX_PAYLOAD,
+		});
 		this.commandTimeoutMs = options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT;
 		this.pending = new Map();
 		this.listeners = new Map();
@@ -412,7 +501,10 @@ class CdpSession {
 		this.closed = false;
 		this.closePromise = null;
 		this.onData = (chunk) => this.#handleData(chunk);
-		this.onError = (error) => this.#fail(cdpError("cdp-protocol", `CDP socket failed: ${error.message}`));
+		this.onError = (error) =>
+			this.#fail(
+				cdpError("cdp-protocol", `CDP socket failed: ${error.message}`),
+			);
 		this.onClose = () => this.#fail(closedError());
 		socket.on("data", this.onData);
 		socket.once("error", this.onError);
@@ -422,7 +514,8 @@ class CdpSession {
 	}
 
 	on(eventName, handler) {
-		if (typeof handler !== "function") throw new TypeError("CDP event handler must be a function");
+		if (typeof handler !== "function")
+			throw new TypeError("CDP event handler must be a function");
 		let handlers = this.listeners.get(eventName);
 		if (!handlers) {
 			handlers = new Set();
@@ -436,8 +529,14 @@ class CdpSession {
 	}
 
 	command(method, params = {}, signal, options = {}) {
-		if (typeof method !== "string" || !method) return Promise.reject(cdpError("cdp-protocol", "CDP method is required"));
-		return this.#commandNow(method, params, signal, options.timeoutMs ?? this.commandTimeoutMs);
+		if (typeof method !== "string" || !method)
+			return Promise.reject(cdpError("cdp-protocol", "CDP method is required"));
+		return this.#commandNow(
+			method,
+			params,
+			signal,
+			options.timeoutMs ?? this.commandTimeoutMs,
+		);
 	}
 
 	#commandNow(method, params, signal, timeoutMs) {
@@ -477,7 +576,9 @@ class CdpSession {
 		try {
 			for (const event of this.decoder.push(chunk)) {
 				if (event.type === "ping") {
-					this.socket.write(encodeFrame(event.payload, { opcode: OPCODE_PONG }));
+					this.socket.write(
+						encodeFrame(event.payload, { opcode: OPCODE_PONG }),
+					);
 				} else if (event.type === "close") {
 					this.#fail(cdpError("cdp-protocol", "CDP peer closed the transport"));
 				} else if (event.type === "message") {
@@ -496,18 +597,25 @@ class CdpSession {
 		} catch {
 			throw new CdpProtocolError("CDP message is not valid JSON");
 		}
-		if (!message || typeof message !== "object") throw new CdpProtocolError("CDP message is not an object");
+		if (!message || typeof message !== "object")
+			throw new CdpProtocolError("CDP message is not an object");
 		if (message.id != null) {
 			const pending = this.pending.get(message.id);
 			if (!pending) return;
 			if (message.error) {
-				pending.settle(cdpError("cdp-protocol", message.error.message || "CDP command failed"));
+				pending.settle(
+					cdpError(
+						"cdp-protocol",
+						message.error.message || "CDP command failed",
+					),
+				);
 			} else {
 				pending.settle(null, message.result);
 			}
 			return;
 		}
-		if (typeof message.method !== "string") throw new CdpProtocolError("CDP event has no method");
+		if (typeof message.method !== "string")
+			throw new CdpProtocolError("CDP event has no method");
 		for (const handler of this.listeners.get(message.method) || []) {
 			try {
 				handler(message.params);
@@ -533,7 +641,9 @@ class CdpSession {
 			for (const { settle } of this.pending.values()) settle(closedError());
 			this.pending.clear();
 			try {
-				this.socket.write(encodeFrame(Buffer.from([0x03, 0xe8]), { opcode: OPCODE_CLOSE }));
+				this.socket.write(
+					encodeFrame(Buffer.from([0x03, 0xe8]), { opcode: OPCODE_CLOSE }),
+				);
 			} catch {
 				// The peer is already gone; cleanup below is still sufficient.
 			}

@@ -1,5 +1,3 @@
-
-
 const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const net = require("node:net");
@@ -16,7 +14,9 @@ function browserError(code, message) {
 }
 
 function normalizeHost(host) {
-	let value = String(host || "").trim().toLowerCase();
+	let value = String(host || "")
+		.trim()
+		.toLowerCase();
 	if (value.startsWith("[") && value.endsWith("]")) value = value.slice(1, -1);
 	return value;
 }
@@ -30,11 +30,23 @@ function parseAllowedHosts(value) {
 	const hosts = new Set();
 	for (const raw of String(value).split(",")) {
 		const host = normalizeHost(raw);
-		if (!host || host.includes("*") || host.includes("/") || host.includes("@")) {
-			throw browserError("disallowed-host", "PI_BROWSER_ALLOWED_HOSTS contains an invalid host");
+		if (
+			!host ||
+			host.includes("*") ||
+			host.includes("/") ||
+			host.includes("@")
+		) {
+			throw browserError(
+				"disallowed-host",
+				"PI_BROWSER_ALLOWED_HOSTS contains an invalid host",
+			);
 		}
 		if (host.includes(":")) {
-			if (host !== "::1") throw browserError("disallowed-host", "PI_BROWSER_ALLOWED_HOSTS accepts hostnames, not ports");
+			if (host !== "::1")
+				throw browserError(
+					"disallowed-host",
+					"PI_BROWSER_ALLOWED_HOSTS accepts hostnames, not ports",
+				);
 		}
 		hosts.add(host);
 	}
@@ -51,11 +63,19 @@ function validateBrowserUrl(raw, allowedHosts = []) {
 	if (url.protocol !== "http:" && url.protocol !== "https:") {
 		throw browserError("invalid-url", "browser URL must use HTTP(S)");
 	}
-	if (url.username || url.password) throw browserError("invalid-url", "browser URL credentials are not allowed");
+	if (url.username || url.password)
+		throw browserError(
+			"invalid-url",
+			"browser URL credentials are not allowed",
+		);
 	const hostname = normalizeHost(url.hostname);
-	const extra = allowedHosts instanceof Set ? allowedHosts : new Set(allowedHosts);
+	const extra =
+		allowedHosts instanceof Set ? allowedHosts : new Set(allowedHosts);
 	if (!isLoopbackHost(hostname) && !extra.has(hostname)) {
-		throw browserError("disallowed-host", `browser host is not allowed: ${hostname}`);
+		throw browserError(
+			"disallowed-host",
+			`browser host is not allowed: ${hostname}`,
+		);
 	}
 	return { url: url.toString(), hostname };
 }
@@ -68,20 +88,32 @@ function validateCdpEndpoint(raw) {
 		throw browserError("invalid-cdp-endpoint", "PI_BROWSER_CDP_URL is invalid");
 	}
 	if (url.protocol !== "http:" && url.protocol !== "https:") {
-		throw browserError("invalid-cdp-endpoint", "PI_BROWSER_CDP_URL must use HTTP(S)");
+		throw browserError(
+			"invalid-cdp-endpoint",
+			"PI_BROWSER_CDP_URL must use HTTP(S)",
+		);
 	}
 	if (url.username || url.password || !isLoopbackHost(url.hostname)) {
-		throw browserError("invalid-cdp-endpoint", "PI_BROWSER_CDP_URL must be loopback without credentials");
+		throw browserError(
+			"invalid-cdp-endpoint",
+			"PI_BROWSER_CDP_URL must be loopback without credentials",
+		);
 	}
 	return url.toString();
 }
 
 function readBrowserConfig(env = process.env) {
-	const cdpUrl = env.PI_BROWSER_CDP_URL ? validateCdpEndpoint(env.PI_BROWSER_CDP_URL) : null;
+	const cdpUrl = env.PI_BROWSER_CDP_URL
+		? validateCdpEndpoint(env.PI_BROWSER_CDP_URL)
+		: null;
 	return {
 		binary: env.PI_BROWSER_BIN ? String(env.PI_BROWSER_BIN).trim() : "",
 		cdpUrl,
-		headless: TRUTHY.has(String(env.PI_BROWSER_HEADLESS || "").trim().toLowerCase()),
+		headless: TRUTHY.has(
+			String(env.PI_BROWSER_HEADLESS || "")
+				.trim()
+				.toLowerCase(),
+		),
 		allowedHosts: parseAllowedHosts(env.PI_BROWSER_ALLOWED_HOSTS),
 	};
 }
@@ -118,7 +150,9 @@ function browserCandidates(env = process.env) {
 
 function resolveBrowserBinary(config = {}, fsImpl = fs) {
 	const explicit = config.binary || config.PI_BROWSER_BIN || "";
-	const candidates = explicit ? [explicit] : browserCandidates(config.env || process.env);
+	const candidates = explicit
+		? [explicit]
+		: browserCandidates(config.env || process.env);
 	for (const candidate of candidates) {
 		try {
 			if (fsImpl.statSync(candidate).isFile()) return candidate;
@@ -126,13 +160,23 @@ function resolveBrowserBinary(config = {}, fsImpl = fs) {
 			// Continue through conservative known candidates.
 		}
 	}
-	if (explicit) throw browserError("browser-unavailable", "PI_BROWSER_BIN does not point to a browser binary");
-	throw browserError("browser-unavailable", "no Chromium or Edge browser binary was found");
+	if (explicit)
+		throw browserError(
+			"browser-unavailable",
+			"PI_BROWSER_BIN does not point to a browser binary",
+		);
+	throw browserError(
+		"browser-unavailable",
+		"no Chromium or Edge browser binary was found",
+	);
 }
 
 function buildLaunchArgs({ profileDir, port, headless = false }) {
 	if (!profileDir || !Number.isInteger(port) || port < 1 || port > 65535) {
-		throw browserError("browser-unavailable", "managed browser launch settings are invalid");
+		throw browserError(
+			"browser-unavailable",
+			"managed browser launch settings are invalid",
+		);
 	}
 	const args = [
 		`--user-data-dir=${profileDir}`,
@@ -160,7 +204,9 @@ function reserveLoopbackPort() {
 async function launchManagedBrowser(config = {}, deps = {}) {
 	const fsPromises = deps.fsPromises || fs.promises;
 	const mkdtemp = deps.mkdtemp || ((prefix) => fsPromises.mkdtemp(prefix));
-	const remove = deps.remove || ((dir) => fsPromises.rm(dir, { recursive: true, force: true }));
+	const remove =
+		deps.remove ||
+		((dir) => fsPromises.rm(dir, { recursive: true, force: true }));
 	const spawn = deps.spawn || childProcess.spawn;
 	const reservePort = deps.reservePort || reserveLoopbackPort;
 	const binary = config.binary || resolveBrowserBinary(config, deps.fs || fs);
@@ -168,9 +214,21 @@ async function launchManagedBrowser(config = {}, deps = {}) {
 	let child;
 	try {
 		const port = await reservePort();
-		const args = buildLaunchArgs({ profileDir, port, headless: config.headless });
-		child = spawn(binary, args, { stdio: "ignore", detached: false, windowsHide: true });
-		if (!child || !child.pid) throw browserError("browser-unavailable", "managed browser did not start");
+		const args = buildLaunchArgs({
+			profileDir,
+			port,
+			headless: config.headless,
+		});
+		child = spawn(binary, args, {
+			stdio: "ignore",
+			detached: false,
+			windowsHide: true,
+		});
+		if (!child || !child.pid)
+			throw browserError(
+				"browser-unavailable",
+				"managed browser did not start",
+			);
 		return {
 			ownership: "managed",
 			binary,
@@ -184,7 +242,9 @@ async function launchManagedBrowser(config = {}, deps = {}) {
 	} catch (error) {
 		if (child?.kill) child.kill();
 		await remove(profileDir).catch(() => undefined);
-		throw error.code ? error : browserError("browser-unavailable", "managed browser failed to start");
+		throw error.code
+			? error
+			: browserError("browser-unavailable", "managed browser failed to start");
 	}
 }
 
@@ -213,7 +273,10 @@ async function closeBrowser(handle, deps = {}) {
 	handle.closed = true;
 	if (handle.ownership !== "managed") return;
 	const kill = deps.kill || defaultKill;
-	const remove = handle.remove || deps.remove || ((dir) => fs.promises.rm(dir, { recursive: true, force: true }));
+	const remove =
+		handle.remove ||
+		deps.remove ||
+		((dir) => fs.promises.rm(dir, { recursive: true, force: true }));
 	await kill(handle.child);
 	if (handle.profileDir) await remove(handle.profileDir).catch(() => undefined);
 }

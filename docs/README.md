@@ -27,6 +27,7 @@ durable knowledge live only in a code comment or a chat transcript; move it here
 | File | Role |
 | --- | --- |
 | [`design.md`](design.md) | UI/UX spec — palette, typography, layout, component styling, approval workflow, and the WebUI Permissions page. **Source of truth for every visual decision.** |
+| [`browser-tools.md`](browser-tools.md) | Proposed zero-dependency Chromium CDP tools for local browser inspection and pi-webui debugging. |
 | [`usage-telemetry.md`](usage-telemetry.md) | Browser-local Usage sampling, rolling retention, per-session persistence, and sparkline downsampling. |
 | [`improvements.md`](improvements.md) | Current source- and primary-research-backed UI/UX, accessibility, adaptive-layout, permission-safety, JetBrains, and perceived-performance audit. |
 | [`security-review.md`](security-review.md) | Security and runtime-robustness review of the current working tree: rated findings, fault probes, recovery gaps, validation results, verified controls, and remediation order. |

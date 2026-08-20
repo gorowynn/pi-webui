@@ -1,5 +1,3 @@
-
-
 const { truncateUtf8 } = require("./browser-snapshot.js");
 
 const CONSOLE_SCHEMA = "pi-webui.browser-console/v1";
@@ -10,18 +8,25 @@ const MAX_SOURCE_BYTES = 2048;
 function remoteText(value) {
 	if (value == null) return "";
 	if (typeof value !== "object") return String(value);
-	if (value.value != null && ["string", "number", "boolean"].includes(value.type)) return String(value.value);
-	if (typeof value.unserializableValue === "string") return value.unserializableValue;
+	if (
+		value.value != null &&
+		["string", "number", "boolean"].includes(value.type)
+	)
+		return String(value.value);
+	if (typeof value.unserializableValue === "string")
+		return value.unserializableValue;
 	if (typeof value.description === "string") return value.description;
 	return value.type ? `[${value.type}]` : "[object]";
 }
 
 function eventText(params = {}) {
 	if (typeof params.text === "string" && params.text) return params.text;
-	if (Array.isArray(params.args)) return params.args.map(remoteText).filter(Boolean).join(" ");
+	if (Array.isArray(params.args))
+		return params.args.map(remoteText).filter(Boolean).join(" ");
 	const exception = params.exceptionDetails || params.exception;
 	if (exception && typeof exception === "object") {
-		if (typeof exception.text === "string" && exception.text) return exception.text;
+		if (typeof exception.text === "string" && exception.text)
+			return exception.text;
 		if (exception.exception) return remoteText(exception.exception);
 	}
 	return "";
@@ -32,11 +37,13 @@ function location(params = {}, exception = {}) {
 	const line = params.lineNumber ?? exception.lineNumber;
 	const column = params.columnNumber ?? exception.columnNumber;
 	const out = {};
-	if (typeof source === "string" && source) out.source = truncateUtf8(source, MAX_SOURCE_BYTES);
+	if (typeof source === "string" && source)
+		out.source = truncateUtf8(source, MAX_SOURCE_BYTES);
 	if (Number.isInteger(line) && line >= 0) out.line = line + 1;
 	if (Number.isInteger(column) && column >= 0) out.column = column + 1;
 	const timestamp = params.timestamp;
-	if (typeof timestamp === "number" && Number.isFinite(timestamp)) out.timestamp = timestamp;
+	if (typeof timestamp === "number" && Number.isFinite(timestamp))
+		out.timestamp = timestamp;
 	return out;
 }
 
@@ -57,7 +64,10 @@ function normalizeConsoleEvent(method, params) {
 		params = params.entry;
 	} else if (method === "Runtime.exceptionThrown") {
 		level = "error";
-		exception = params.exceptionDetails && typeof params.exceptionDetails === "object" ? params.exceptionDetails : {};
+		exception =
+			params.exceptionDetails && typeof params.exceptionDetails === "object"
+				? params.exceptionDetails
+				: {};
 	} else {
 		return null;
 	}
@@ -77,15 +87,22 @@ class ConsoleCollector {
 		const entry = normalizeConsoleEvent(method, params);
 		if (!entry) return false;
 		this.entries.push(entry);
-		if (this.entries.length > this.maxEntries) this.entries.splice(0, this.entries.length - this.maxEntries);
+		if (this.entries.length > this.maxEntries)
+			this.entries.splice(0, this.entries.length - this.maxEntries);
 		return true;
 	}
 
 	subscribe(session) {
 		this.unsubscribe();
 		if (!session || typeof session.on !== "function") return () => undefined;
-		for (const method of ["Runtime.consoleAPICalled", "Runtime.exceptionThrown", "Log.entryAdded"]) {
-			this.unsubscribers.push(session.on(method, (params) => this.push(method, params)));
+		for (const method of [
+			"Runtime.consoleAPICalled",
+			"Runtime.exceptionThrown",
+			"Log.entryAdded",
+		]) {
+			this.unsubscribers.push(
+				session.on(method, (params) => this.push(method, params)),
+			);
 		}
 		return () => this.unsubscribe();
 	}

@@ -1,5 +1,3 @@
-
-
 const SNAPSHOT_SCHEMA = "pi-webui.browser-snapshot/v1";
 const MAX_PAGE_TEXT_BYTES = 12 * 1024;
 const MAX_ELEMENTS = 200;
@@ -51,7 +49,8 @@ function truncateUtf8(value, maxBytes) {
 	const suffix = "…";
 	const budget = Math.max(0, maxBytes - Buffer.byteLength(suffix, "utf8"));
 	let end = Math.min(text.length, budget);
-	while (end > 0 && Buffer.byteLength(text.slice(0, end), "utf8") > budget) end--;
+	while (end > 0 && Buffer.byteLength(text.slice(0, end), "utf8") > budget)
+		end--;
 	return text.slice(0, end) + suffix;
 }
 
@@ -63,7 +62,12 @@ function boundedString(value, maxBytes) {
 function finiteRect(rect) {
 	if (!rect || typeof rect !== "object") return null;
 	const values = [rect.x, rect.y, rect.width, rect.height];
-	if (!values.every((value) => Number.isFinite(value)) || rect.width < 0 || rect.height < 0) return null;
+	if (
+		!values.every((value) => Number.isFinite(value)) ||
+		rect.width < 0 ||
+		rect.height < 0
+	)
+		return null;
 	return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
 }
 
@@ -87,7 +91,10 @@ function normalizeElement(raw) {
 	const element = {
 		role: boundedString(raw.role || "generic", 128),
 		name: boundedString(raw.name, MAX_FIELD_BYTES),
-		value: password || raw.value == null ? null : boundedString(raw.value, MAX_FIELD_BYTES),
+		value:
+			password || raw.value == null
+				? null
+				: boundedString(raw.value, MAX_FIELD_BYTES),
 		disabled: raw.disabled === true,
 		rect,
 	};
@@ -101,7 +108,9 @@ function normalizeElement(raw) {
 }
 
 function fingerprint(elements) {
-	return JSON.stringify(elements.map(({ element, index }) => ({ element, index })));
+	return JSON.stringify(
+		elements.map(({ element, index }) => ({ element, index })),
+	);
 }
 
 class SnapshotRefStore {
@@ -126,7 +135,10 @@ class SnapshotRefStore {
 				this.refs.set(ref, item);
 			}
 		}
-		return elements.map(({ element }, index) => ({ ...element, ref: this.currentRefs[index] }));
+		return elements.map(({ element }, index) => ({
+			...element,
+			ref: this.currentRefs[index],
+		}));
 	}
 
 	invalidate() {
@@ -139,7 +151,9 @@ class SnapshotRefStore {
 	resolve(ref) {
 		const found = this.refs.get(String(ref));
 		if (!found) {
-			const error = new Error("snapshot ref is stale; call browser_snapshot again");
+			const error = new Error(
+				"snapshot ref is stale; call browser_snapshot again",
+			);
 			error.code = "stale-ref";
 			throw error;
 		}
@@ -150,12 +164,21 @@ class SnapshotRefStore {
 function normalizeSnapshot(raw = {}, refs = new SnapshotRefStore()) {
 	const source = raw && typeof raw === "object" ? raw : {};
 	const elements = Array.isArray(source.elements)
-		? source.elements.map(normalizeElement).filter(Boolean).slice(0, MAX_ELEMENTS)
+		? source.elements
+				.map(normalizeElement)
+				.filter(Boolean)
+				.slice(0, MAX_ELEMENTS)
 		: [];
 	const outputElements = refs.update(elements);
-	const viewport = source.viewport && Number.isFinite(source.viewport.width) && Number.isFinite(source.viewport.height)
-		? { width: Math.max(0, source.viewport.width), height: Math.max(0, source.viewport.height) }
-		: { width: 0, height: 0 };
+	const viewport =
+		source.viewport &&
+		Number.isFinite(source.viewport.width) &&
+		Number.isFinite(source.viewport.height)
+			? {
+					width: Math.max(0, source.viewport.width),
+					height: Math.max(0, source.viewport.height),
+				}
+			: { width: 0, height: 0 };
 	return {
 		schema: SNAPSHOT_SCHEMA,
 		url: boundedString(source.url, 2048),

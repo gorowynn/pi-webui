@@ -13,3 +13,4 @@ jetbrains/local.properties
 .idea/
 *.iml
 .pi-subagents/
+.ruff_cache/

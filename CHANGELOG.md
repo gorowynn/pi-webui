@@ -6,6 +6,13 @@
 
 ## History
 
+### 2026-08-20 — docs(browser): specify proposed browser debugging tools
+
+- Added [`docs/browser-tools.md`](docs/browser-tools.md), defining the
+  zero-dependency Chromium CDP architecture, snapshot/screenshot/console tool
+  surface, security boundaries, output limits, test contract, and staged rollout
+  for debugging pi-webui.
+
 ### 2026-08-20 — feat(webui): finish the workspace-tools rail
 
 - The existing five-widget rail now has a canonical persisted state, narrow

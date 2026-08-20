@@ -1796,16 +1796,14 @@ body.ws-on.w-wide #new {
    a thin bar + label on the footer's top edge. Bar width % = --ctx-pct (set by
    app.js updateCtxMeter); the label carries the numeric readout "percent%
    (used/max)" — now the SINGLE context display (the statusbar sb-ctx readout
-   was removed). Hidden until data exists (body.ctx-on); neutral / --warning /
-   --danger by band. */
+   was removed). Keep the bar visible before the first stats response so the
+   composer always has a stable context affordance; neutral / --warning /
+   --danger colors follow the available usage data. */
 #ctx-meter {
-	display: none;
+	display: flex;
 	align-items: center;
 	gap: 10px;
 	margin: 0 0 8px;
-}
-body.ctx-on #ctx-meter {
-	display: flex;
 }
 .ctx-bar {
 	flex: 1 1 auto;
