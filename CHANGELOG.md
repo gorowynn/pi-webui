@@ -4,7 +4,1089 @@
 > orientation doc stays lean. One entry per meaningful chunk of work:
 > `### YYYY-MM-DD — <area>: <one-line summary>` then bullet detail (what + why + file).
 
+## History
+
+### 2026-08-18 — fix(extension): keep discipline prompt cache-stable
+
+- `discipline.ts` now appends one fixed process-discipline suffix on prompted
+  turns; live todo state remains in the hard gate and tool results instead of
+  changing the provider's cached system-prompt prefix. Added
+  `test/discipline-contract.test.js`.
+
+### 2026-08-18 — fix(webui): exclude permission waits from tool timing
+
+- Usage tool-duration telemetry now pauses while a safeguard permission prompt
+  is open and resumes after the decision is resolved. Waiting for permission no
+  longer inflates tool runtime; tool-owned input waits remain measured.
+
+### 2026-08-18 — fix(webui): preserve Usage telemetry per session
+
+- Browser-local Usage storage now keeps a versioned map of the 12 most recently
+  saved session histories instead of replacing the previous session on switch.
+  Existing v1 single-session payloads migrate on the next save. See
+  [`docs/usage-telemetry.md`](docs/usage-telemetry.md).
+
+### 2026-08-18 — feat(webui): compact context header and inspector rail
+
+- `#statusbar` now lives in the header beside the connection state, keeping repo
+  and model visible while the composer stays focused on writing. Secondary
+  git/thinking/cache/token/cost/IDE data is centered in the spare header width
+  and consumes it in order; only trailing non-fitting entries move into the
+  accessible `details` popover. A `ResizeObserver` plus live status updates
+  rebalance it without
+  duplicating DOM values or reopening a dismissed popover.
+- The right inspector strip is now 64px and icon-first (`style.css`): labels stay
+  in the accessibility tree and native titles retain hover discoverability,
+  badges remain visible, and selected tabs use tint + accent icon instead of the
+  prohibited side stripe. The expanded resizable pane is unchanged.
+- Added `test/shell-layout.test.js`; `test/a11y-contract.test.js` and
+  `test/rail.test.js` confirm the layout keeps its accessibility, adaptive
+  overflow, and rail contracts.
+- Transcript turns now carry explicit hierarchy (`assistant-turn`, `user-turn`,
+  `system-turn`, `tool-turn`): assistant prose is open and calm, user prompts
+  are compact right-aligned cards, and tool/system containers remain prominent.
+  Assistant usage telemetry now starts with a muted inline `turn N` label. Added
+  `test/transcript-layout.test.js` for the visual contract.
+- The composer is now one calm writing block: the input uses an inset surface,
+  actions sit behind a quiet divider, mobile keyboards get `enterkeyhint="send"`,
+  image drag/drop visibly highlights the drop target, and the visible Image picker
+  follows the selected model's image capability. Added
+  `test/composer-layout.test.js`.
+- Both sidebars now share the same restrained hierarchy: the workspace/session
+  drawer has separated sections and clearer active rows; the inspector rail has
+  quiet tab boundaries, visible compact labels, higher-contrast readable badges,
+  a roomier inset pane, and a more deliberate pane head. Workspace sections
+  gained semantic labels; `test/sidebar-layout.test.js` covers the
+  visual/accessibility contract.
+- Pending approval modals now keep a persistent `Waiting for approval` state,
+  focus the first actionable control after async diff rendering, and restore
+  focus to the prior control or composer on close.
+- The Usage rail widget now gives the total cost a primary treatment and uses a
+  readable two-column summary for the roomier pane, with token cards retaining
+  their labels instead of collapsing into a cramped six-card row. Missing
+  provider cost data is now explicit, with output-token and no-turn fallbacks
+  instead of an empty cost section. The per-turn bars also have a definite chart
+  height, so their percentage heights render instead of collapsing to zero. A
+  current-context line now overlays the cost bars point-for-point by turn, with
+  the legend identifying it separately from cost. The live chart now refreshes
+  from incoming messages/stats, shows the last 100 billed model turns, and
+  labels the graph `TURN HISTORY`; the subtitle distinguishes billed model
+  turns from the transcript's visible-turn numbering. Turn tooltips include
+  context percentage, and token counts use compact `k`/`M`/`B` notation.
+
+### 2026-08-18 — feat(webui): calm conversation density and grouped tool activity
+
+- `public/app.js` now presents the persisted detail modes as **Focus / Balanced /
+  Trace**, with Balanced (`semi`) as the new default; legacy saved values remain
+  compatible. The header and command palette no longer expose the implementation
+  names `simple / headers / detailed`.
+- Consecutive live and replayed tool calls are wrapped in a native turn-local
+  `.tool-group` disclosure (`N tools · state · elapsed`). Running calls open the
+  group; successful groups collapse outside Trace; errors remain open and visible.
+  Crash finalization also settles the group state, so reconnect replay cannot leave
+  a stale "working" summary.
+- `style.css` removes nested card shadows inside the group and makes Balanced hide
+  successful raw outputs (the prior selector did not match the `.out-wrap` DOM).
+  `public/tool-presentation.js#toolGroupSummary` is pure and covered by the new
+  `test/tool-presentation.test.js`.
+
+### 2026-08-17 — feat(webui): usage bar + todo panel moved fully into the rail
+
+- Header `#usagebar` and in-flow `#todopanel` are GONE; quota windows and the
+  todo list now render only in the rail's Quotas / Todos widgets (`app.js`:
+  `refreshUsageBar` re-scoped to feed `quotaBadgePct` + the open panel,
+  `renderTodos` delegates to the Todos widget; `index.html` elements removed).
+- The Quotas modal (`showUsage`) is deleted — the rail widget owns forms
+  (key + OpenCode Go creds) and refresh; palette "quota usage" / "agent todos"
+  open the rail widget directly (PARITY flags for quotas/todos retired).
+- Open rail widgets now AUTO-REFRESH: `refreshRailWidget` honors each widget's
+  `interval:N` policy (SDD manual/plan-poll, analysis 10s, git+quotas 60s,
+  todos 5s) with scroll preservation; event paths (todo ops, quota poll, git
+  mutations, plan-state) still push immediately.
+- `quotaBadgePct` now live (was a `const null` placeholder) — the Quotas tab
+  badge shows the tightest window's percent once the poll resolves.
+- Rail todo-row CSS retargeted `#todopanel` → `.tools-pane`; dead `#usagebar`/
+  `.ub-*` CSS removed. test/rail.test.js 65 → 68 checks.
+
+### 2026-08-17 — feat(safeguard): bash-sensitive path protection (closes `cat .env` bypass)
+
+FR-7 sensitivePaths applied only to path selectors — bash selectors matched the
+verb allow-regexes, so `cat .env` / `grep -r KEY .env.local` auto-allowed in
+auto-approve (and even default) mode. The gate now computes a per-call
+`bashSensitive` override: `bash-classifier.js partCanonTokens` (expansion +
+join + realpath, centralising the previously duplicated `isOutsidePart` logic)
+feeds `policy-engine.js bashSensitiveFor`; `resolve()` honours
+`opts.bashSensitive` for bash and `/api/permissions/explain` mirrors it.
+Sensitive tokens inside the workspace now produce the same mandatory-ask /
+hard-deny as the `read` tool; a hit on ANY compound part blocks the whole
+command in every non-yolo mode. Benign recon stays silent. Also uninstalled
+`@gotgenes/pi-permission-system` (an independent bash-ask gate that overrode
+the webui auto-approve; see GOTCHAS #23).
+
+### 2026-08-15 — feat(subagents): async fleet page + notices (pi-subagents plugin support)
+
+The pi-subagents plugin's background side was invisible in the webui: its
+TUI fleet widget and `/sfleet` never cross RPC, and its custom messages
+(completion/steering/control notices) rendered as generic markers — or not at
+all until reload. The foreground `subagent` tool view (GOTCHAS #14) was
+already covered.
+
+- **`subagents.js`** (new, zero-dep): discovers the plugin's temp roots
+  (`<tmp>/pi-subagents-*/async-subagent-runs/`), projects each run's
+  `status.json` (512 KB cap, malformed skipped — a half-written file can't
+  500 the listing), tails `output-<i>.log` / `subagent-log-*.md` (32 KB tail),
+  and delivers STOP/STEER through the plugin's portable file control inbox
+  (`control/stop.json`, `control/steer-requests/<padded-ts>-<b64url>.json` —
+  atomic temp+rename, envelopes matching
+  `pi-subagents/src/runs/background/control-channel.ts`). Run ids validated
+  (charset + must resolve to a discovered dir — no traversal); the internal
+  `dir` path is stripped from client payloads. Routes: `GET /api/subagents`,
+  `GET /api/subagents/log`, `POST /api/subagents/control` (behind the existing
+  CSRF/origin gate). `subagents.js` added to `package.json#files` (caught by
+  `test/package.test.js`).
+- **`#fleet` page** (`public/index.html` + `app.js` + `subagents-ux.js` +
+  `style.css`): in-shell page like settings/permissions (`#fleet` hash, 2 s
+  poll while open). Rows show description/agents, state chip (running green,
+  paused/queued amber, failed red), mode · agents · elapsed · turns · current
+  tool; steps with per-child status + log buttons; failed runs surface the
+  error and keep a run-log button. Logs open inline (cached in `fleetLogs` so
+  the poll re-render never clobbers an open log). Stop is confirm-gated; steer
+  sends to the selected row (click to select; auto-targets the only active
+  run when none is). Opening one page closes the others, and each page only
+  clears its OWN hash (closing fleet mid-`#permissions` navigation can't wipe
+  that route — the guard was added to `closePermPage` too).
+- **Notices** (`renderNoticeMsg` in `app.js`, pure builders in
+  `subagents-ux.js`): custom messages with customType `subagent-notify`,
+  `subagent_steering_notice`, `subagent_control_notice` render as colored
+  notice cards from BOTH `message_end` (live — previously invisible until
+  reload) and `renderMessage` (reload), so the two can't diverge. Generic
+  custom messages now render live too (same renderer as reload — parity).
+  `subagent-notify` uses details `{agent,status,taskInfo,durationMs,
+  resultPreview,session*}` when present, content-markdown fallback otherwise.
+- **Log fallbacks (found live)**: workflow-mode runs write no `output-<i>.log`
+  — step logs now fall back to the child transcript under the project-local
+  `<cwd>/.pi-subagents/artifacts/<id>_<agent>_<i>_transcript.jsonl`
+  (agent + nearest-start-ts correlation, 16 KB head with regex `ts` extraction
+  because fork-context prompts make line 1 unparsable whole), rendered as
+  readable lines (`▸ user`, `→ bash …`, `✓/✗ tool`, assistant text). Run log
+  falls back from `subagent-log-*.md` to formatted `events.jsonl`. Step-log
+  buttons encode row position (workflow steps carry no `index` — previously
+  every button sent 0). subagents.js: 31 tests.
+- **Honest stop UX (found live)**: a workflow run reports `complete` even
+  when every child failed — rows now derive the chip from step statuses
+  (all-failed → red `failed`, mixed → `done` + `N✗` meta). Manual stop is
+  graceful (parks on hung LLM calls), so the listing projects `stopRequested`
+  (stop.json pending + active) → "stopping" chip and the stop button
+  escalates to "force stop" writing `control/timeout.json` (the same path
+  the 30-min runtime cap uses — kills children decisively).
+- **Notice content parsing (found live)**: some delivery paths attach no
+  machine-readable `details` to `subagent-notify`, and the old fallback
+  painted every such notice red ("✗ subagent · ?") even for completions.
+  `notifyHtml` now parses the plugin's own markdown header
+  (`Background task[s] <status>: **agent**[(n)]`, mirroring notify.ts
+  `parseSubagentNotifyContent` + the grouped form), taking agent, status and
+  the first preview line from it; fully unparseable content renders NEUTRAL,
+  never red. subagents-ux: 37 tests.
+- **Transcript correlation is deterministic now** (found live): parallel
+  same-agent children spawned ~100 ms apart cross-matched under ts-proximity
+  (step 1 showed its sibling's log). The child run id in the step's
+  `sessionFile` (`…\<childRunId>
+un-0\session.jsonl`) matches the artifact
+  filename prefix exactly; ts-proximity remains only as fallback.
+  subagents.js: 37 tests.
+- **`cd` compounds stop prompting** (found live): `cd <cwd> && git status`
+  always asked because `cd` was in neither the classifier's read-only set
+  nor the floor's verb-allow regex. `cd` is read-only (chdir never touches
+  the disk) and its path argument stays containment-checked —
+  `cd <outside> && ls` still flags outside → ask, `cd <cwd> && npm test`
+  still asks (npm isn't read-only).
+- Palette: "subagent fleet" command. Tests: `test/subagents.test.js` (24 —
+  listing/ids/stop/steer/log-tail/roots; test temp dirs use a non-matching
+  prefix + self-cleanup so they never pollute the real scan) and
+  `test/subagents-ux.test.js` (27). Full suite 32/32. Live-smoked against a
+  real server (routes + static + unknown-id error paths).
+
+### 2026-08-15 — fix(policy): end the benign-command prompt storm (SEC-02a/02b refinement)
+
+Root cause of "why does grep/sed prompt every time": three stacked effects. (1) SEC-02a removed `env/find/sed/awk/sort` from the name-only READONLY set — every benign use classified `mutate`. (2) The floor `bash` table never had allow rules for the recon verbs (`grep`, `cat`, `head`, …), so the FR-9 compound gate reported "no allow rule" for them. (3) SEC-02b bound mode-induced allows to that gate — in `auto-approve`, every bash command not fully allow-ruled now prompts (by design), which surfaced (1)+(2) as a prompt storm. A fourth bug kept fixes from landing for existing users: `mergeTwo` replaced a user's `bash` table WHOLESALE, so floor improvements were invisible to anyone with an existing table.
+
+- **Classifier is argument-aware now** (`bash-classifier.js`): the benign forms classify read-only again — `sed -n 1,5p f` / `sed s/a/b/ f` (no `-i*`/`-f*`/`--in-place`/`--file`, script carries no `w FILE` write command or `>>`), `find . -name x` (no `-delete`/`-exec*`/`-ok*`/`-fprint*`/`-fls`), `sort f` (no `-o`/`--output`), `awk '{print $1}'` (program has no `>`/`|`/`system(`/`getline` — comparisons like `$1 > 5` conservatively prompt), `env`/`env K=V`/`env -i ls` (a following command classifies as that command: `env rm -rf .` → mutate). Every SEC-02a review-evidence mutation still classifies `mutate`.
+- **Floor allow-rules the recon verbs by verb** (`policy-engine.js` DEFAULT_CONFIG): one anchored regex covering the READONLY set + the five argument-sensitive verbs. Safe because an allow rule alone never suffices for bash — the compound gate still requires argument-aware read-only classification AND per-part rules, and SEC-02b keeps mode bypasses behind the same gate: `sed -i s/a/b/ f` matches the allow RULE but `gate.allow=false` → asks in every mode (locked by test).
+- **`mergeTwo` unions object tool tables per key** (high key wins): a user's existing `bash` table no longer wholesale-shadows the floor — floor allows/denies reach everyone, user same-key entries still win (tightening preserved), scalars/arrays still replace wholesale.
+- Verified against the live user config (auto-approve): `grep -rn foo src/`, `sed -n 1,5p server.js`, `cat x | head -5`, `find . -name '*.md'`, `sort x`, `awk '{print \$1}'`, `env | grep FOO` → silent allow; `sed -i`/`find -delete`/`sort -o`/`env rm -rf .` → prompt; `rm -rf /` → hard deny. Tests: bash-classifier 18/18 (7 new blocks), policy-engine 56 checks (floor rules + union merge + gate binding), full suite 30/30.
+- Needs a pi restart to take effect (the extension `require`s the engine at spawn): `/webui-stop` + `/webui`, or restart `node server.js`.
+
+### 2026-08-15 — fix(trust): close the trust-boundary findings (SEC-03/07/17, REL-24, U7 SDD run)
+
+SDD run `trust-boundary` (plan/spec/tasks/verify archived). Four findings spanning the browser↔server↔IDE trust boundary; every fix landed with failing-first tests (Node 30/30 incl. a NEW `test/trust-boundary.test.js`; Kotlin DiffBridgeTest 12/12).
+
+- **SEC-03** (9.6): `server.js` no longer spawns pi with `--approve` — project-local extensions of the opened workspace are NOT trusted anymore. The bundled bridge extension loads explicitly via `-e <__dirname>/extensions/pi_minimal_webui/index.ts` (package-root relative, so a workspace switch can't redirect it); a missing extension degrades loudly (warning + `--no-approve` alone — fail toward no-project-trust, never silently back to `--approve`). `PI_ARGS=--approve` remains the documented explicit opt-in (appended last, wins).
+- **SEC-07** (8.8): approval decisions are now validated **server-side** against the options the gate offered. `broker.js` normalizes the offered options to labels; `resolve()` rejects a decision whose label (string or `{label,…}` object) isn't among them → `invalid-option` 410, and the record **stays pending** so a correct client can still answer. The mandatory-ask → "Allow always" upgrade path from the IDE is closed. Client side: the IDE payload carries `options` (the button bar renders only those — see below); a rejected IDE decision falls back to the webui select modal (`invalid-option`) or toasts (answered elsewhere).
+- **SEC-17a/b/c** (7.6): the IDE diff gate fails closed — malformed bridge JSON (`DiffBridge.parsePayload` → null) resolves Deny with no editor tab instead of an empty approvable diff; an ALLOW against a file that changed on disk mid-review is **blocked** until "Re-read file" rebuilds the diff on the fresh base (Deny always resolves); `DiffReviewFile.decide()` is now `AtomicBoolean` compare-and-set (exactly one resolution, double-click/dispose race safe).
+- **REL-24** (5.6): overlapping IDE approvals no longer cross-resolve — the injected page keeps an id-keyed `__piDiffResolvers` map (`payload.requestId`-keyed; the page assigns the id before stringify so both ends agree; unknown id/double resolve = no-op), and a parent `Disposable` now owns the JS query, the load handler (`removeLoadHandler()`), and the browser, released on tool-window close.
+- Kotlin side lands in a NEW pure helper object `jetbrains/…/DiffBridge.kt` (parse/compose/normalize/stale helpers + the `DiffPayload`/`EditHunk` shapes, `options` added) with `DiffBridgeTest.kt` — runnable via `cmd.exe /c` + Rider JBR (`JAVA_HOME`), which un-blocks agent-side Kotlin testing (GOTCHAS #17 only bans the sh-wrapper).
+- Wire compatibility preserved: `piWebuiOpenDiff(payload) → decision` promise, `extension_ui_response` + marker, safeguard labels, broker record shape (additive `optionLabels`); old/new plugin↔webui pairs degrade safely.
+
 ## Changelog
+
+### 2026-08-11 — fix(policy): close six security-review findings (SEC-01/02/04/06/14/15, U7 SDD run)
+
+SDD run `policy-hardening` (plan/spec/tasks/verify, archived) fixed 12 requirements in the shared policy engine + classifier + safeguard gate. Every finding's review evidence was reproduced as a failing test first; full suite 29/29 green after.
+
+- **SEC-01** workspace tighten-only: scalar workspace rules now compare against EVERY inherited subrule via `strictestActionFor` (deny>ask>allow) — `bash:"ask"` can no longer shadow built-in `rm -rf /` denies; workspace `grants`/`nonInteractive` rejected with diagnostics; `sensitivePaths` merge additively + tighten-only (allow entries dropped); `effective` derives from the FILTERED workspace layer so the Permissions page can never show rules the gate rejected. (`policy-engine.js`)
+- **SEC-02** read-only mode: `env/find/sed/awk/sort` out of the name-only `READONLY` set (argument-sensitive: `env rm -rf .`, `find . -delete`, `sed -i`, `awk 'system()'`, `sort -o`); `git remote -v remove origin` correctly mutates (flags skipped before the subcommand). Mode transforms now bind bash: read-only read-class requires the per-part gate (`bashGate.allow`), auto-approve never lifts a gated bash ask; yolo stays the session-only override. (`bash-classifier.js`, `policy-engine.js`, `safeguard.ts`)
+- **SEC-04** path containment: recon-tool JSON selectors (grep/find/ls/glob) canonicalize + containment-check each path field independently (`ls {"path":"/etc/passwd"}` caps at outside-workspace ask); relative paths collapse `.`/`..` lexically before the containment check (`sub/../../outside/new.txt` hard-denies); missing targets realpath their NEAREST EXISTING ANCESTOR (in-workspace symlink to outside no longer passes). (`policy-engine.js`)
+- **SEC-06** Windows: path matching normalizes `\`→`/` so `**/.env*` etc. hit `C:\proj\.env` (mandatory-ask) and `C:\proj\id_rsa` (deny); POSIX byte-identical.
+- **SEC-14** persisted `mode:"yolo"` normalizes to `default` in every layer with the existing diagnostic — a hand-edited config can never flip a hard-deny; yolo remains session-only state.
+- **SEC-15** fail-closed config: malformed user/workspace JSON keeps its LAST KNOWN GOOD parse and surfaces a visible warning via the gate (new `errors` channel on `loadLayers`; mtime -1 forces rebuild until the file parses again); `saveConfig` writes atomically (temp + rename) and returns success; a failed "Allow always" save now BLOCKS the call with a warning instead of releasing it as if the grant persisted (Allow once/session unaffected — no write needed). (`safeguard.ts`)
+- Test harness note: Node 24's type-stripping loader caches `.ts` per file (survives `require.cache` deletion), so the new behavioral safeguard tests load a per-scenario module copy to get a fresh `CONFIG_PATH` per HOME. The behavioral block drives the REAL gate with a mock pi API against temp HOME/workspace dirs.
+
+### 2026-08-11 — test: repair three stale/broken tests (TEST-01)
+
+- `test/a11y-contract.test.js`: the rail-resize assertion checked for `resizeStep(` in `app.js`, but the math moved to `public/a11y-contrast.js` (app delegates via `a11y && a11y.resizeStep`, unit-tested in `rail-resize.test.js`). Assert the delegation instead.
+- `test/permission-ux.test.js`: two stale contracts from the 08-11 modal rework — the ask modal no longer forces wide (`showModal("", false)`, width only with diffs per `bce9bcf`) and `openSelectModal` lost its `notify` flag (toasts live in the ask/input/editor branches). Assertions updated to the current behavior.
+- `test/rpc-sse.test.js`: `ReferenceError: res is not defined` when an SSE request timed out before the response callback ran — `res` was scoped inside the `http.get` callback but referenced in the timeout handler. Hoisted it. Also TEST-01's two hangs: `sseCollect` capped on an idle `req.setTimeout`, which the server's SSE heartbeat defeats (never fires → infinite hang when the predicate never matches) — now a 12s wall-clock cap; and the snapshot assertion waited for the removed `snap-state` id (server mints random ids) — now asserts ≥5 fan-out responses broadcast on a fresh SSE connection plus a well-formed body check.
+- All 29 `test/*.test.js` now pass (the 08-11 CHANGELOG claim "all 27 non-integration tests pass" had gone stale).
+
+### 2026-08-11 — fix(release): ship all root runtime modules + bump markdown-it (REL-01, DEP-01)
+
+- `package.json#files` listed only `server.js`/`bin.js`/`public`/`extensions`/`skills`; the other nine root runtime modules (`broker`, `git`, `isolated-prompt`, `jsonl`, `livebuf`, `recent-sessions`, `session-entries`, `workspace-file`, `workspaces`) were omitted, so any `npm install pi-webui` failed with `MODULE_NOT_FOUND`. Added all nine; `npm pack --dry-run` now includes 41 files, none missing.
+- Added `test/package.test.js` — static guard that every root `require("./x.js")` in `server.js`/`bin.js`/shipped modules is covered by the `files` whitelist (faster than `npm pack` in CI; catches the same omission class).
+- Vendored `public/vendor/markdown-it.min.js` 14.1.0 → 14.2.0 (CVE-2026-2327 / GHSA-38c4-r59v-3vqw, reachable through the enabled `linkify` path; smartquotes advisory not reachable with `typographer:false`). Same UMD shape (`window.markdownit`), no loader change; `md()` smoke test passes.
+- Pre-existing (not from this change): `test/a11y-contract.test.js` + `test/permission-ux.test.js` fail against current `app.js` (stale assertions after 08-11 modal/a11y rework) — tracked under TEST-01. `test/rpc-sse.test.js` throws `ReferenceError: res is not defined` when an SSE request times out — also TEST-01.
+
+### 2026-08-11 — fix(webui): a11y-contrast.js actually loads in the browser
+
+- Module lived at repo root with an unguarded `module.exports` — never loaded by
+  `index.html`, never shipped by npm, yet `app.js` calls `resizeStep`/
+  `statusTextForEvent` (ReferenceError on rail-resize/status events).
+- Moved to `public/a11y-contrast.js` with the dual-mode guard +
+  `window.a11yContrast` export; added the `<script>` (before `app.js`) and the
+  `server.js` `STATIC` entry; test requires updated.
+
+### 2026-08-11 — chore(extension): drop orphaned subagent-tier config
+
+- `subagent.ts` (tier-based tool) was removed earlier; the sidebar tier selects,
+  the app.js tier block, and `GET/POST /api/subagent-tiers` were still wired.
+- Removed all three; `safeguard.ts` comment no longer references `subagent.ts`;
+  AGENTS.md + GOTCHAS.md #15 updated. Builtin pi `subagent` tool, its live view,
+  and the policy gate stay.
+
+### 2026-08-11 — test: rpc-sse smoke test fails fast without a server
+
+- `test/rpc-sse.test.js` is integration-only (needs a booted server on PORT);
+  it now preflights `GET /api/health` and exits 1 with boot guidance instead of
+  a bare ECONNREFUSED. Also fixed the stale `../style.css` link in
+  `docs/design.md` (→ `public/style.css`).
+
+### 2026-08-11 — fix(approvals): use full-page interaction modals
+
+- Removed in-card approval controls. Every blocking tool select, confirm, input,
+  editor, and ask-user interaction now opens in the full-page modal and emits a
+  visible warning notification; tool cards remain status-only.
+- `applyState()` now clears the activity row when authoritative state says idle,
+  preventing stale “thinking…”/tool status after a missed terminal event.
+
+### 2026-08-11 — fix(composer): restore action and approval controls
+
+- Added the missing `agent_start` switch break so streaming stays active and the
+  Stop/send-mode controls work until `agent_end`; made safeguard provenance
+  mutable so live mode updates no longer throw.
+- Composer overflow actions now auto-close only in the narrow popover, rather
+  than collapsing the always-inline wide toolbar. Confirm replies now include
+  pi RPC's required top-level `confirmed` field.
+- Added focused guards in `status-race.test.js`, `permission-ux.test.js`, and
+  `shell-contract.test.js`; all 27 non-integration Node tests pass.
+
+### 2026-08-10 — docs(security): record rated project review
+
+- Added [`docs/security-review.md`](docs/security-review.md): security-first review
+  of the current working tree with severity ratings, source evidence, reproduced
+  policy/path/Git failures, verified controls, and a remediation order.
+- Records the release-blocking npm package omission, permission-policy bypasses,
+  process/Git/browser boundaries, reachable markdown-it advisory, and test gaps.
+  Findings remain open; this entry records the review, not remediation.
+
+### 2026-08-10 — feat(containment): outside-workspace access is at least ask in every non-yolo mode
+
+- **Path tools** (read-class): `resolve` tracks whether the canonical path
+  escapes the workspace root; `buildVerdict` caps rule-allow at ask with a
+  new `outside-workspace` tier (`outsideRoot` flag + reason). `applyMode`
+  can't lift it: auto-approve only lifts `ordinary-ask`, and read-only's
+  read-class auto-allow skips the tier. write/edit outside root stay
+  hard-deny (stronger than ask). Grants (exact-selector approvals) and yolo
+  (explicit session override) still win.
+- **Bash**: new `partPathTokens` (quote-stripped path-like args per
+  subcommand) + `gateBash(…, isOutside)` marks the command `outside` when any
+  part touches an outside path; safeguard.ts blocks the auto-approve/read-only
+  mode-bypass for outside commands (falls through to the ask flow, tier
+  `outside-workspace` in the provenance + approval card). The explain endpoint
+  injects the same realpath-aware containment so the page can't diverge.
+- Named ceiling: no shell parser — `$(…)`-built / `$VAR`-prefixed paths are
+  invisible (GOTCHAS #21). Headless (`nonInteractive=allow`) still can't
+  prompt — that knob governs headless.
+
+### 2026-08-10 — feat(permissions): composer mode chip + in-page rule editor
+
+- **Mode chip** (`#mode-chip`) sits in the composer bar, always visible: shows
+  `default` / `auto-approve` / `read-only` / `⚠ yolo`, colored by posture
+  (muted / amber / red), click opens the permissions page. Persisted modes
+  poll via new `GET /api/permissions/mode` (piggybacked on `refreshStats`);
+  yolo is session-only so the extension now broadcasts it — safeguard.ts
+  emits `setStatus("safeguard", {mode})` on yolo engage and `session_start`,
+  app.js flips the chip from that (and from every blocking-select
+  provenance broadcast, which already carried mode).
+- **Rule editor** on the permissions page: the "effective policy" section is
+  now "rules" with an add row (tool + pattern + effect → user config via the
+  existing revision-checked PUT) and an `×` remove button on every
+  user-layer rule (floor + workspace rows stay locked; workspace layer is
+  tighten-only via its own file). Pure helpers `applyRule`/`removeRule` in
+  permissions-ux.js (unit-tested); a string tool rule converts to `{"*": …}`
+  form so defaults survive adding a pattern.
+- Fixed `buildLayerTree` action precedence: the displayed action for a rule
+  present in multiple layers was the LAST (lowest-priority) layer's — now the
+  highest-priority one (the effective action).
+- `perm-tools` datalist (referenced but never defined — explain input had no
+  suggestions) is now populated from the layer tree + known tools.
+
+### 2026-08-10 — ui(utility pages): settings + permissions are real in-shell pages; permission modal is full-screen
+
+- `#settings` and `#permissions` are no longer a right drawer / fixed overlay:
+  both are flex children of `body` that replace the center transcript/composer
+  column while open (`body.page-open` hides `#scroll-wrap`, `#todopanel`,
+  `footer`, `.activity`; the shell header stays) — implementing design.md §4
+  ("utility views reuse the shell and replace the center region"). Shared
+  chrome `.perm-head`/`.perm-body`; `#settings-back` removed. GOTCHAS #15.
+- The permission/approval modal (any `#modal .card.wide` — editable diff,
+  preview stack, U6 C9 flows only) is now a REAL full modal: opaque surface,
+  fills the viewport edge-to-edge, x button re-anchored inside. Non-permission
+  dialogs (usage/git/sessions/ask) keep the centered card.
+
+### 2026-08-10 — fix(permissions): Explain failed — module never loaded in browser
+
+- **Root cause**: `public/permissions-ux.js` was not in `server.js`'s `STATIC`
+  whitelist → the browser got a silent 404 and the script never ran
+  (`window.permissionsUx` undefined → `pu.explainView` threw on the Explain
+  click). Node tests passed because `require()` bypasses the HTTP surface.
+  Two latent landmines fixed in the same file while making it browser-safe:
+  bare `module.exports` (ReferenceError in the browser) → guarded dual-mode
+  export, and a top-level `const api` (collided with app.js's `function api`
+  in the shared global scope → SyntaxError killing app.js) → IIFE, matching
+  the `diff-view.js` house pattern. Verified with a fresh headless-Edge CDP
+  probe: `#permissions` page opens, `explainView` returns the verdict object,
+  zero console exceptions. Gotcha: GOTCHAS.md #20.
+
+### 2026-08-10 — fix(ui): left sidebar vanished (app.js TDZ abort)
+
+- **Root cause**: a section reorder put the top-level
+  `registerCommand("permissions", …)` call (`public/app.js`, permissions page
+  section) BEFORE the `const uiCommands = []` registry declaration (command-palette
+  section). The `ReferenceError: Cannot access 'uiCommands' before initialization`
+  at script evaluation aborted the whole file — `initWsbar` never ran, so
+  `body.ws-on` was never set and `#wsbar` stayed off-canvas (`translateX(-100%)`
+  drawer state in `w-mid`/`w-narrow`); the SSE `onopen` handler (attached earlier,
+  firing async) then also threw on the uninitialized `let noSwitch`.
+- **Fix**: moved the permissions registration into the "register built-in UI
+  commands" section, after the registry exists. Verified with a headless-Edge CDP
+  probe (no console exceptions, `ws-on` set, workspace + session rows render).
+  Gotcha documented: GOTCHAS.md #19.
+
+### 2026-08-10 — permissions: U6 policy engine, approval broker, modes, #permissions page
+
+- **Policy engine** (`extensions/pi_minimal_webui/policy-engine.js`, new, zero-dep
+  CommonJS — the SINGLE resolution implementation shared by the extension gate and
+  the server page/Explain): verdict `{action,tier,matchedRule,layer,reason}` with
+  provenance; precedence hard-deny → mandatory-ask → remembered-grant → ordinary-ask
+  → allow; layered config (shipped floor → `~/.pi/agent/safeguard.json` →
+  `<cwd>/.pi/safeguard.json`, workspace tighten-only — loosening rules rejected with
+  diagnostics); v2 schema (`version`/`revision`/`mode`/`sensitivePaths`/`grants`),
+  atomic revision-checked writes; canonical path resolution + `sensitivePaths`
+  mandatory-ask/deny on EVERY path-capable tool (grep/find/ls/glob too);
+  `applyMode` (default/auto-approve/read-only + session yolo).
+- **Bash classifier** (`extensions/pi_minimal_webui/bash-classifier.js`, new, pure):
+  quote-aware compound splitting on `&& || ; | &` + substitution/redirect/background
+  flags; a command is auto-allowable only when read-only AND every subcommand is
+  allow-ruled and none deny-ruled. **The 3 roadmap bypasses are closed even against
+  stale configs**: `git status && rm -rf ./src`, `echo $(cat ~/.ssh/id_rsa)`,
+  `git remote remove origin` all resolve gate.allow:false (verified live).
+  `echo` + mutating git verbs removed from the shipped floor; git recon allowlist
+  narrowed to status|log|diff|show|blame|ls-files|branch --show-current|remote -v.
+- **Modes** (user request): default / auto-approve (ordinary-ask → allow,
+  sensitive/deny stay) / read-only (read-class only, silent deny + notify,
+  coordination tools exempt) / **yolo** (everything allows, NO prompts,
+  session-scoped, confirm-gated, never persisted — config with `mode:"yolo"` is
+  rejected). "Allow always" now writes an exact-selector `grants` entry (the FR-9
+  compound gate is binding for rule-based allows, so grants are the explicit
+  bypass).
+- **Approval broker** (`broker.js`, new, pure): server-owned pending registrations
+  for every blocking extension-UI request (tool identity via the preceding
+  `tool_execution_start`); first-response-wins, stale/unknown ids rejected (410),
+  `approval_resolved` broadcast, cleared on pi exit/workspace switch, replayed via
+  `/api/snapshot` `pendingApprovals` so a reload re-renders the approval.
+- **Browser wire** (`public/app.js`): `toolCallId`-keyed args map replaces the
+  `curToolArgs` singleton in permission paths; version-1 marker
+  `{v:1, toolCallId, decision}` on every approval response (server validates
+  identity, strips the marker, forwards the unchanged payload); ack-before-close
+  (UI closes only on `approval_resolved`; 2s watchdog; Esc/backdrop = Deny via the
+  same path; stale marker keeps the UI with retry); snapshot replay of pending
+  approvals; the safeguard `setStatus` provenance context (tier/rule/layer/reason/
+  mode) is stashed, not shown in the statusbar.
+- **In-card approval** (`public/app.js` + `style.css`): the decision surface now
+  renders IN the tool card (risk banner + matched rule + layer + Review/Edit diff +
+  buttons; mandatory-ask offers only Allow once/Deny), bottom-sheet via
+  `body.w-narrow` at narrow widths (no media queries — U1 shell contract), modal
+  fallback for offscreen/reload; ≤50 decision receipts.
+- **`#permissions` page** (`public/index.html` + `app.js` + `permissions-ux.js`
+  dual-mode helpers): hash-routed, reachable from settings + command palette;
+  posture select (yolo confirm step), Explain form (same engine as the gate +
+  per-part bash breakdown + auto-allowable flag), effective policy layer tree with
+  per-rule layer badges, diagnostics, numbered session-grant revoke + clear-all,
+  redacted decision audit. Settings sidebar gains a mode select. Fixed
+  `/api/permissions` endpoints only (GET / PUT config / DELETE grants[:n] /
+  POST explain / GET audit) — browser never touches policy files.
+- **JetBrains** (`jetbrains/`): canonical workspace containment
+  (`WorkspaceContainment`, unit-tested) gates the native diff's filesystem reads;
+  mid-review file-change conflict flag on edited decisions; mode badge + YOLO
+  warning in the native top bar; requestId/toolCallId ride the bridge payload.
+- Tests: 7 new suites (~90 assertions) + gradle test task green
+  (`JAVA_HOME` must be ≥17; WebStorm JBR 21 used). Full suite green; rpc-sse
+  remains environmental. Live e2e verified: broker register → marker-validated
+  resolve → broadcast → 410s → audit; mode PUT/409/400 round trip; bypass
+  gate.allow:false.
+
+- `public/app.js` (fetchSnapshot race): the snapshot is a point-in-time bundle —
+  `get_state` is read on the server BEFORE the possibly-multi-MB transcript is
+  serialized. When a turn ended while the snapshot was in flight, the live SSE
+  stream consumed `agent_end` (Node's live buffer cleared), then the stale
+  snapshot applied + replayed the buffer — re-arming the activity bar with
+  `writing…` — and the finalize branch was skipped because the STALE
+  `isStreaming:true` said the turn was live. Nothing left could reset it: the
+  spinner + label stuck on "writing…" until a reconnect.
+- Fix: after applying the snapshot + replay, `fetchSnapshot` issues a fresh
+  `get_state` (`id: "snap-recheck"`); the response handler finalizes the turn
+  (via new shared `finalizeDeadTurn()`) only when pi is freshly idle AND no new
+  `agent_start` has fired since the capture (`agentStarts` counter — bumped on
+  EVERY agent_start, live or replay, so a new turn can never be clobbered). The
+  recheck deliberately does NOT `applyState()` — a stale `isStreaming:true`
+  captured by the check itself must not re-arm the spinner after the live
+  stream already reset it. The pre-existing `!piStreaming` dead-turn branch
+  now shares `finalizeDeadTurn()`.
+- `test/status-race.test.js` (new): source-level structure audit of the guard
+  - a state-machine simulation of both semantics — stale snapshot converges to
+  "ready"; a new turn during the recheck is untouched.
+
+### 2026-08-07 — a11y: loaded-session replay rendered into a detached feed (fix)
+
+- `public/app.js` + `public/index.html` (post-slice bug): the a11y feed
+  refactor made `#tfeed` a child of `<main id="transcript">`, but all
+  three history-clearing sites still called `setSafeHtml(transcript, "")`
+  — clearing `<main>` DESTROYED the feed element, so loaded/resumed
+  sessions rendered into a detached node and appeared blank (live chat
+  kept working: the feed existed until the first clear). Fixed:
+  `applyMessages`, the `workspace_changed` handler, and `resumeSession`
+  now clear `feedEl`; `applyMessages` reads `feedEl.lastChild` for
+  `data-mi`; the empty-state moved OUT of the feed (now a sibling of
+  `#tfeed`) so it survives clears. Regression guards added to
+  `test/a11y-contract.test.js` (no `setSafeHtml(transcript`, ≥3
+  feed-clears, `feedEl.lastChild`).
+
+### 2026-08-07 — a11y: tested contrast contract + native controls (U2/A4 slice)
+
+- `a11y-contrast.js` (new, Node-only): zero-dep WCAG relative-luminance /
+  contrast math, a theme-token scanner (bare `:root` + `[data-theme=…]`
+  blocks; media-nested blocks + comments stripped; color-mix/rgba/short-hex
+  ignored), `resizeStep` (splitter keyboard math), `statusTextForEvent`
+  (coarse-progress mapping).
+- `test/contrast.test.js` (new): 16-row pair table × both themes = 32
+  asserts ≥4.5:1. Paperlike `--muted`/`--secondary`/`--accent`/`--success`/
+  `--warning` darkened to pass (e.g. muted 3.04→4.84 on raised, accent
+  3.89→5.49); dark theme untouched (`:root` unchanged) and proven.
+- `test/a11y-contract.test.js` (new): source-level audit of the REAL
+  files — native disclosures/icon buttons with accessible names, a
+  hover→focus-twin auto-audit (zero violations), region labels, status /
+  busy wiring, per-control 24px touch rules.
+- `public/app.js`: tool-card heads converted from `<div role="button">` to
+  native `<button aria-expanded>` (the app's only role="button"); turns
+  render as `<article class="msg">` with `aria-labelledby` → `turn-N-role`
+  ids in a new `#tfeed` (`role="feed"`, kept inside `<main>`); tool
+  blocks and compaction markers are articles too; `#a11y-status`
+  (`role="status"`) announced at turn boundaries only (never per token);
+  `applyMessages` brackets the DOM mutation with `aria-busy`; the sdd
+  rail splitter is now focusable + arrow/Home/End-operable with live
+  `aria-valuenow` (pure `resizeStep`).
+- `public/style.css`: 24px touch floors (ws-x, ws-open, imgthumb-x,
+  ws-mini, set-x, sdd-close, toast-x, um-refresh), rail-resize 24px hit
+  zone via `::after` + `.sdd-rail` left-padding reservation,
+  `@media (hover: none)` keeps the handle visible, `scroll-padding-top`
+  under the sticky diff hunk labels, `.sr-only` clip class.
+- `public/index.html`: `#tfeed` feed wrapper, `#a11y-status`, `#input`
+  `aria-label="message composer"`, `#ws-new` `aria-label="new session"`.
+- Decisions: feed over log (log's implicit aria-live would announce every
+  streamed token); scroll-padding goes where sticky children actually
+  exist (inside diff boxes); palette listbox options are exempt from the
+  focus-twin rule (their `.sel` highlight shares the hover rule).
+
+### 2026-08-07 — diff(editable): Review/Edit split + versioned apply (U5/A5 slice)
+
+- `public/diff-view.js` (new, dual-mode): LCS row builder (`diffLines`/
+  `diffRows`, ported verbatim from app.js), monotonic gutter reserve
+  (`gutterReserveCh`, digits+1, never shrinks), `dirty`, `largeHunkExceeds`
+  (4M-cell guard), `lineCountOf`. Registered in the STATIC whitelist + load
+  order before app.js.
+- `workspace-file.js` (new, server-side): `versionOf` (sha256 hex) +
+  fs-injected `writeWorkspaceFileIfVersion` — hash must match, `null` =
+  create-only, missing field = 400, mismatch = 409 with the current version.
+- `server.js`: `/api/file` returns `version`; `/api/write` requires
+  `expectedVersion` — the apply-time read→write version closes the TOCTOU
+  window; CSRF/safePath/body-cap untouched.
+- `public/app.js`: the editable pane is now a Review/Edit split — Review
+  renders the aligned highlighted diff (read-only), Edit shows the REAL
+  textarea (visible text/caret/selection) + a debounced line-number gutter;
+  the transparent overlay plane is deleted and the SAME textarea element
+  persists across mode switches (undo/selection/scroll survive). No LCS
+  while typing: a 150ms coalesced recompute runs on Review-entry/Apply/
+  blur; >4M cells shows an explicit paused label instead of freezing. Apply
+  sends `expectedVersion`; a 409 opens an inline conflict banner (Reload /
+  Compare / Cancel). Dirty dot + Reset Proposal + Ctrl/Cmd+Enter apply +
+  file-named `aria-label`/`title`; stepper warns that a rebuild drops edits;
+  the approval-capture getter stays byte-identical
+  (`label | {label, oldFull, newFull}`); JetBrains wire contract untouched.
+- `public/style.css`: shared geometry vars on `.sx-host` (fixed-px
+  `--sx-lh: 17.4px`), `.sx-hdr` equalized at 36px, edit-mode gutter strip,
+  segmented Review/Edit toggle, conflict banner, paused state, editor
+  extent border. Global textarea cap excluded via `textarea:not(.sx-ta)`
+  (see the un-cap entry below).
+- Tests: `test/diff-view.test.js` (47), `test/workspace-file.test.js` (29),
+  `test/diff-contract.test.js` (12, red-first) — all green; full existing
+  suite green; HTTP wire smoke verified the version protocol end-to-end.
+
+### 2026-08-07 — diff(editable): un-cap the diff editor (global textarea rule)
+
+- `public/style.css` (browser spot-check round 3): the composer's generic
+  `textarea { min-height: 48px; max-height: 200px }` rule applied to the diff
+  editor too — nothing overrode `max-height`, so `.sx-ta` was clamped to
+  exactly 200px (~11 lines) regardless of the 45vh pane. This explains all
+  earlier symptoms (text in the upper third, gutter numbers below the text
+  field). Selector narrowed to `textarea:not(.sx-ta)` — the same exclusion
+  idiom the `#modal textarea:not(.sx-ta)` rule already used; the composer
+  and modal inputs are unaffected, and the transcript diff editor (base
+  `height: 300px`) is freed from the cap as well. The pre-A5 overlay design
+  masked the cap (transparent textarea).
+
+### 2026-08-07 — diff(editable): floor the modal edit-pane height
+
+- `public/style.css` (browser spot-check round 2 of the U5 editable-diff
+  slice): the permission modal's flex chain is content-driven — the
+  `max-height: 92vh` clamp only resolves when the diff overflows, so short
+  diffs sized the edit pane to the textarea's intrinsic 2-row height. Fixed
+  with `#modal .sx-eedit { min-height: 45vh }` (visible only in Edit mode;
+  Review stays content-sized) **plus** a deterministic `flex: 1 1 45vh`
+  basis on `#modal .sx-ta` — the auto basis resolved to 2 rows and flex-grow
+  had no free space in the content-driven chain; the explicit basis never
+  depends on the chain resolving, and grow still fills the pane when a tall
+  diff makes the chain definite.
+- `public/style.css`: edit-mode textarea now draws a hairline border
+  (`.sx-host[data-mode="edit"] .sx-ta`) so the editor's extent is visible
+  instead of reading as dead space below the text.
+
+### 2026-08-07 — diff(editable): equal header heights + fill-height edit pane
+
+- `public/style.css` (browser spot-check round 1 of the U5 editable-diff
+  slice): `.sx-hdr` gets `min-height: 36px` — the new column's header carries
+  the 24px Review/Edit toggle + Apply and ran ~12px taller than the bare
+  `− original` header, offsetting the two column bodies; both headers now
+  clamp to the same height.
+- `public/style.css`: `.sx-eedit` becomes `flex-direction: column` — it was a
+  row flex, so in the approval modal the `flex:1 1 auto; height:auto`
+  textarea only stretched horizontally and collapsed to its ~2-row intrinsic
+  height (~34px, gutter clipped to match); the editor now fills the modal
+  column vertically.
+
+### 2026-08-07 — shell(context): move the ctx readout onto the pressure meter
+
+- `public/{index.html,app.js,style.css}`: the context meter (`#ctx-meter`,
+  footer top edge) now carries the numeric readout `percent% (used/max)` in a
+  muted mono label (danger-tinted when hot); the statusbar `ctx` readout
+  (`sb-ctx`) was removed from the primary group — the meter is now the single
+  context display. Supersedes FR-10.4's "sb-ctx remains" clause.
+
+### 2026-08-07 — shell(adaptive): widen the transcript column to 1200px
+
+- `public/style.css`: transcript content cap 900 → 1200px (the 900px cap bound
+  even at 1440 with both rails open, where the content area is ~1112px);
+  edge-to-edge on ultrawide is still avoided, now centered at 1200px.
+
+### 2026-08-07 — docs(security): specify permission policy, broker, and WebUI editor
+
+- **Verified defects:** record that shipped safe-command prefix rules can
+  auto-allow compound/substitution/redirection and mutating Git commands;
+  pending extension dialogs disappear across reload; permission POSTs close the
+  modal before acknowledgement; remembered grants are global/order-sensitive;
+  and the native bridge accepts an unrestricted browser path.
+- **Roadmap/plan (`docs/{roadmap,plans}.md`):** add Now outcome U6 and Phase A6
+  for a tested pure policy engine, conservative shell/path handling, versioned
+  workspace-scoped policy, fail-closed headless behavior, a `toolCallId`-keyed
+  protocol, server pending-request broker, acknowledged responses, timeout/
+  abort/multi-tab convergence, and JetBrains containment/lifecycle hardening.
+- **Permissions page (`docs/design.md`):** specify a dedicated same-shell
+  `#permissions` view opened from Settings, Alt+K, and the rail badge. It owns
+  structured effective-rule editing, active grants/revoke, pending links,
+  redacted audit, Explain, and a validated revision-safe advanced JSON view;
+  fixed APIs keep config/workspace resolution server-authoritative.
+- **Research/comparison (`docs/{improvements,pi-livecraft}.md`):** add the
+  source-backed audit and adopt only Livecraft's `pendingUi` refresh recovery +
+  acknowledged response pattern, not its manager/supervisor process model.
+  Primary comparisons: Pi extension/RPC docs, VS Code approvals, Cline Auto
+  Approve, and Claude Code command/path permission semantics. No runtime code
+  changed.
+
+### 2026-08-07 — docs(roadmap): replace the stale backlog with an executable sequence
+
+- **Roadmap (`docs/roadmap.md`):** remove shipped PWA, highlighting, themes,
+  Git/analysis foundations, images, subagents, and reconnect work from the live
+  backlog; replace the old numbered list with Now/Next/Later horizons, stable
+  outcome IDs, dependencies, explicit non-goals, and conditional security/
+  checkpoint/context-pruning gates.
+- **Action plan (`docs/plans.md`):** replace completed O3/O5/M1 implementation
+  history with Phases A–F covering correctness/accessibility, the workspace-tools
+  rail, conversation/change/session workflows, context/templates/JetBrains,
+  long-history performance, validation matrices, and phase exit criteria.
+- **Order:** adaptive/contrast/draft/live-state correctness must pass before the
+  rail; conversation and change-review contracts precede context/IDE work;
+  incremental history follows stable turn semantics. Remote auth, checkpoints,
+  directory selection, and compaction pruning require separate specifications.
+- **Index:** add the action plan to `docs/README.md` and clarify the roadmap as
+  the source of truth for accepted product outcomes.
+- **Follow-up — editable diff (`docs/{roadmap,plans}.md`):** add Now item U5 and
+  Phase A5 after confirming the web editor's transparent textarea is offset by
+  unmatched vertical padding and cannot track diff-only deletion placeholders.
+  Plan a shared-geometry stopgap, explicit Review/Edit rendering, conflict-safe
+  hash/version writes, debounced large-hunk updates, dirty/reset/keyboard state,
+  and a later unified/intraline/navigation review pass. No runtime code changed.
+
+### 2026-08-07 — docs(ui): rebaseline UI-improvement research
+
+- **Research:** inspect the live UI at 1440×1000 and 480×900, current
+  HTML/CSS/rendering paths, paperlike/dark contrast ratios, and the JetBrains
+  JCEF bridge; compare primary guidance from VS Code/Cline, WAI-ARIA, WCAG 2.2,
+  GitHub Primer, web.dev, and the IntelliJ Platform SDK.
+- **Audit (`docs/improvements.md`):** replace the stale July cross-cutting list
+  with a current workbench model, verified issues, ranked delivery tranches,
+  accessibility acceptance criteria, long-session rendering plan, and native
+  JetBrains integration opportunities.
+- **Key findings:** narrow sidebar/composer rules fail in the actual cascade;
+  status metadata horizontally overflows even at desktop width with the sidebar
+  open; paperlike small-text pairs measure as low as 3.04:1; status is
+  duplicated; the empty state is CSS-only; transcript/tool/splitter semantics
+  are incomplete; drafts and Improve are destructive under failures/races.
+- **Design/index:** correct `docs/design.md`'s obsolete paperlike contrast claim
+  and refresh the audit's role in `docs/README.md`. No runtime code changed.
+
+### 2026-08-07 — docs(pi-livecraft): consolidate the post-adoption audit
+
+- **Why:** the four original pi-livecraft documents described a pre-port target
+  and implementation plan, but Phases 0–5 have shipped; keeping those snapshots
+  as current docs obscured the smaller set of verified residual gaps.
+- **What (`docs/pi-livecraft.md`):** one current audit now records shipped
+  overlap, source-backed correctness findings, ranked UI/UX and feature
+  candidates, the zero-build/process/security boundaries that still reject a
+  port, and a file-by-file source map.
+- **Fresh findings:** the generic right rail is only partially realized (SDD is
+  persistent while Analysis/Git remain modal), live analysis can use stale
+  bootstrap messages, the main Pi decoder silently drops session records over
+  8 MiB, narrow workspace rules lose the CSS cascade, Improve can overwrite a
+  newer draft, and the slash palette retains rebuild-on-hover interaction.
+- **Cleanup:** remove the superseded architecture, UI, rendering, and action-plan
+  documents; add the consolidated audit to `docs/README.md`. Historical detail
+  remains available in Git.
+
+### 2026-08-06 — fix(windows): stop local git.js from shadowing Git for Windows
+
+- **Root cause:** Windows searches the process working directory before `PATH`
+  and this machine's `PATHEXT` includes `.JS`. The health poll's bare `git`
+  command therefore launched the repository's own `git.js` through its file
+  association. Because the probe was synchronous, the server stopped answering
+  session/snapshot requests while the editor was open; the next poll reopened
+  it after close, producing the apparent crash/reload loop.
+- **Fix (`git.js`, `server.js`):** centralize platform command selection in
+  `gitExecutableForPlatform()` (`git.exe` on Windows), use it for every
+  bridge-owned Git subprocess, and replace health probe shell strings with
+  `execFileSync` argument arrays. The first patch still let spawned pi and its
+  tools inherit `.JS`; server startup now also calls `sanitizeWindowsPathExt()`
+  so every descendant resolves bare `git` to Git for Windows.
+- **Regression (`test/git.test.js`):** assert Windows selects explicit
+  `git.exe` and strips only `.JS` from inherited `PATHEXT`; live smoke verified
+  health, a populated resumable-session list, and the bundled snapshot endpoint
+  while running from this repository.
+- **Follow-up — windowless spawns (`git.js`, `server.js`):** every git spawn
+  site (`runGit`, plus the `taskkill` kill path) now passes
+  `windowsHide: true`. Headless servers (detached launcher, `/webui`, IDE panel)
+  have no console, so a console-less parent spawning git.exe flashed a window
+  per call — and the git snapshot fires 6 parallel spawns, so opening git
+  status burst a pile of windows.
+- **Follow-up — palette clicks (`public/app.js`):** Alt+K mouse clicks were
+  dead while keyboard worked: per-item `onmouseenter` rebuilt the whole list on
+  every hover, so a node swap between `mousedown` and `mouseup` (hover drift or
+  a slow webview) retargeted the click to the container. Interaction is now
+  delegated on `cmdkList` (click/mouseover resolve `data-i`) and hover
+  selection toggles `.sel` in place without rebuilding.
+
+### 2026-08-05 — feat(usage): OpenCode Go subscription quota tracking in the usage bar
+
+- **Why:** the usage bar already covers z.ai (quota) and Codex (quota); OpenCode
+  Go is a third quota-based provider pi can log into (`opencode-go` in pi's
+  auth.json). Unlike z.ai/Codex it has **no public usage API** — verified against
+  upstream anomalyco/opencode source (zen routes are inference-only, response
+  headers scrubbed) and opencode-bar, which reads the quota windows out of the
+  dashboard page.
+- **Server (`server.js`):** new `GET /api/opencode-usage` proxy for
+  `https://opencode.ai/workspace/<id>/go` (dashboard HTML, `Cookie: auth=<…>`,
+  browser UA, 8s cap). The API key pi stores can't fetch quota (only validates
+  against `/zen/go/v1/models`), so creds are the browser-session cookie:
+  `OPENCODE_GO_WORKSPACE_ID` + `OPENCODE_GO_AUTH_COOKIE` env →
+  `~/.config/{opencode-bar,opencode-quota}/opencode-go.json`
+  (`{workspaceId, authCookie}`) → `X-OpenCode-Go-*` paste headers (same fallback
+  slot as the z.ai key paste). 401/403 → "cookie expired".
+- **Parser (`public/usage-provider.js`):** `opencodeGoWindows(html)` — port of
+  opencode-bar's dashboard parser (entity/escape normalization, then regex the
+  flat `{status,resetInSec,usagePercent}` object after `rollingUsage` /
+  `weeklyUsage` / `monthlyUsage`), handles both `__next_f.push` JSON-stringified
+  and SolidStart `$R[n]={…}` serialization. Shared browser/Node like md.js;
+  server.js `require`s it so raw HTML never crosses the wire.
+- **Client (`public/app.js`):** `opencode-go` → `opencode-go-quota` kind; three
+  percent bars (5h / 7d / 30d) in the header + usage modal via
+  `opencodeGoLimits()`; a workspace-id + auth-cookie form in the modal when no
+  creds are configured (localStorage `pi:opencode-go-creds`, sent as headers);
+  peak-hours badge gated to z.ai only (it was leaking onto Codex bars too).
+- **Tests:** `test/usage-provider.test.js` extended with opencode-bar's fixture
+  shapes (escaped JSON, SolidStart refs, partial windows, no-data).
+
+### 2026-07-22 — docs(design): restructure `docs/design.md` into the DESIGN.md format (google-labs-code/design.md)
+
+- **Why:** adopt a standard, machine-readable design-spec format so the visual
+  system is shareable across tools/agents.
+- **What:** YAML **frontmatter** (token groups `colors` / `typography` /
+  `rounded` / `components`, `version: alpha`) mirrors `public/style.css`
+  `:root`; the body reorganized into the format's 8 standard sections (Overview,
+  Colors, Typography, Layout, Elevation & Depth, Shapes, Components, Do's &
+  Don'ts). Component tokens cross-reference with `{group.key}`; prose uses
+  descriptive color names (Ink Black, Anthracite, Carolina Blue, …) mapped to
+  tokens.
+- **Kept accurate:** no spacing-scale token exists in `:root` → `spacing`
+  omitted, noted as ad-hoc in Layout. Filename kept lowercase (`design.md`) to
+  avoid breaking `docs/README.md` + `AGENTS.md` cross-refs; the doc notes it
+  follows the DESIGN.md format. `paperlike` documented as the switchable
+  alternate. `:root` remains normative where it disagrees.
+
+### 2026-07-22 — feat(theme): rework default theme into "dark" — black + anthracite, GitHub-dark neutrals/blue accent, slop-strip
+
+- **Why:** the default dark theme was a near-checklist of AI-slop tells
+  ([impeccable.style/slop](https://impeccable.style/slop/)): violet/cyan-on-dark
+  "AI color palette", dark-mode glowing box-shadow accents, frosted-glass
+  overlays, a violet hero aurora, and — the single most recognizable tell —
+  side-tab accent stripes on the user bubble, every tool/think card, the active
+  workspace row, and the SDD rail step. Reworked into a deliberate **dark**
+  theme instead.
+- **Palette (`public/style.css` `:root`):** black canvas (`#000000`), anthracite
+  panels (`#0d1117`/`#161b22`), GitHub-dark neutrals (`#e6edf3` text, `#7d8590`
+  muted, `#30363d` hairline) and accents — blue `--accent #4493f8`, code-blue
+  `--cyan #79c0ff`, green `--ok #3fb950`, amber `--warn #d29922`, red `--err
+  #f85149`. Neutral black soft shadow, no colored glow halo. Code/diff bodies
+  `#0d1117`.
+- **Slop tells removed:** the side-stripes (user bubble, `.tool`, `.think`,
+  `.ws-row.active`, `.ss-step.cur`); the violet hero `radial-gradient`; the
+  `backdrop-filter` glassmorphism on settings/modal; and the accent box-shadow
+  halos on the live dot, primary Send, and jump pill. Active sidebar/rail rows
+  now signal state via background + accent text instead of a stripe.
+- **Mono prose:** the transcript renders in the app's global monospace
+  (GitHub-dark style). An earlier iteration added a system-serif prose face
+  ("dark paper"); dropped for a cohesive mono identity.
+- **Docs:** `docs/design.md` §1/§2/§4/§5 rewritten for the dark theme + the
+  anti-slop rationale; `AGENTS.md` style.css row updated. **Renamed** the theme
+  `obsidian` → `dark` (label + `[data-theme]` value); the inline head script
+  migrates a stale `obsidian` in `pi:theme` localStorage → `dark` (and still
+  collapses the older removed `ayu`). Alternate theme stays `paperlike`.
+
+### 2026-07-22 — feat(ui): review visuals — status-bar overflow, semantic rows/palette, persistent connection states
+
+- **Why:** first pass on the `docs/improvements.md` → **Visuals** section (items
+  1–3, all High). The status bar wrapped/competed for space on narrow windows;
+  session/workspace rows and palette entries were non-semantic clickable `<div>`s;
+  and a dead/restarting backend was signalled only by a short-lived toast.
+- **Status-bar density (`index.html`/`style.css`/`app.js`):** the 9-readout footer
+  splits into a **primary** group (repo·model·ctx) always visible and a
+  **secondary** group (git·think·cache·tok·$cost·ide) that collapses into a native
+  `<details>` ⋯ popover under 720px. Primary scrolls internally if the repo path
+  overflows; `syncSbOverflow()` keeps the `<details>` open on wide / closed on
+  narrow and only reacts to actual wide↔narrow crossings (so an open popover
+  isn't snapped shut by a same-mode resize).
+- **Affordances (`app.js`/`style.css`):** workspace rows, sidebar session rows,
+  and modal session rows are now real `<button>`s — native keyboard/focus,
+  `aria-current` on the active row, `disabled` so the current row is inert. Their
+  `<div>` children became `display:block` spans (`<button>` accepts only phrasing
+  content). Hover/current affordances are gated on `:not(:disabled)`; `:active`
+  adds a pressed inset. The slash palette is now `role="listbox"` with
+  `role="option"` items (`aria-selected`, stable ids); the textarea carries
+  `aria-controls/expanded/autocomplete` + `aria-activedescendant` tracks the
+  arrow-key highlight, and mouse hover stays in sync with keyboard selection.
+- **State clarity (`app.js`/`style.css`):** the header status dot is now a
+  connection-state indicator (`setConnState`/`renderStatusDot`): connecting (amber
+  pulse) → ready (green steady) → working (green pulse) → reconnecting (red pulse)
+  → stopped (red steady) — so a dead/restarting backend stays visible instead of
+  toast-only. `pi_exit` + SSE errors now pin reconnecting. Empty transcript shows
+  a CSS-only `#transcript:empty::before` hint.
+- **Verify:** `node --check` clean; TS LSP clean on `app.js`; server boots, serves
+  all assets (HTTP 200), `/api/health` ok. The 5 ast-grep `no-case-declarations-js`
+  hits on the braced `tool_execution_end` case are false positives (decls sit in
+  nested `if`/callbacks, not the case clause) — dispositioned as false-positive.
+
+### 2026-07-22 — feat(skill): archive finished SDD sets into `.sdd/archive/`
+
+- **Why:** finished runs (verify phase) cluttered `.sdd/` top level; user asked
+  to move completed sets out once the implementation is done.
+- **`skills/sdd/SKILL.md`:** Phase 4 gains a terminal **Archive** step — after
+  `verify_{slug}_{date}.md` is written and every chunk is `[x]`, move the set's
+  four files (`plan_`/`spec_`/`tasks_`/`verify_`) into `.sdd/archive/`
+  (`mkdir -p` if missing), then confirm they're gone from `.sdd/` top level.
+  Guarded: archive only after verify + all-green (archiving an incomplete run
+  orphans the Resume Protocol). New **Archive on Completion** enforcement rule.
+- **`AGENTS.md`:** one-line orientation note in the sdd bullet.
+- **No server/app.js change:** `/api/plan-state` globs `.sdd/` non-recursively
+  (`readdirSync` + `.md` filter), so the `archive/` subdir is ignored and
+  archived sets vanish from the phase rail on the next 30s poll automatically;
+  the open-pane sync logic already closes a pane whose artifact disappears
+  (verified the subdir-ignored behavior with a throwaway fs test).
+
+### 2026-07-22 — feat(ui): SDD sidebar shows chunk progress (done/total)
+
+- **Why:** the SDD rail showed only a bare phase stepper; with the new per-chunk
+  model (compliance notes + checkpoints in `tasks.md`, see previous entry) there
+  was no at-a-glance view of how many chunks are done. User asked for the sidebar
+  to surface more detail.
+- **`server.js` (`/api/plan-state`):** for `tasks` artifacts, read the file and
+  count markdown checkboxes → adds `done`/`total` to the artifact object.
+  Heuristic regex (`^\s*[-*]\s*\[[ xX]\]`); correctly skips the indented
+  `- Tests:`/`- Compliance:` compliance-note sub-bullets and plain dependency
+  bullets (verified: 2/4 on a representative file). Ponytail ceiling noted inline:
+  counts checkboxes inside fenced code too — go fence-aware only if it misleads.
+- **`public/app.js`:** the `tasks` rail step now stacks a `done/total` meta line
+  under the label (rail is only 88px, so inline wouldn't fit); the expanded pane
+  title shows `tasks · slug (3/7)`.
+- **`public/style.css`:** `.ss-txt` column + `.ss-meta` 10px muted line under the
+  phase label.
+- **Scope kept narrow:** no new artifact type, so the phase stepper's
+  `plan|spec|tasks|verify` model is unchanged.
+
+### 2026-07-22 — feat(skill): SDD per-chunk compliance verification + resumable checkpoints
+
+- **Why:** Phase 4 ran the whole task list to completion before any compliance
+  review, so spec/plan drift could accumulate across many tasks before being
+  caught — and a mid-run crash or fresh session had no clean place to resume.
+  User asked to split the plan into small chunks, verify spec/plan compliance
+  after each, then continue — and make a new session startable after any step.
+- **`skills/sdd/SKILL.md` changes:**
+  - **Phase 3** task list now mandates small, atomic **chunks** (one change + one
+    test set each), each tagged with the FR(s) + plan goal(s) it delivers — the
+    explicit target for Phase 4's compliance check.
+  - **Phase 4** rewritten as a strict per-chunk loop: pick next unchecked chunk →
+    implement → run tests → **compliance check** (re-open spec + plan, confirm
+    the implementation actually satisfies the tagged FRs/goals, not just that
+    tests pass) → **checkpoint** (mark `[x]` + write a 1–2 line compliance note
+    inline in the tasks file) → auto-advance. Terminal `verify_{slug}_{date}.md`
+    generated only once every chunk is `[x]`.
+  - **New Resume Protocol:** the tasks file is the single source of truth; a fresh
+    session globs `.sdd/`, opens `tasks_{slug}_{date}.md`, finds the first
+    unchecked chunk, reads the `[x]` + compliance notes above it, and continues.
+  - **Enforcement Rules:** added *Compliance Per Chunk* (tests pass AND note
+    written) and *One Chunk at a Time* (no batching before compliance); fixed
+    Artifact Persistence to use the `{slug}_{date}` filenames (was stale legacy
+    fixed names).
+- **No server/UI changes:** checkpoints live inline in `tasks.md`; no new
+  artifact type, so `server.js` `/api/plan-state` regex and `app.js` phase
+  stepper (which only know `plan|spec|tasks|verify`) are untouched.
+
+### 2026-07-22 — chore(repo): split browser assets into `public/`
+
+- **Why:** root was cluttering as the app grew (12 source/asset files); separate
+  what the browser fetches from Node-side. Zero-build invariant preserved —
+  this is tidiness, not a functional change.
+- **Moved into `public/`:** `index.html`, `app.js`, `md.js`, `style.css`,
+  `usage-provider.js`, `manifest.webmanifest`, `sw.js`, `icon-192.png`,
+  `icon-512.png`, `vendor/`. Server-side (`server.js`, `bin.js`, `workspaces.js`)
+  stays at root.
+- **Rewiring (minimal — `STATIC` maps URL→file, so URL paths unchanged):**
+  `server.js` points `HTML_PATH` + the static-serve `readFileSync` at `public/`
+  (2 lines; the `STATIC` whitelist itself untouched). `md.js`'s
+  `require("./vendor/markdown-it.min.js")` survives because `vendor/` moved with
+  it. `test/usage-provider.test.js` require repointed to `../public/usage-provider.js`.
+  `package.json` `files`: three browser-file entries → `"public"` (side effect:
+  now also ships `app.js`/`style.css`/`vendor/`, which were previously absent
+  from the whitelist — latent oversight). `AGENTS.md` file map + `md.js`
+  self-test command updated to new paths.
+- **Verified:** both unit suites pass; `md.js` self-test renders at new path;
+  all 13 endpoints boot-serve HTTP 200 with correct content-types.
+
+### 2026-07-22 — feat(ui): installable PWA (own window, taskbar icon)
+
+- **Why:** the webui reads as a standalone app; PWA is the rung-1/native way to
+  give it window + dock identity for ~zero cost — no rewrite, no build step
+  (chosen over Flutter/Tauri; Flutter is a full 6.5k-line rebuild that kills the
+  zero-build invariant, Tauri is the heavier runner-up only if a real binary /
+  tray / native menus are wanted later).
+- **Added:** `manifest.webmanifest`; `sw.js` — an installability-only service
+  worker (network-only, caches nothing so the edit+refresh dev loop is kept,
+  never intercepts `/api/` so the `/api/events` SSE stream can't buffer/break);
+  `icon-192.png` + `icon-512.png` — on-brand violet diamond (`--accent` on
+  `--bg`), drawn as a polygon (no font dependency). Wired into `index.html`
+  (manifest link, favicon, apple-touch-icon, `theme-color`, SW registration) and
+  the `server.js` `STATIC` whitelist (4 entries, no-cache like all assets).
+- **Install:** restart the server (HTML is cached at startup), open in
+  Chrome/Edge → install icon in the address bar → own chromeless window +
+  taskbar icon. `localhost` is a secure context so the SW registers.
+
+### 2026-07-22 — feat(ui): stop the webui — standalone `--stop` + in-UI button
+
+- **Standalone stop (`bin.js`):** `pi-webui --stop [port]` (alias `stop`) finds
+  whatever listens on the port and force-kills the **whole process tree**
+  (server + its `pi --mode rpc` child), not just the listener — so it works when
+  the server is hung, the process handle is lost (pi restarted), or it was
+  launched elsewhere (`pi-webui` vs `/webui` vs `node server.js`). Windows:
+  `netstat -ano` → PID is the last column (locale-independent — matches
+  `LISTENING`/`ABHÖREN`/…) → `taskkill /T /F`. POSIX: `lsof -ti tcp:PORT
+  -sTCP:LISTEN` → `pgrep -P` descendant walk → `SIGKILL` (process-group
+  fallback if no `pgrep`). This is the force fallback for the hang case, since a
+  hung server can't serve a button.
+- **In-UI stop button (`server.js`, `app.js`, `index.html`, `style.css`):**
+  Settings → **server → stop webui** (danger-styled). `POST /api/stop` responds
+  `{"ok":true}`, then `stopServer()` (150ms later so the 200 flushes)
+  broadcasts `{type:"stopping"}`, force-kills `pi`, and a `shuttingDown` guard
+  in the `pi` exit handler tears the server down (`server.close()` +
+  `process.exit(0)`) instead of respawning. The CSRF/`isAllowed` gate covers it
+  like every POST. Client-side `showStopped()` (idempotent) closes the
+  `EventSource` (no reconnect loop) + toasts; other open tabs reach it via the
+  broadcast. Graceful stop — needs the server responsive; for hangs use `--stop`.
+- **Why:** no way to stop a hung/crashed webui short of hunting PIDs by hand, and
+  no clean in-UI shutdown. The two are complementary: button = graceful,
+  `--stop` = force-by-port.
+- **Files:** `bin.js`, `server.js`, `app.js`, `index.html`, `style.css`.
+- **Verified:** `node --check`; Windows smoke — `pi-webui --stop` reaped a
+  parent+child tree by port (locale=de); `POST /api/stop` killed server + `pi`,
+  listener gone, no orphan. POSIX `lsof`/`pgrep` path mirrors the extension's
+  proven `killTree` (untested here — no POSIX box).
+
+### 2026-07-21 — feat(ui): detached `pi-webui` launcher + workspace-switch lock + sidebar polish
+
+- **Detached launcher (`bin.js`):** `pi-webui` now spawns `server.js` in its own
+  process group, so **closing the terminal/console no longer kills the webui** —
+  the server (and the `pi --mode rpc` child it owns) keep running after the
+  launcher exits. It polls a temp log to report an early death (port in use, pi
+  spawn failure), opens the browser, then exits. New `PI_WEBUI_NO_OPEN` skips the
+  auto-open (headless/IDE). (`node server.js` standalone is unchanged.)
+- **Workspace-switch lock (`PI_WEBUI_NO_SWITCH`):** a new env flag (1/true/yes)
+  disables project switching — `POST /api/workspace` → 403 and `/api/health`
+  advertises `noSwitch`, which hides the `#wsbar` Workspaces section entirely
+  (Sessions stays). The IDE `/webui` extension now sets it by default (the IDE
+  owns the cwd); standalone `pi-webui` leaves switching on.
+- **Sidebar UX:** the `#wsbar` collapse/expand buttons (≪/≫) moved to the
+  vertical center of the edge (were top-aligned).
+- **Files:** `bin.js`, `server.js`, `app.js`, `style.css`,
+  `extensions/pi_minimal_webui/webui.ts`, `AGENTS.md`.
+- **Verified:** `node --check` on all JS. (Live detachment + 403 smoke returned
+  no output in this harness — worth a 10s manual confirm.)
+
+### 2026-07-21 — feat(ui): workspace sidebar + SDD rail relocated to the right
+
+- **What:** persistent left sidebar (`#wsbar`) listing every project pi has run
+  in (auto-discovered from session storage) with one-click switching, plus the
+  active project's session history (resume without the footer modal). The SDD
+  phase rail moved left→right (Task 5 was already in place; verified + its stale
+  "left edge" CSS comment fixed). Left = navigation, right = run context — the
+  two rails now flank the transcript on opposite edges.
+- **Why:** pi-webui bound to one `PI_CWD` (server-start fixed) and showed history
+  only in a disposable footer modal; switching projects meant restarting the
+  server. The sidebar makes both a single click from the chrome. Spec-driven:
+  `.sdd/{plan,spec,tasks,verify}_workspace-sidebar_21072026.md`.
+- **How:** new `workspaces.js` (pure — `discoverWorkspaces` scans
+  `~/.pi/agent/sessions/--<cwd>--/` subfolders and recovers each project root
+  from the newest `.jsonl`'s `{type:"session"}.cwd`, **not** the encoded folder
+  name; `isKnownWorkspacePath` gates switches to realpath-matches only).
+  `server.js` `PI_CWD` became `let`; `POST /api/workspace` validates →
+  `switchWorkspace` mutates it, tree-kills pi, and the exit handler respawns
+  immediately in the new cwd (skipping crash backoff) + broadcasts
+  `workspace_changed` to all SSE clients. `app.js` resyncs on that event and
+  renders the sidebar; `safePath`/sessions re-derive off the live `PI_CWD`.
+  Collapsible per-rail (`localStorage`), edge launcher re-opens, auto-collapses
+  <720px.
+- **Security:** the switch endpoint accepts **only** a realpath-match of a
+  discovered workspace — never an arbitrary path — so `safePath`'s sandbox can't
+  be pointed outside a known project root. CSRF + DNS-rebinding gate unchanged.
+- **Verified:** `node test/workspaces.test.js` (T1.1–T1.8 green); real-data
+  discovery (6 workspaces, correct active); boot smoke (`GET /api/workspaces` 200,
+  bogus `POST /api/workspace` 400, `Host:evil.com` 403, page serves both rails);
+  `node --check` on all JS. Browser-only flows (multi-tab broadcast,
+  click-switch, collapse persistence, mid-stream abort) are the manual smoke
+  matrix in the verify report.
+- **Zero-build intact:** no new deps; plain edits + one CommonJS module + one
+  `node:assert` test.
+- **Files:** `workspaces.js`, `test/workspaces.test.js` (new); `server.js`,
+  `app.js`, `index.html`, `style.css` (edits).
+
+### 2026-07-21 — feat(bin): `pi-webui` standalone launcher (no pi TUI needed)
+
+- **What:** added a `bin.js` launcher + `package.json` `bin` entry, so
+  `npm i -g pi-webui` exposes a `pi-webui` command that starts the server (which
+  spawns its own `pi --mode rpc`) and auto-opens the browser — no need to start
+  pi or type `/webui`. Equivalent to `node server.js` + browser open.
+- **Why:** the webui already spawns its own pi (`server.js` owns the subprocess),
+  so it never required pi *running* — only the ergonomics were missing (no global
+  command; `PI_CWD` defaulted to the shell cwd). The launcher closes that gap.
+- **How:** `bin.js` `require()`s `server.js` in-process (it reads `PORT`/`PI_BIN`/
+  `PI_ARGS`/`PI_CWD` from env and listens), then opens the browser after a 400ms
+  delay (reusing the `openBrowser` logic from `webui.ts`). `Ctrl-C` kills the
+  whole tree because pi is an in-process child (same process group), unlike the
+  detached `/webui` spawn which needs `killTree`.
+- **Limit (pre-existing, separate P0):** `package.json` `files` still omits
+  `app.js`/`style.css`/`vendor`, so a global install ships a broken UI until that
+  is fixed (tracked in `docs/improvements.md`). The bin entry itself is correct.
+- **Verified:** `node --check bin.js`; runtime smoke on PORT 4399 printed the
+  `pi-webui on http://127.0.0.1:4399` ready line, then clean tree-kill.
+- **Files:** `bin.js` (new); `package.json` (`bin`, `files`, description);
+  `AGENTS.md` (run/dev).
+
+### 2026-07-21 — feat(webui): SDD phase rail replaces the header plan badge
+
+- **What:** the header `plan-badge` + its modal plan/spec viewer are replaced by
+  a persistent **left rail** (`#sddbar`). While an active (non-`verify`) SDD set
+  exists, the rail shows the 4-phase stepper vertically (`plan`→`spec`→`tasks`→`verify`,
+  `●` reached / `○` pending, current in accent); phases without an artifact yet are
+  dimmed/disabled (nudges the next phase). Clicking a reached phase expands the
+  rail into a pane that renders that doc as markdown (via `md()` + `highlightCode()`);
+  clicking it again or the `×` collapses back to the rail. Expanded state + the
+  open doc persist across reloads (`localStorage["pi:sddbar"]`). No SDD set → the
+  rail is fully hidden (`display:none`, out of the a11y tree).
+- **Why:** requested — surface the active SDD step as a small always-on sidebar
+  instead of a header pill, expand on demand to read the doc, and keep todos out
+  of it (they stay in `#todopanel`).
+- **How:** `position:fixed` left rail; `body.sdd-on`/`.sdd-open` set `margin-left`
+  so the whole in-flow app (header, transcript, composer, statusbar) shifts right
+  in unison — nothing floats on the left, so there are no collisions, and the
+  width/margin use `min(400px,58vw)` to self-limit on narrow screens. Reuses the
+  existing `activeSet`/`planSets`/`setSummary`/`renderPlanDoc`; drops the now-dead
+  `updatePlanBadge`, `openPlanViewer`, `planDocTabs`, `todosAsMarkdown`,
+  `stepperHtml`, `todoActive`, and `PHASE_NEXT`. `/api/plan-state` is unchanged.
+- **Files:** `index.html` (drop `#plan-badge`; add `#sddbar` aside); `style.css`
+  (`.plan-pill`/`.sdd-stepper`/`.doc-tabs` → `#sddbar`/`.sdd-rail`/`.ss-step`/
+  `.sdd-pane`/`.sdd-head`/`body.sdd-on*`); `app.js` (`updateSddBar`/`openSddPhase`/
+  `closeSddPane`/`initSddBar`); `AGENTS.md` (skills/sdd row).
+
+### 2026-07-21 — docs: add cross-cutting improvements audit
+
+- **What:** added a prioritized audit grouped by visuals, performance, and
+  features/reliability, including the smallest practical fixes and a recommended
+  implementation order.
+- **Why:** preserve the review as durable project knowledge while keeping
+  `docs/roadmap.md` authoritative for detailed feature proposals.
+- **Files:** `docs/improvements.md`; `docs/README.md`.
 
 ### 2026-07-21 — fix(webui): modal diff scroll broken; editable textarea collapsed to ~2 rows
 
@@ -1178,7 +2260,7 @@ Five reported bugs:
 
 - `docs/todo.md` was stale (line-count claims and the "~11 pieces" mutable-state
   count had drifted; all P1/P2 items were long done) and redundant — its two open
-  P3 items were already listed in [Open work](#open-work). Removed it; `docs/`
+  P3 items were already listed as open work in [`AGENTS.md`](AGENTS.md). Removed it; `docs/`
   now holds durable specs only (`design.md`, `README.md`). Open work is tracked
   solely here. Also refreshed stale line-counts in the file map.
 

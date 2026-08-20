@@ -1,19 +1,31 @@
 {
   "name": "pi-webui",
   "version": "0.2.0",
-  "description": "Minimal-dependency web UI for pi. `pi install npm:pi-webui`, then type /webui.",
+  "description": "Minimal-dependency web UI for pi. Launch directly (`pi-webui`) or via pi (`/webui`).",
   "keywords": ["pi-package"],
   "license": "MIT",
   "files": [
     "server.js",
-    "index.html",
-    "md.js",
-    "usage-provider.js",
+    "bin.js",
+    "broker.js",
+    "git.js",
+    "isolated-prompt.js",
+    "jsonl.js",
+    "livebuf.js",
+    "recent-sessions.js",
+    "session-entries.js",
+    "subagents.js",
+    "workspace-file.js",
+    "workspaces.js",
+    "public",
     "extensions",
     "skills"
   ],
   "scripts": {
     "start": "node server.js"
+  },
+  "bin": {
+    "pi-webui": "bin.js"
   },
   "pi": {
     "extensions": ["./extensions"],

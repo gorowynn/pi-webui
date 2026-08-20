@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1, viewport-fit=cover"
+		/>
+		<title>pi</title>
+		<link rel="manifest" href="manifest.webmanifest" />
+		<link rel="icon" href="icon-512.png" />
+		<link rel="apple-touch-icon" href="icon-192.png" />
+		<meta name="theme-color" content="#0a0a0b" />
+		<link rel="stylesheet" href="style.css" />
+		<link rel="stylesheet" href="vendor/highlight.css" />
+		<script>
+			// ponytail: anti-FOUC — apply saved theme before first paint (style.css is parsed above).
+			// Always set the attr before paint; default "dark". Back-compat: a
+			// stale "obsidian" (renamed → "dark") or "ayu" (removed) collapses to
+			// "dark"; the renamed value is migrated so the select stays in sync.
+			(function () {
+				var t = localStorage.getItem("pi:theme");
+				if (t === "obsidian") {
+					t = "dark";
+					localStorage.setItem("pi:theme", t);
+				}
+				if (t !== "dark" && t !== "paperlike") t = "dark";
+				document.documentElement.setAttribute("data-theme", t);
+			})();
+		</script>
+		<script>
+			// ponytail: register the installability-only SW (see sw.js). No-op where
+			// unsupported; failures are ignored (never block the app).
+			if ("serviceWorker" in navigator) {
+				window.addEventListener("load", function () {
+					navigator.serviceWorker
+						.register("/sw.js")
+						.catch(function () {});
+				});
+			}
+		</script>
+	</head>
+	<body>
+		<script>
+			// ponytail: width-mode classes (w-wide/w-mid/w-narrow) — the single
+			// bounded ResizeObserver for the shell, run here (before first layout)
+			// so narrow screens never flash the wide layout. Viewport-derived
+			// (NOT body-content-derived): body margins depend on the classes, so
+			// content-derived classes would oscillate (spec FR-1). On an actual
+			// class flip, dispatch widthchange on <body> for app.js listeners.
+			(function () {
+				var WIDE = 1024; // >1024 = w-wide
+				var NARROW = 720; // <=720 = w-narrow
+				function clsForWidth(w) {
+					if (w <= NARROW) return "w-narrow";
+					if (w <= WIDE) return "w-mid";
+					return "w-wide";
+				}
+				var body = document.body;
+				var cur = "";
+				function apply() {
+					var c = clsForWidth(document.documentElement.clientWidth);
+					if (c === cur) return; // no-op on identical class (no thrash)
+					body.classList.remove("w-wide", "w-mid", "w-narrow");
+					body.classList.add(c);
+					var prev = cur;
+					cur = c;
+					body.dispatchEvent(
+						new CustomEvent("widthchange", {
+							detail: { cls: c, prev: prev },
+						}),
+					);
+				}
+				apply();
+				var raf = null;
+				if (typeof ResizeObserver === "function") {
+					var ro = new ResizeObserver(function () {
+						if (raf) return;
+						raf = requestAnimationFrame(function () {
+							raf = null;
+							apply();
+						});
+					});
+					ro.observe(document.documentElement);
+				} else {
+					window.addEventListener("resize", apply);
+				}
+			})();
+		</script>
+		<header>
+			<span class="logo">◆ pi</span>
+			<div class="statusbar" id="statusbar">
+				<span class="sb-grp primary">
+					<span>repo <code id="sb-repo">…</code></span>
+					<span class="sep">·</span>
+					<span>model <code id="sb-model">…</code></span>
+				</span>
+				<span class="sb-inline" id="sb-inline">
+					<span class="sb-meta" data-sb-meta
+						>git <code id="sb-git">…</code></span
+					>
+					<span class="sb-meta" data-sb-meta
+						>think <code id="sb-think">…</code></span
+					>
+					<span class="sb-meta" data-sb-meta
+						>cache <code id="sb-cache">…</code></span
+					>
+					<span class="sb-meta" data-sb-meta
+						>tok <code id="sb-tok">…</code></span
+					>
+					<span class="sb-meta" data-sb-meta
+						>$<code id="sb-cost">…</code></span
+					>
+					<span class="sb-meta" data-sb-meta
+						>ide
+						<code id="sb-ide" title="IDE hosting this panel"
+							>…</code
+						></span
+					>
+				</span>
+				<details class="sb-sec" id="sb-sec">
+					<summary
+						class="sb-more"
+						title="more session status"
+						aria-label="more session status"
+					>
+						⋯
+					</summary>
+					<span class="sb-sec-items" id="sb-overflow"></span>
+				</details>
+			</div>
+			<span id="status"
+				><span id="dot"></span
+				><span id="status-text">connecting…</span></span
+			>
+			<div class="header-actions">
+				<button
+					id="refresh-btn"
+					title="reload page"
+					aria-label="reload page"
+				>
+					↻
+				</button>
+				<button
+					id="settings-btn"
+					title="settings"
+					aria-label="settings"
+				>
+					⚙
+				</button>
+				<button
+					id="view-btn"
+					title="conversation density: balanced (click to cycle)"
+					aria-label="conversation density: balanced"
+				>
+					balanced
+				</button>
+			</div>
+		</header>
+
+		<aside id="wsbar" aria-label="workspaces and sessions" tabindex="-1">
+			<button
+				class="ws-x"
+				id="ws-collapse"
+				type="button"
+				title="collapse sidebar"
+				aria-label="collapse sidebar"
+			>
+				≪
+			</button>
+			<section
+				class="ws-sec"
+				id="ws-workspaces-sec"
+				aria-labelledby="ws-workspaces-title"
+			>
+				<h4 class="ws-h" id="ws-workspaces-title">workspaces</h4>
+				<div class="ws-list" id="ws-workspaces"></div>
+			</section>
+			<section
+				class="ws-sec"
+				id="ws-sessions-sec"
+				aria-labelledby="ws-sessions-title"
+			>
+				<div class="ws-sh">
+					<h4 class="ws-h" id="ws-sessions-title">sessions</h4>
+					<button
+						class="ws-mini"
+						id="ws-new"
+						type="button"
+						title="new session"
+						aria-label="new session"
+					>
+						＋
+					</button>
+				</div>
+				<div class="ws-list" id="ws-sessions"></div>
+			</section>
+		</aside>
+		<button
+			id="ws-scrim"
+			type="button"
+			aria-label="close workspace sidebar"
+			tabindex="-1"
+		></button>
+		<button
+			id="ws-open"
+			type="button"
+			title="show workspaces"
+			aria-label="show workspaces"
+			aria-expanded="false"
+			aria-controls="wsbar"
+			hidden
+		>
+			≫
+		</button>
+
+		<aside id="toolsbar" aria-hidden="true" aria-label="workspace tools">
+			<nav
+				class="tools-rail"
+				id="tools-rail"
+				role="tablist"
+				aria-orientation="vertical"
+			></nav>
+			<div
+				class="tools-pane"
+				role="tabpanel"
+				aria-labelledby="tools-title"
+			>
+				<div class="tools-head">
+					<span class="tools-title" id="tools-title"></span>
+					<button
+						class="tools-close"
+						id="tools-close"
+						type="button"
+						aria-label="collapse sidebar"
+						title="collapse"
+					>
+						×
+					</button>
+				</div>
+				<div class="doc-body" id="tools-body"></div>
+			</div>
+		</aside>
+
+		<section id="settings" aria-label="settings" tabindex="-1" hidden>
+			<div class="perm-head">
+				<h2>settings</h2>
+				<button
+					id="settings-close"
+					class="set-x"
+					type="button"
+					aria-label="close settings"
+				>
+					&times;
+				</button>
+			</div>
+			<div class="perm-body">
+				<section class="set-sec">
+					<h4>model &amp; behavior</h4>
+					<label class="set-row"
+						>model
+						<span class="set-inline"
+							><select id="model" title="model"></select
+							><button id="models-btn" title="reload models">
+								↻
+							</button></span
+						>
+					</label>
+					<label class="set-row"
+						>thinking
+						<select id="think-sel" title="thinking level"></select
+					></label>
+					<label class="set-row"
+						>ponytail
+						<select id="pony-sel" title="ponytail mode"></select
+					></label>
+				</section>
+				<section class="set-sec">
+					<h4>appearance</h4>
+					<label class="set-row"
+						>theme
+						<select id="theme-sel" title="color &amp; shape theme">
+							<option value="dark">dark</option>
+							<option value="paperlike">paperlike</option>
+						</select></label
+					>
+				</section>
+				<section class="set-sec">
+					<h4>permissions</h4>
+					<label class="set-row"
+						>mode
+						<select id="perm-mode" title="permission posture">
+							<option value="default">default</option>
+							<option value="auto-approve">auto-approve</option>
+							<option value="read-only">read-only</option>
+						</select></label
+					>
+					<button
+						id="perm-page-btn"
+						class="set-row-btn"
+						type="button"
+					>
+						open permissions page
+					</button>
+				</section>
+				<section class="set-sec">
+					<h4>developer</h4>
+					<label class="set-row"
+						>subagent view
+						<select
+							id="sa-density"
+							title="subagent live-view density"
+						>
+							<option value="full">full</option>
+							<option value="compact">compact</option>
+						</select>
+					</label>
+				</section>
+				<section class="set-sec">
+					<h4>server</h4>
+					<p class="set-hint">
+						stop the webui server + its pi process. relaunch
+						(pi-webui or /webui) to start again.
+					</p>
+					<button id="stop-btn" class="set-stop" type="button">
+						stop webui
+					</button>
+				</section>
+			</div>
+		</section>
+
+		<section id="permissions" aria-label="permissions" tabindex="-1" hidden>
+			<div class="perm-head">
+				<h2>permissions</h2>
+				<button
+					id="perm-close"
+					class="set-x"
+					type="button"
+					aria-label="close permissions"
+				>
+					&times;
+				</button>
+			</div>
+			<div class="perm-body">
+				<section class="perm-sec">
+					<h3>posture</h3>
+					<div class="perm-mode-row">
+						<select id="perm-mode-page" title="permission posture">
+							<option value="default">
+								default — ask per policy
+							</option>
+							<option value="auto-approve">
+								auto-approve — skip ordinary asks (sensitive
+								stays)
+							</option>
+							<option value="read-only">
+								read-only — deny all mutations silently
+							</option>
+							<option value="yolo">
+								yolo — allow everything this session (confirm)
+							</option>
+						</select>
+						<span
+							id="perm-mode-state"
+							class="perm-mode-state"
+						></span>
+					</div>
+					<div id="perm-confirm" class="perm-confirm" hidden>
+						<p>
+							⚠ yolo engages for THIS SESSION only: every action
+							auto-allows, no prompts, until the session ends.
+							Engage?
+						</p>
+						<button
+							id="perm-confirm-yes"
+							type="button"
+							class="danger"
+						>
+							engage yolo
+						</button>
+						<button id="perm-confirm-no" type="button">
+							cancel
+						</button>
+					</div>
+				</section>
+				<section class="perm-sec">
+					<h3>explain</h3>
+					<div class="perm-explain-row">
+						<input
+							id="perm-explain-tool"
+							list="perm-tools"
+							placeholder="tool"
+							value="bash"
+						/>
+						<input
+							id="perm-explain-sel"
+							placeholder="command / path / args JSON"
+						/>
+						<button id="perm-explain-go" type="button">
+							explain
+						</button>
+					</div>
+					<div id="perm-explain-out" class="perm-explain-out"></div>
+				</section>
+				<section class="perm-sec">
+					<h3>rules</h3>
+					<p class="set-hint">
+						add or remove rules in your global config
+						(<code>~/.pi/agent/safeguard.json</code>). pattern:
+						<code>re:…</code> for regex, a glob for paths; empty =
+						tool default.
+					</p>
+					<div class="perm-rule-row">
+						<input
+							id="perm-rule-tool"
+							list="perm-tools"
+							placeholder="tool (bash, edit, read…)"
+						/>
+						<input
+							id="perm-rule-pat"
+							placeholder="pattern (re:^git push or **/.env*)"
+						/>
+						<select id="perm-rule-eff" title="effect">
+							<option value="allow">allow</option>
+							<option value="ask">ask</option>
+							<option value="deny">deny</option>
+						</select>
+						<button id="perm-rule-add" type="button">
+							add rule
+						</button>
+					</div>
+					<datalist id="perm-tools"></datalist>
+					<div id="perm-layers" class="perm-layers"></div>
+					<div id="perm-diags" class="perm-diags" hidden></div>
+				</section>
+				<section class="perm-sec">
+					<h3>session grants</h3>
+					<div id="perm-grants" class="perm-grants"></div>
+					<button id="perm-grants-clear" type="button">
+						clear all session grants
+					</button>
+				</section>
+				<section class="perm-sec">
+					<h3>decision audit</h3>
+					<div id="perm-audit" class="perm-audit"></div>
+				</section>
+			</div>
+		</section>
+
+		<section
+			id="fleet"
+			aria-label="background subagents"
+			tabindex="-1"
+			hidden
+		>
+			<div class="perm-head">
+				<h2>subagent fleet</h2>
+				<div class="fl-steer" id="fl-steer">
+					<input
+						id="fl-steer-input"
+						class="fl-steer-input"
+						type="text"
+						placeholder="steer…"
+						autocomplete="off"
+					/>
+					<button id="fl-steer-send" type="button">send</button>
+				</div>
+				<button
+					id="fleet-close"
+					class="set-x"
+					type="button"
+					aria-label="close subagent fleet"
+				>
+					&times;
+				</button>
+			</div>
+			<div class="perm-body">
+				<section class="perm-sec">
+					<div id="fleet-list"></div>
+				</section>
+			</div>
+		</section>
+
+		<div id="scroll-wrap">
+			<main id="transcript">
+				<div id="tfeed" role="feed" aria-label="conversation"></div>
+				<div id="empty-state" hidden>
+					<p>no messages yet — send one to begin</p>
+					<button type="button" id="empty-start">
+						write a message
+					</button>
+				</div>
+			</main>
+			<button
+				id="jump-bottom"
+				type="button"
+				title="Jump to latest"
+				aria-label="Jump to latest"
+			>
+				↓
+			</button>
+		</div>
+		<div class="activity idle" id="activity">
+			<span class="spin"></span><span class="idle-dot"></span
+			><span class="alabel" id="act-label">connecting…</span>
+		</div>
+		<div id="a11y-status" class="sr-only" role="status"></div>
+
+		<footer>
+			<div id="ctx-meter">
+				<span class="ctx-bar"></span>
+				<span class="ctx-label" id="ctx-label"></span>
+			</div>
+			<div class="composer">
+				<div
+					id="palette"
+					role="listbox"
+					aria-label="slash commands"
+				></div>
+				<div id="widget"></div>
+				<div id="imgstrip" aria-label="attached images"></div>
+				<textarea
+					id="input"
+					aria-label="message composer"
+					aria-controls="palette"
+					aria-expanded="false"
+					aria-autocomplete="list"
+					enterkeyhint="send"
+					placeholder="Send a message…  ( / for commands/skills, Shift+Enter for newline )"
+					rows="1"
+				></textarea>
+				<div class="bar">
+					<button
+						id="mode-chip"
+						class="mode-chip"
+						type="button"
+						title="permission mode — click to open permissions"
+					>
+						default
+					</button>
+					<input
+						id="image-picker"
+						type="file"
+						accept="image/*"
+						multiple
+						hidden
+					/>
+					<button
+						id="attach-images"
+						class="attach-images"
+						type="button"
+						disabled
+						title="Selected model does not accept images"
+						aria-label="Selected model does not accept images"
+					>
+						＋ Image
+					</button>
+					<button id="send" class="primary">Send</button>
+					<button id="stop" disabled>Stop</button>
+					<button
+						id="compact"
+						title="compact context (summarize to free space)"
+					>
+						⇲ Compact
+					</button>
+					<details class="bar-ovf" id="bar-ovf" open>
+						<summary
+							aria-label="more composer actions"
+							title="more actions"
+						>
+							⋯
+						</summary>
+						<span class="bar-ovf-items">
+							<select
+								id="mode"
+								title="how to deliver while streaming"
+							>
+								<option value="auto">auto</option>
+								<option value="steer">steer</option>
+								<option value="followUp">follow-up</option>
+							</select>
+							<select
+								id="improve"
+								title="rewrite the draft via a cheap disposable model"
+							>
+								<option value="">✎ Improve…</option>
+								<option value="clarify">Clarify</option>
+								<option value="ideate">Ideate</option>
+								<option value="precise">Precise</option>
+							</select>
+							<button
+								id="sessions"
+								title="resume an older session"
+							>
+								⏱ Sessions
+							</button>
+							<button id="new" title="new session">＋ New</button>
+							<span class="hint">Enter = send</span>
+						</span>
+					</details>
+				</div>
+			</div>
+		</footer>
+
+		<div id="modal" role="dialog" aria-modal="false" aria-label="pi dialog">
+			<div id="modal-wrap">
+				<div class="card" id="modal-card"></div>
+				<button
+					id="modal-x"
+					class="modal-x"
+					type="button"
+					aria-label="Close dialog"
+					hidden
+				>
+					&times;
+				</button>
+			</div>
+		</div>
+
+		<script src="vendor/markdown-it.min.js"></script>
+		<script src="md.js"></script>
+		<script src="vendor/highlight.min.js"></script>
+		<script src="usage-provider.js"></script>
+		<script src="csv-preview.js"></script>
+		<script src="tool-protocol.js"></script>
+		<script src="session-analysis.js"></script>
+		<script src="usage-telemetry.js"></script>
+		<script src="composer-images.js"></script>
+		<script src="tool-presentation.js"></script>
+		<script src="diff-view.js"></script>
+		<script src="permissions-ux.js"></script>
+		<script src="subagents-ux.js"></script>
+		<script src="a11y-contrast.js"></script>
+		<script src="rail.js"></script>
+		<script src="app.js"></script>
+	</body>
+</html>

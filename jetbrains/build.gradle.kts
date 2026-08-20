@@ -14,33 +14,41 @@ repositories {
     intellijPlatform { defaultRepositories() }
 }
 
-val ideHome: String = providers.gradleProperty("riderHome").orNull
-    ?: providers.environmentVariable("RIDER_HOME").orNull
-    ?: findInstalledIde()
-    ?: error("No IntelliJ IDE found. Set RIDER_HOME or pass -PriderHome=<install dir>.")
+val ideHome: String =
+    providers.gradleProperty("riderHome").orNull
+        ?: providers.environmentVariable("RIDER_HOME").orNull
+        ?: findInstalledIde()
+        ?: error("No IntelliJ IDE found. Set RIDER_HOME or pass -PriderHome=<install dir>.")
 
 fun findInstalledIde(): String? {
     val userHome = System.getProperty("user.home")
     val localAppData = System.getenv("LOCALAPPDATA")
     val roots = mutableListOf<File>()
+
     fun add(p: String) {
         File(p).takeIf { it.isDirectory }?.let { roots += it }
     }
     add("C:/Program Files/JetBrains")
-    localAppData?.let { add("$it/Programs"); add("$it/JetBrains/Toolbox/apps") }
-    add("$userHome/JetBrains"); add("/opt")
-    File("/Applications").listFiles()
+    localAppData?.let {
+        add("$it/Programs")
+        add("$it/JetBrains/Toolbox/apps")
+    }
+    add("$userHome/JetBrains")
+    add("/opt")
+    File("/Applications")
+        .listFiles()
         ?.filter { Regex("IntelliJ|Rider|PyCharm|WebStorm|GoLand|CLion|RubyMine|DataGrip|Android Studio").containsMatchIn(it.name) }
         ?.let { roots += it }
     add("$userHome/Library/Application Support/JetBrains/Toolbox/apps")
     add("$userHome/.local/share/JetBrains/Toolbox/apps")
     return roots
         .flatMap { r ->
-            r.walkTopDown().maxDepth(4)
+            r
+                .walkTopDown()
+                .maxDepth(4)
                 .filter { it.isFile && it.name == "product-info.json" }
                 .toList()
-        }
-        .map { it.parentFile }
+        }.map { it.parentFile }
         .distinctBy { it.absolutePath }
         .maxByOrNull { it.name }
         ?.absolutePath
@@ -50,6 +58,13 @@ dependencies {
     intellijPlatform {
         local(ideHome)
     }
+    // U6 C11: pure-helper unit tests (WorkspaceContainment) — kotlin.test on
+    // mavenCentral; no platform fixtures needed.
+    testImplementation(kotlin("test"))
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 intellijPlatform {

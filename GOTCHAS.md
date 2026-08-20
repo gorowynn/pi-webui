@@ -81,35 +81,179 @@ keyword to the index in `AGENTS.md`.
     `renderSubagentView` renders details at start/update/end. **Density** is a
     sidebar toggle (`pi:sa-density`): `full` = child calls + text, `compact` =
     status + calls.
-15. **Settings sidebar** `<aside id="settings">` (fixed right drawer; ⚙ opens,
-    ✕/backdrop/Esc closes). Model/thinking/pony selects moved here from the
-    header (keep their IDs → existing `onchange` unchanged). 3 tier selects
-    POST `/api/subagent-tiers` → `~/.pi/agent/subagent-tiers.json` (re-read each
-    call). `subagentDensity` = module-scope `let` set from its select.
+15. **Settings + permissions are in-shell utility PAGES**, not drawers/overlays
+    (design.md §4): `<section id="settings">` and `<section id="permissions">`
+    are flex children of `body` that replace the center transcript/composer
+    column while open — `body.page-open` (set/cleared by `openSettings`/
+    `closeSettings`/`openPermPage`/`closePermPage`) hides `#scroll-wrap`,
+    `#todopanel`, `footer`, and `.activity`; the shell header stays. Shared
+    chrome: `.perm-head` (sticky title bar) + `.perm-body` (centered 900px).
+    ⚙ opens, ✕/Esc closes; opening one page closes the other. Model/thinking/
+    pony selects keep their IDs → existing `onchange` unchanged.
+    `subagentDensity` = module-scope `let` set from its select.
+    The **composer mode chip** (`#mode-chip` in `.bar`) shows the active
+    permission posture at all times: persisted modes via `GET
+    /api/permissions/mode` piggybacked on `refreshStats`, yolo via the
+    extension's `setStatus("safeguard", {mode})` broadcast (session-only — a
+    config read can never see it; safeguard.ts broadcasts on yolo engage and
+    `session_start`). The page's **rules editor** mutates a clone of the USER
+    layer only (`applyRule`/`removeRule` in permissions-ux.js; floor is
+    locked, the workspace layer is tighten-only and edited via its own file) —
+    every write goes through the same revision-checked `PUT
+    /api/permissions/config` as the mode select. `buildLayerTree` shows the
+    HIGHEST-priority layer's action for a rule (not the last-written one).
 16. **JetBrains plugin build is version-pinned (load-bearing):** IntelliJ
     Platform Gradle Plugin **2.7.0** + Foojay resolver **1.0.0**; Kotlin
     **2.4.0**; `instrumentCode = false`. `DiffContentFactory` lives in
     `com.intellij.diff` (NOT `.contents`, where `DiffContent` is). `local()`
     builds against the auto-detected installed IDE. **Why each pin matters +
     full build notes: [`jetbrains/README.md`](jetbrains/README.md).**
-17. **Don't build `jetbrains/` from pi's git-bash** — `./gradlew` crashes the
-    shell (0xC0000005 on the `java` exec); every `BUILD EXIT=0` is a silent
-    no-op and `build/` reflects the user's Rider build, not the agent's. Build
-    in Rider or a real terminal. Verify Kotlin APIs with `javap`
-    (`~/.jdks/ms-25.0.3/bin/javap.exe -classpath "<rider>/lib/*"`), not
-    gradlew. The webui side IS testable here (`node --check app.js` + greps).
-    Plugin diff-gate surface: the diff renders as a **CENTER editor tab in the
-    main IDE window** (not a floating `DialogWrapper`) — `DiffReviewEditorProvider`
-    (`plugin.xml`: `HIDE_DEFAULT_EDITOR`+`DumbAware`) builds `DiffReviewEditor`
-    over an in-memory `DiffReviewFile` (`LightVirtualFile` carrying payload +
-    the decision callback); native diff uses `DiffContentFactory.create`/
-    `createEditable` over a resolved `VirtualFile`; 4 safeguard buttons in a
-    top bar; a decision closes the tab, a tab-✕/close fails closed → `Deny`
-    via `dispose()`. A user-edited proposal yields bridge value
-    `{label, oldFull, newFull}`; `safeguard.ts` then mutates pi's `event.input`
-    (`write`→`content`, `edit`→`edits=[{oldText,newText}]`) so pi applies the
-    user's version — the standalone webui modal does the same via
-    `mountEditableDiff`. `javap` facts: `LightVirtualFile` is
+17. **Don't build `jetbrains/` from pi's git-bash** — `./gradlew` (the sh
+    wrapper) crashes the shell (0xC0000005 on the `java` exec); every
+    `BUILD EXIT=0` is a silent no-op and `build/` reflects the user's Rider
+    build, not the agent's. **What DOES work from git-bash (2026-08-15):**
+    `cmd.exe /c <bat>` with `JAVA_HOME` set to the Rider JBR — write a `.bat`
+    (`set "JAVA_HOME=C:\Program Files\JetBrains\JetBrains Rider 2025.1.1\jbr"`
+    + `call gradlew.bat test`) and run `MSYS_NO_PATHCONV=1 cmd.exe /c
+    run-test.bat < /dev/null` (the `/c` needs `//c` or `MSYS_NO_PATHCONV=1`;
+    stdin must be redirected or cmd just prints a banner). The JBR has NO
+    `javap` — use `C:/Program Files/Microsoft/jdk-11.0.27.6-hotspot/bin/
+    javap.exe -classpath "<rider>/lib/*"` for API checks. The webui side IS
+    testable here (`node --check app.js` + greps). Plugin diff-gate surface:
+    the diff renders as a **CENTER editor tab in the main IDE window** (not
+    a floating `DialogWrapper`) — `DiffReviewEditorProvider` (`plugin.xml`:
+    `HIDE_DEFAULT_EDITOR`+`DumbAware`) builds `DiffReviewEditor` over an
+    in-memory `DiffReviewFile` (`LightVirtualFile` carrying payload + the
+    decision callback); native diff uses `DiffContentFactory.create`/
+    `createEditable` over a resolved `VirtualFile`; decision buttons come
+    from the payload's offered `options` (SEC-07; four-label fallback for
+    old-webui payloads); a decision closes the tab, a tab-✕/close fails
+    closed → `Deny` via `dispose()`; stale-file allows are blocked until
+    "Re-read file" re-bases the diff (SEC-17b). A user-edited proposal yields
+    bridge value `{label, oldFull, newFull}`; `safeguard.ts` then mutates
+    pi's `event.input` (`write`→`content`, `edit`→`edits=[{oldText,newText}]`)
+    so pi applies the user's version — the standalone webui modal does the
+    same via `mountEditableDiff`. The bridge resolves through an id-keyed
+    `window.__piDiffResolvers` map (`payload.requestId`; malformed JSON →
+    immediate Deny, SEC-17a). Pure helpers + tests: `DiffBridge.kt`/
+    `DiffBridgeTest.kt`. `javap` facts: `LightVirtualFile` is
     `com.intellij.testFramework.*` but ships in `intellij.platform.core.jar`
-    (runtime-available); `FileEditorProvider`/`FileEditorManager`/`FileEditorPolicy`
-    are in `intellij.platform.analysis.jar`.
+    (runtime-available — constructs fine in plain JVM tests);
+    `FileEditorProvider`/`FileEditorManager`/`FileEditorPolicy` are in
+    `intellij.platform.analysis.jar`; `JBCefJSQuery` implements `Disposable`
+    (`Disposer.register`-able); `CefClient.removeLoadHandler()` takes NO
+    argument; `DiffRequestPanel` is `Disposable`.
+18. **Never invoke bare `git` from this repository on Windows.** Windows command
+    resolution searches the working directory before `PATH` and commonly has
+    `.JS` in `PATHEXT`, so local [`git.js`](git.js) shadows Git for Windows and
+    launches through the user's JavaScript file association. A polled synchronous
+    call then blocks the HTTP server and reopens the file whenever the editor
+    exits. Use `gitExecutableForPlatform()` (`git.exe` on Windows) with argument
+    arrays and no shell. That only protects bridge-owned calls: at server boot,
+    `sanitizeWindowsPathExt()` must also remove `.JS` from the inherited
+    `PATHEXT` so spawned pi, extensions, language servers, and tools cannot make
+    the same collision.
+19. **app.js top-level statements run during script evaluation — a TDZ
+    `ReferenceError` aborts the WHOLE script, silently killing everything after
+    the throw point** (no `initWsbar` → `body.ws-on` never set → the left
+    sidebar is off-canvas and "gone"; no later `registerCommand` calls; SSE
+    handlers attached EARLIER fire and throw too). Symptom:
+    `Cannot access 'X' before initialization` at eval. Rule: never call
+    `registerCommand(...)`/any function before the `const`/`let` it touches is
+    declared (`const uiCommands = []` lives in the command-palette section;
+    `let noSwitch` in the left-sidebar section). When reordering sections in
+    a reformat, grep top-level call sites vs. their declarations.
+20. **A new `public/*.js` feature module needs THREE things or it fails in the
+    browser while Node tests pass:** (a) a `server.js` `STATIC` whitelist entry
+    (missing → silent 404, no JS error — the "explain failed: …
+    'explainView'" bug); (b) dual-mode exports guarded with
+    `if (typeof module !== "undefined" && module.exports)`; (c) the whole file
+    wrapped in an IIFE — a top-level `const api`/`const mod` in a classic
+    script leaks into the global lexical scope and collides with app.js's own
+    `function api` (SyntaxError at the LATER script, breaking every page).
+    House pattern: [`public/diff-view.js`](public/diff-view.js).
+21. **Outside-workspace access is capped at ask in EVERY non-yolo mode** (FR-6
+    containment, 2026-08-10 hardening): path tools (read-class) whose
+    canonical path escapes the workspace root get tier `outside-workspace` in
+    `buildVerdict` — rule allows are demoted to ask, and `applyMode` refuses
+    to lift it (auto-approve only lifts `ordinary-ask`; read-only's read-class
+    auto-allow skips the tier). write/edit outside root stay hard-deny.
+    **Bash**: `partPathTokens` extracts path-like args per subcommand;
+    `gateBash(…, isOutside)` marks the command `outside` if any part touches
+    an outside path, and safeguard.ts blocks the auto-approve/read-only
+    mode-bypass for outside commands (yolo is the ONLY exemption — explicit
+    session override). Grants (exact-selector) still win — they're explicit
+    per-action approvals. `isOutsidePart` lives in BOTH safeguard.ts and the
+    server.js explain endpoint (realpath-aware, `~`/`$HOME`/`$PWD` expansion,
+    cwd join) so the page can't diverge from the gate. Named ceiling: no shell
+    parser — `$(…)`-built and `$VAR`-prefixed paths are invisible.
+    Headless (`nonInteractive=allow`) can't prompt — the nonInteractive knob
+    governs there.
+22. **pi-subagents async fleet is a FILE bridge, not an RPC one.** The plugin's
+    TUI widget/fleet views (`ctx.ui.setWidget`, `/sfleet`) never cross RPC —
+    so the webui reads the plugin's on-disk artifacts instead: temp roots
+    `<tmp>/pi-subagents-*/async-subagent-runs/<id>/status.json` via `subagents.js`.
+    Step logs: `output-<i>.log` when the run mode writes one, ELSE the child
+    transcript in the PROJECT-LOCAL `<run cwd>/.pi-subagents/artifacts/
+    <childRunId>_<agent>_<i>_transcript.jsonl` (correlated by the child run id in the step's
+    `sessionFile` `…\<childRunId>
+un-0\session.jsonl` = artifact filename
+    prefix — DETERMINISTIC; ts-proximity is only the fallback, it
+    cross-matches same-agent children spawned near-simultaneously; regex-extract
+    the first record `ts` — fork-context prompts make line 1 exceed any
+    JSON.parse head). Run log: `subagent-log-*.md`, else
+    formatted `events.jsonl`. Workflow steps carry NO `index` — the step-log
+    button encodes ROW POSITION, and `steps[n]` is the lookup key., and
+    STOP/STEER by writing the plugin's portable control inbox
+    (`control/stop.json`, `control/steer-requests/<padded-ts>-<b64url>.json`,
+    atomic temp+rename, envelope `{type,id,ts,message,source:"pi-webui"}`).
+    STOP IS GRACEFUL — it waits for children to reach an abort boundary and
+    can park forever on a hung LLM call; "force" writes `timeout.json` (the
+    runtime-cap path — kills children decisively). The listing projects
+    `stopRequested` (stop.json present + run still active) → "stopping" chip +
+    the button relabels to "force stop". CEILING (seen live): the inbox is
+    consumed by the run's control watcher; if the spawning parent stopped
+    consuming (dead watcher / dead runner), stop/steer/force files sit unread
+    and children leak — last resort is killing the child pid from
+    `status.json` manually (the webui deliberately does NOT kill pids).
+    **Never rename those filenames/envelopes without checking
+    `node_modules/pi-subagents/src/runs/background/control-channel.ts`** — the
+    runner watches them. Run ids are validated (`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+    AND must resolve to a discovered dir (no traversal); `dir` is stripped
+    before the client payload. Frontend: `#fleet` in-shell page (`#fleet` hash,
+    2s poll, logs cached in `fleetLogs` so re-renders don't clobber open ones);
+    notices = custom messages with customType `subagent-notify` /
+    `subagent_steering_notice` / `subagent_control_notice` — rendered by
+    `renderNoticeMsg` from BOTH `message_end` (live) and `renderMessage`
+    (reload), which is also why generic custom messages now render live
+    (parity). Hash-close guards: each page only clears its OWN hash (closing
+    fleet mid-navigation to #permissions must not wipe that route). New
+    `public/*.js` module rule (#20/#11) applied to `subagents-ux.js`.
+
+23. **Bash selectors get sensitive-path protection via tokens, not paths.** FR-7
+    sensitivePaths used to apply ONLY to path selectors (read/write/edit +
+    path-shaped grep/find/ls/glob) — a bash command like `cat .env` or
+    `grep -r KEY .env.local` matched the verb allow-regexes and sailed through
+    auto-approve/read-only unguarded. The gate now computes a per-call
+    `bashSensitive` override: `bash-classifier.js partCanonTokens` (expand
+    `~`/`$HOME`/`$PWD`, cwd-join, realpath — the logic that used to live
+    duplicated as `isOutsidePart` in `safeguard.ts` AND the `server.js` explain
+    route, both now one-liners over it) feeds `policy-engine.js
+    bashSensitiveFor`, and `resolve()` honours `opts.bashSensitive` for bash
+    selectors (also wired into `/api/permissions/explain` so the page can't
+    diverge). Effect: `.env`/`.pem`/key patterns inside the workspace get the
+    same mandatory-ask/hard-deny as the `read` tool; deny beats ask; a
+    sensitive hit anywhere in a compound blocks the WHOLE command (gate.allow
+    false in every mode except yolo). Benign recon (`grep x public/style.css`)
+    resolves null and auto-allows exactly as before.
+
+    **Config foot-gun: a user bash table with `"*": "ask"` and no verb
+    allowlist SHADOWS the floor's read-only verb regexes at the PER-PART gate.**
+    Layers resolve user-first, and the user table's own `*` catches every part
+    before the default layer's `re:^(cat|grep|…|cd)(\s|$)` allows are ever
+    consulted — so `cd … && grep …` asks in auto-approve even rooted in the
+    workspace. The floor⊕user key-union keeps the KEYS, but layer order wins.
+    Safe (ask only, never loosens), but prompts. Migration: a v1-era user bash
+    table should adopt the floor's anchored verb regexes (see
+    `DEFAULT_CONFIG.bash` in `policy-engine.js`); the user config at
+    `~/.pi/agent/safeguard.json` (rev 5) is migrated — don't regress it.

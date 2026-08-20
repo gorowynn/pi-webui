@@ -12,3 +12,4 @@ jetbrains/build/
 jetbrains/local.properties
 .idea/
 *.iml
+.pi-subagents/
