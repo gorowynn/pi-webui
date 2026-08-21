@@ -47,6 +47,8 @@ interface ExtensionAPI {
 
 const { connectCdpTarget, discoverTarget } = cdp as any;
 const {
+	DEFAULT_VIEWPORT_HEIGHT,
+	DEFAULT_VIEWPORT_WIDTH,
 	browserError,
 	closeBrowser,
 	readBrowserConfig,
@@ -256,6 +258,18 @@ class BrowserManager {
 				session.command("Runtime.enable", {}, signal),
 				session.command("Log.enable", {}, signal),
 			]);
+			if (handle.ownership === "managed") {
+				await session.command(
+					"Emulation.setDeviceMetricsOverride",
+					{
+						width: DEFAULT_VIEWPORT_WIDTH,
+						height: DEFAULT_VIEWPORT_HEIGHT,
+						deviceScaleFactor: 1,
+						mobile: false,
+					},
+					signal,
+				);
+			}
 		} catch (error) {
 			if (session) await session.close().catch(() => undefined);
 			await closeBrowser(handle);

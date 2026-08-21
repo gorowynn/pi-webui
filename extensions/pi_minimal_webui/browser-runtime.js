@@ -5,6 +5,8 @@ const os = require("node:os");
 const path = require("node:path");
 
 const DEFAULT_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const DEFAULT_VIEWPORT_WIDTH = 1920;
+const DEFAULT_VIEWPORT_HEIGHT = 1080;
 const TRUTHY = new Set(["1", "true", "yes", "on"]);
 
 function browserError(code, message) {
@@ -185,6 +187,7 @@ function buildLaunchArgs({ profileDir, port, headless = false }) {
 		"--no-first-run",
 		"--no-default-browser-check",
 		"--disable-extensions",
+		`--window-size=${DEFAULT_VIEWPORT_WIDTH},${DEFAULT_VIEWPORT_HEIGHT}`,
 	];
 	if (headless) args.push("--headless=new");
 	return args;
@@ -283,6 +286,8 @@ async function closeBrowser(handle, deps = {}) {
 
 module.exports = {
 	DEFAULT_HOSTS,
+	DEFAULT_VIEWPORT_HEIGHT,
+	DEFAULT_VIEWPORT_WIDTH,
 	browserCandidates,
 	browserError,
 	buildLaunchArgs,

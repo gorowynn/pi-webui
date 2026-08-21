@@ -45,6 +45,7 @@ The first browser call lazily starts Chromium or Edge with:
 - a temporary, dedicated user-data directory;
 - a random loopback remote-debugging port;
 - no sync, extensions, or default-profile cookies;
+- a default 1920×1080 (1080p) viewport;
 - the requested URL, usually the local pi-webui URL.
 
 The browser is visible by default so the user can watch the reproduction.

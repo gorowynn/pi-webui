@@ -3,6 +3,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const policy = require("../extensions/pi_minimal_webui/policy-engine.js");
 const {
+	DEFAULT_VIEWPORT_HEIGHT,
+	DEFAULT_VIEWPORT_WIDTH,
 	buildLaunchArgs,
 	closeBrowser,
 	launchManagedBrowser,
@@ -128,8 +130,15 @@ ok("CDP attachment policy is loopback HTTP(S)-only");
 	assert.ok(args.includes("--remote-debugging-port=45678"));
 	assert.ok(args.includes("--headless=new"));
 	assert.ok(args.some((arg) => arg.startsWith("--user-data-dir=")));
+	assert.ok(
+		args.includes(
+			`--window-size=${DEFAULT_VIEWPORT_WIDTH},${DEFAULT_VIEWPORT_HEIGHT}`,
+		),
+	);
+	assert.equal(DEFAULT_VIEWPORT_WIDTH, 1920);
+	assert.equal(DEFAULT_VIEWPORT_HEIGHT, 1080);
 	assert.ok(!args.includes("--no-sandbox"));
-	ok("managed launch arguments isolate the profile and keep the sandbox");
+	ok("managed launch arguments isolate the profile and default to 1080p");
 }
 
 {
@@ -171,6 +180,7 @@ ok("CDP attachment policy is loopback HTTP(S)-only");
 		"browser_console",
 	]);
 	assert.equal(browserSource.includes("browser_evaluate"), false);
+	assert.match(browserSource, /Emulation\.setDeviceMetricsOverride/);
 	assert.match(browserSource, /session_shutdown/);
 	assert.match(browserSource, /untrusted data/);
 	assert.match(indexSource, /import browser from "\.\/browser\.js"/);

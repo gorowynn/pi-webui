@@ -81,7 +81,7 @@
 
 ### Chunk 7 — Extension facade and pi integration
 
-- [ ] Register the four tools, connect them to the session manager, enforce queue/lifecycle behavior, and add safeguard/prompt guidance.
+- [x] Register the four tools, connect them to the session manager, enforce queue/lifecycle behavior, and add safeguard/prompt guidance.
   - Requirements: FR-1, FR-2, FR-7, FR-8, FR-11, FR-12, FR-13, FR-14, FR-27, FR-28; plan goals: usable pi-facing browser debugging slice with no new HTTP route.
   - Dependencies: Chunks 3–6.
   - Tests: `test/browser-tools.test.js` plus a source contract check in the same file
@@ -92,6 +92,8 @@
     - register cleanup on `session_shutdown`, including repeated shutdown and failed-start paths (# FR-8);
     - include untrusted-page guidance and keep arbitrary evaluation absent (# FR-12);
     - preserve existing extension registration, JSONL/RPC behavior, and package-file coverage (# FR-27, FR-28).
+  - Tests: `node test/browser-cdp.test.js` (17 passed), `node test/browser-tools.test.js` (33 passed), `node test/policy-engine.test.js` (56 assertions); live Edge facade smoke confirmed managed open/snapshot/screenshot at 1920×1080 with a 52,529-byte JPEG.
+  - Compliance: the facade registers exactly the approved four tools, routes calls through one serialized manager, applies safeguard defaults, cleans up on `session_shutdown`, uses only fixed inspection scripts, preserves the existing RPC contract, and enforces the approved isolated/loopback/bounded design. ✓
 
 ## Dependencies
 
