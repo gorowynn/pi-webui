@@ -126,6 +126,36 @@ check(
 	/aria-label/.test(app) && /\.sx-ta/.test(app),
 );
 
+// ---- Contextual Git review diff (C4 / FR-7, FR-11, FR-12, FR-13) ----
+check(
+	"C4",
+	"G-4.1",
+	"FR-7/12",
+	"app maps Git diff responses through the pure review state helper",
+	/reviewDiffState\(/.test(app),
+);
+check(
+	"C4",
+	"G-4.2",
+	"FR-11",
+	"app exposes back, refresh, and selected-status hooks",
+	/git-back/.test(app) && /git-refresh/.test(app) && /git-diff-status/.test(app),
+);
+check(
+	"C4",
+	"G-4.3",
+	"FR-12",
+	"server propagates bounded diff availability metadata",
+	/unavailable:\s*result\.unavailable/.test(server),
+);
+check(
+	"C4",
+	"G-4.4",
+	"FR-12/13",
+	"diff styles bound review state and preformatted output",
+	/\.git-diff-state/.test(css) && /max-height:\s*60vh/.test(css),
+);
+
 if (failures.length) {
 	console.error("FAILED:");
 	for (const f of failures) console.error("  " + f);

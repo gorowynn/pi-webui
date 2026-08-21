@@ -41,4 +41,8 @@ assert.match(
 assert.match(app, /classList\.add\("dragging"\)/);
 assert.match(app, /classList\.remove\("dragging"\)/);
 
-console.log("16 passed");
+// C8 — primary actions remain reachable while low-frequency actions overflow.
+assert.match(css, /\.bar > button\s*\{[\s\S]*flex:\s*0 0 auto/);
+assert.match(css, /body\.w-narrow \.composer \.bar-ovf-items\s*\{/);
+
+console.log("18 passed");

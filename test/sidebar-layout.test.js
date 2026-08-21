@@ -57,4 +57,13 @@ assert.match(app, /SA\.formatTokens\(v\) \+ " out tok"/);
 assert.match(app, /Math\.round\(context\) \+ "% context"/);
 assert.doesNotMatch(css, /\.rail-tab\.sel::before/);
 
-console.log("22 passed");
+// C6 — workspace/session orientation and review reconciliation.
+assert.match(app, /data-workspace-path/);
+assert.match(app, /aria-label[\s\S]{0,200}workspace/i);
+assert.match(app, /title = w\.path/);
+assert.match(app, /resetGitReviewState\(\)/);
+assert.match(app, /gitSelectedPath = null/);
+assert.match(app, /sessionSizeLabel\(s\)/);
+assert.match(css, /\.ws-meta\s*\{/);
+
+console.log("29 passed");

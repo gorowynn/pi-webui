@@ -5,6 +5,7 @@ const policy = require("../extensions/pi_minimal_webui/policy-engine.js");
 const {
 	DEFAULT_VIEWPORT_HEIGHT,
 	DEFAULT_VIEWPORT_WIDTH,
+	browserCandidates,
 	buildLaunchArgs,
 	closeBrowser,
 	launchManagedBrowser,
@@ -139,6 +140,39 @@ ok("CDP attachment policy is loopback HTTP(S)-only");
 	assert.equal(DEFAULT_VIEWPORT_HEIGHT, 1080);
 	assert.ok(!args.includes("--no-sandbox"));
 	ok("managed launch arguments isolate the profile and default to 1080p");
+}
+
+if (process.platform === "win32") {
+	const candidates = browserCandidates({
+		LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local",
+		ProgramFiles: "C:\\Program Files",
+		"ProgramFiles(x86)": "C:\\Program Files (x86)",
+	});
+	const edge86 = candidates.find(
+		(candidate) =>
+			candidate.includes("Program Files (x86)") &&
+			candidate.includes("msedge.exe"),
+	);
+	assert.ok(edge86, "Windows browser discovery includes 32-bit Edge");
+	assert.equal(
+		resolveBrowserBinary(
+			{
+				env: {
+					LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local",
+					ProgramFiles: "C:\\Program Files",
+					"ProgramFiles(x86)": "C:\\Program Files (x86)",
+				},
+			},
+			{
+				statSync(candidate) {
+					if (candidate === edge86) return { isFile: () => true };
+					throw new Error("missing");
+				},
+			},
+		),
+		edge86,
+	);
+	ok("Windows browser discovery finds 32-bit Edge");
 }
 
 {

@@ -40,4 +40,18 @@ assert.match(
 assert.match(app, /\[data-sb-meta\]/);
 assert.match(app, /sbSec\.hidden = false/);
 
-console.log("27 passed");
+// C5 — active repository/branch/change context (FR-1..4, FR-22, FR-27)
+assert.match(header, /id="sb-git"/);
+assert.match(header, /title="open Changes review"/);
+assert.match(css, /\.sb-git-link/);
+assert.match(app, /openRailWidget\("git"\)/);
+assert.match(app, /HEAD \(detached\)/);
+assert.match(app, /Git unavailable/);
+assert.match(app, /sb\.repo\.title/);
+
+// C8 — drawer/sheet surfaces are mutually exclusive on narrow widths.
+assert.match(app, /railNarrow\(\)[\s\S]{0,160}collapseWsbar/);
+assert.match(app, /function expandWsbar\(\)[\s\S]*closeRail\(\)/);
+assert.match(css, /body\.w-mid\.rail-on\.rail-open #toolsbar/);
+
+console.log("37 passed");

@@ -131,6 +131,7 @@ function browserCandidates(env = process.env) {
 			path.join(program, "Google", "Chrome", "Application", "chrome.exe"),
 			path.join(program86, "Google", "Chrome", "Application", "chrome.exe"),
 			path.join(program, "Microsoft", "Edge", "Application", "msedge.exe"),
+			path.join(program86, "Microsoft", "Edge", "Application", "msedge.exe"),
 		);
 	} else if (process.platform === "darwin") {
 		candidates.push(

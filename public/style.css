@@ -27,6 +27,10 @@
 	--bubble-user: #1c2128; /* user bubble — a shade lighter than the assistant */
 	--muted: #7d8590; /* GitHub "fg.muted" */
 	--line: #30363d; /* GitHub "border.default" anthracite hairline */
+	--border: var(--line); /* legacy alias used by fleet/permissions chips */
+	--mono:
+		"JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo,
+		Consolas, "Liberation Mono", monospace;
 	--cyan: #79c0ff; /* GitHub "accent" code blue: inline code / paths */
 
 	/* ── derived: accent/status soft tints + hover (color-mix, theme-reactive)
@@ -319,6 +323,15 @@ main {
 	background: transparent;
 	border-color: transparent;
 	padding: 5px 0 7px;
+	font-family:
+		system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+	font-size: 14px;
+	line-height: 1.65;
+}
+.msg.assistant-turn .bubble pre,
+.msg.assistant-turn .bubble code,
+.msg.assistant-turn .bubble .turn-usage {
+	font-family: var(--mono);
 }
 .msg.assistant-turn .role {
 	margin-bottom: 8px;
@@ -341,7 +354,8 @@ main {
 	background: var(--surface-raised);
 }
 .bubble.user {
-	background: var(--bubble-user);
+	background: var(--accent-soft);
+	border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
 }
 .role {
 	font-size: 11px;
@@ -650,6 +664,24 @@ pre code.hljs {
 	outline: 2px solid var(--accent);
 	outline-offset: -2px;
 	border-radius: var(--r);
+}
+.tool-review-link {
+	margin: 0 10px 6px;
+	border: 1px solid var(--line);
+	border-radius: calc(var(--r) - 2px);
+	background: var(--surface-inset);
+	color: var(--muted);
+	padding: 3px 7px;
+	font: inherit;
+	font-size: 11px;
+	cursor: pointer;
+	opacity: 0.8;
+}
+.tool-review-link:hover,
+.tool-review-link:focus-visible {
+	color: var(--accent);
+	border-color: var(--accent);
+	opacity: 1;
 }
 .tool .trow {
 	display: flex;
@@ -1520,6 +1552,11 @@ footer {
 	padding-right: calc(clamp(8px, 4vw, 48px) + env(safe-area-inset-right));
 	padding-bottom: calc(10px + env(safe-area-inset-bottom));
 }
+footer > #ctx-meter,
+footer > .composer {
+	width: min(100%, 1200px);
+	margin-inline: auto;
+}
 .statusbar {
 	color: var(--muted);
 	font-size: 11px;
@@ -1534,6 +1571,26 @@ footer {
 .statusbar code {
 	color: var(--ink);
 	font-size: 11px;
+}
+.statusbar .sb-git-link {
+	border: 0;
+	background: transparent;
+	color: var(--muted);
+	padding: 1px 3px;
+	font: inherit;
+	cursor: pointer;
+	max-width: min(30ch, 28vw);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.statusbar .sb-git-link:hover,
+.statusbar .sb-git-link:focus-visible {
+	color: var(--accent);
+}
+.statusbar .sb-git-link:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
 }
 .statusbar .sep {
 	opacity: 0.4;
@@ -1655,6 +1712,9 @@ textarea:focus {
 	margin-top: 7px;
 	padding-top: 7px;
 	border-top: 1px solid var(--line);
+}
+.bar > button {
+	flex: 0 0 auto;
 }
 .bar button {
 	background: var(--surface-raised);
@@ -1785,6 +1845,15 @@ body.w-narrow .composer .bar-ovf:not([open]) .bar-ovf-items {
 }
 body.w-narrow .composer .bar-ovf-items .hint {
 	margin-left: 0;
+}
+body.w-narrow .bar {
+	flex-wrap: wrap;
+	row-gap: 6px;
+}
+body.w-narrow .bar > button,
+body.w-narrow .bar > select,
+body.w-narrow .bar-ovf > summary {
+	min-height: 32px;
 }
 /* Sessions/New dedup (spec FR-5): hidden only while the sidebar is
    push-visible (w-wide + ws-on) — drawer and collapsed states keep them. */
@@ -2865,6 +2934,10 @@ body.w-mid.ws-on {
 #permissions[hidden] {
 	display: none;
 }
+#permissions {
+	min-width: 0;
+	overflow-x: hidden;
+}
 body.page-open #scroll-wrap,
 body.page-open footer,
 body.page-open .activity {
@@ -3205,6 +3278,9 @@ body.w-narrow.ws-on #ws-scrim {
 body {
 	--rail-strip: 64px;
 }
+body.w-narrow {
+	--rail-strip: 48px;
+}
 body.rail-on {
 	margin-right: var(--rail-strip);
 }
@@ -3429,6 +3505,14 @@ body.w-narrow.rail-on.rail-open .rail-tab {
 	color: var(--success);
 	border-color: var(--success);
 	background: var(--surface-raised);
+}
+body.w-narrow #toolsbar .rt-lbl,
+body.w-narrow #toolsbar .rt-badge {
+	display: none;
+}
+body.w-narrow .rail-tab {
+	min-width: 24px;
+	min-height: 40px;
 }
 /* FR-7: permissions launcher — pinned below the widget tabs, visually
    detached from them. */
@@ -4135,6 +4219,53 @@ body.w-narrow.rail-on.rail-open .rail-tab {
 	color: var(--muted);
 	margin-left: auto;
 }
+.git-summary {
+	display: flex;
+	gap: 6px;
+	flex-wrap: wrap;
+	font-size: 11px;
+	color: var(--muted);
+}
+.git-summary-item {
+	padding: 3px 7px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: var(--surface-inset);
+}
+.git-summary-item b {
+	color: var(--ink);
+	font-weight: 600;
+}
+.git-tabs {
+	display: flex;
+	gap: 4px;
+	border-bottom: 1px solid var(--line);
+}
+.git-tab {
+	border: 0;
+	border-bottom: 2px solid transparent;
+	background: transparent;
+	color: var(--muted);
+	padding: 6px 8px;
+	cursor: pointer;
+	font: inherit;
+	font-size: 12px;
+}
+.git-tab[aria-selected="true"] {
+	border-bottom-color: var(--accent);
+	color: var(--ink);
+}
+.git-tab:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+.git-tab-panel[hidden] {
+	display: none;
+}
+.git-state,
+.git-empty {
+	color: var(--muted);
+}
 .git-sec-h {
 	font-size: 11px;
 	text-transform: uppercase;
@@ -4151,6 +4282,8 @@ body.w-narrow.rail-on.rail-open .rail-tab {
 	align-items: center;
 	gap: 8px;
 	width: 100%;
+	min-width: 0;
+	overflow: hidden;
 	border: none;
 	border-bottom: 1px solid var(--line);
 	background: none;
@@ -4187,12 +4320,21 @@ body.w-narrow.rail-on.rail-open .rail-tab {
 .git-stat.renamed {
 	background: #8957e5;
 }
+.git-stat.untracked {
+	background: #6e7781;
+}
+.git-stat.binary,
+.git-stat.unknown {
+	background: #8b949e;
+}
 .git-fname {
 	flex: 1;
+	min-width: 0;
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	white-space: nowrap;
+	overflow-wrap: anywhere;
+	white-space: normal;
 }
 .git-delta {
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -4227,6 +4369,47 @@ body.w-narrow.rail-on.rail-open .rail-tab {
 }
 .git-back:hover {
 	border-color: var(--accent);
+}
+.git-diff-actions {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+}
+.git-refresh {
+	border: 1px solid var(--line);
+	background: var(--surface-inset);
+	color: var(--ink);
+	border-radius: calc(var(--r) - 2px);
+	padding: 4px 9px;
+	cursor: pointer;
+	font-size: 12px;
+}
+.git-refresh:hover {
+	border-color: var(--accent);
+}
+.git-diff-meta {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+}
+.git-diff-status {
+	flex-shrink: 0;
+	font-size: 11px;
+	color: var(--muted);
+	text-transform: lowercase;
+}
+.git-diff-old {
+	display: block;
+	color: var(--muted);
+	font-size: 11px;
+	font-family: inherit;
+}
+.git-diff-state {
+	padding: 10px;
+	border: 1px solid var(--line);
+	border-radius: calc(var(--r) - 2px);
+	background: var(--surface-inset);
 }
 .git-diffpath {
 	text-transform: none;
@@ -4346,6 +4529,7 @@ body.w-narrow #modal-wrap {
 .perm-body {
 	max-width: 900px;
 	width: 100%;
+	min-width: 0;
 	margin: 0 auto;
 	padding: 14px 16px 60px;
 	display: flex;
@@ -4417,6 +4601,9 @@ body.w-narrow #modal-wrap {
 .perm-explain-out {
 	margin-top: 8px;
 	font-size: 12px;
+	min-width: 0;
+	overflow-wrap: anywhere;
+	word-break: break-word;
 }
 .perm-ev {
 	display: flex;
@@ -4471,6 +4658,8 @@ body.w-narrow #modal-wrap {
 	gap: 8px;
 }
 .perm-tool {
+	min-width: 0;
+	overflow: hidden;
 	border: 1px solid var(--border, #30363d);
 	border-radius: calc(var(--r, 8px) - 2px);
 	padding: 8px 10px;
@@ -4495,11 +4684,18 @@ body.w-narrow #modal-wrap {
 	align-items: center;
 	gap: 8px;
 	flex-wrap: wrap;
+	min-width: 0;
 	padding: 3px 0;
 	font-size: 12px;
 }
 .perm-rule code {
+	flex: 1 1 auto;
+	min-width: 0;
+	max-width: 100%;
 	color: var(--ink, #e6edf3);
+	overflow-wrap: anywhere;
+	word-break: break-word;
+	white-space: pre-wrap;
 }
 .perm-layer {
 	padding: 0 6px;
@@ -4517,14 +4713,27 @@ body.w-narrow #modal-wrap {
 	padding: 3px 0;
 }
 .perm-diag code {
+	min-width: 0;
+	max-width: 100%;
 	color: var(--warning-strong, #e3b341);
+	overflow-wrap: anywhere;
+	word-break: break-word;
+	white-space: pre-wrap;
 }
 .perm-grant {
 	display: flex;
 	align-items: center;
 	gap: 8px;
+	min-width: 0;
 	font-size: 12px;
 	padding: 3px 0;
+}
+.perm-grant code {
+	min-width: 0;
+	max-width: 100%;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+	white-space: pre-wrap;
 }
 .perm-grant-n {
 	color: var(--muted, #8b949e);

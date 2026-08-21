@@ -9,6 +9,8 @@ const {
 	parseGitNameStatus,
 	mergeNumstats,
 	parseNumstat,
+	summarizeGitChanges,
+	boundedGitDiff,
 	statusFor,
 	numberOrNull,
 	gitExecutableForPlatform,
@@ -99,6 +101,12 @@ function ok(name, cond) {
 		changes[0].path === "new.js" && changes[0].status === "renamed",
 	);
 	ok(
+		"rename preserves old.js and staged flag",
+		changes[0].oldPath === "old.js" &&
+			changes[0].staged === true &&
+			changes[0].unstaged === false,
+	);
+	ok(
 		"next entry parsed correctly after rename",
 		changes[1].path === "other.js",
 	);
@@ -106,6 +114,50 @@ function ok(name, cond) {
 
 (() => {
 	ok("empty status → []", parseGitStatus("\0").length === 0);
+	const changes = parseGitStatus(
+		" M work.js\0?? new.txt\0 D gone.js\0A  staged.js\0\0",
+	);
+	ok(
+		"status flags distinguish staged, unstaged, and untracked",
+		changes[0].unstaged === true &&
+			changes[1].untracked === true &&
+			changes[2].unstaged === true &&
+			changes[3].staged === true,
+	);
+})();
+
+// ===== Git review summary + bounded diff metadata =====
+(() => {
+	const summary = summarizeGitChanges([
+		{ status: "added", staged: true },
+		{ status: "modified", unstaged: true },
+		{ status: "untracked", untracked: true },
+		{ status: "deleted", staged: true },
+		{ status: "renamed", unstaged: true },
+	]);
+	ok(
+		"summary counts staged/unstaged/untracked and statuses",
+		JSON.stringify(summary) ===
+			JSON.stringify({
+				changed: 5,
+				staged: 2,
+				unstaged: 2,
+				untracked: 1,
+				added: 1,
+				modified: 1,
+				deleted: 1,
+				renamed: 1,
+			}),
+	);
+	ok(
+		"bounded diff keeps small output",
+		boundedGitDiff("a.js", "@@ small", 32).unavailable === null,
+	);
+	const oversized = boundedGitDiff("a.js", "x".repeat(33), 32);
+	ok(
+		"bounded diff returns an explanatory oversized state",
+		oversized.diff === "" && oversized.unavailable === "oversized",
+	);
 })();
 
 // ===== parseNumstat =====
@@ -184,6 +236,7 @@ function ok(name, cond) {
 		"rename → new.js renamed",
 		changes[2].path === "new.js" && changes[2].status === "renamed",
 	);
+	ok("name-status rename preserves old.js", changes[2].oldPath === "old.js");
 })();
 
 console.log("\n" + pass + " passed");

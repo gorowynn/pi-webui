@@ -793,6 +793,26 @@ function settleToolGroup(wrap, isError) {
 	refreshToolGroup(group);
 }
 
+function wireToolReview(wrap, name, args) {
+	if (!wrap || wrap.reviewPath || !args || !window.gitReview) return;
+	const target = window.gitReview.reviewTargetFromTool(name, args);
+	if (!target) return;
+	const button = document.createElement("button");
+	button.type = "button";
+	button.className = "tool-review-link";
+	button.textContent = "Open in Changes";
+	button.setAttribute("data-review-path", target.path);
+	button.setAttribute("aria-label", "Open in Changes: " + target.path);
+	button.addEventListener("click", (event) => {
+		event.stopPropagation();
+		openToolReview(target.path);
+	});
+	const outWrap = wrap.el.querySelector(".out-wrap");
+	if (!outWrap) return;
+	wrap.el.insertBefore(button, outWrap);
+	wrap.reviewPath = target.path;
+}
+
 function toolBlock(id, name, args, running) {
 	let wrap = toolBlocks.get(id);
 	if (!wrap) {
@@ -831,6 +851,7 @@ function toolBlock(id, name, args, running) {
 		refreshToolGroup(group);
 	}
 	if (args != null) wrap.args = args;
+	wireToolReview(wrap, name, args);
 	autoscroll();
 	return wrap;
 }
@@ -2685,6 +2706,7 @@ function renderRail(renderPanel = true) {
 function openRailWidget(id) {
 	const w = WIDGETS.find((x) => x.id === id);
 	if (!w || !widgetVisible(w)) return;
+	if (railNarrow() && document.body.classList.contains("ws-on")) collapseWsbar();
 	const active = document.activeElement;
 	railReturnFocus =
 		active &&
@@ -4553,6 +4575,7 @@ const sbOverflow = $("sb-overflow");
 const sbMeta = sbInline ? [...sbInline.querySelectorAll("[data-sb-meta]")] : [];
 const sbBar = $("statusbar");
 const barOvf = $("bar-ovf"); // composer overflow ⋯ (spec FR-4)
+if (sb.git) sb.git.addEventListener("click", () => openRailWidget("git"));
 let sbNarrow = document.body.classList.contains("w-narrow");
 let sbOverflowRaf = 0;
 function syncHeaderStatusOverflow() {
@@ -4647,25 +4670,46 @@ function refreshHealth() {
 	fetch("/api/health")
 		.then((r) => r.json())
 		.then((h) => {
-			if (!h) return;
+			if (!h) throw new Error("health unavailable");
 			noSwitch = !!h.noSwitch;
 			document.body.classList.toggle("no-switch", noSwitch);
-			if (h.cwd) sb.repo.textContent = h.cwd;
-			if (h.git) {
-				const parts = [];
-				if (h.git.staged) parts.push(`+${h.git.staged}`);
-				if (h.git.unstaged) parts.push(`~${h.git.unstaged}`);
-				if (h.git.untracked) parts.push(`?${h.git.untracked}`);
-				sb.git.textContent = parts.length
-					? `${h.git.branch} ${parts.join(" ")}`
-					: h.git.branch;
-				sb.git.title = "+ staged  ~ unstaged  ? untracked";
-			} else {
-				sb.git.textContent = "—";
+			if (sb.repo) {
+				sb.repo.textContent = h.cwd || "unavailable";
+				sb.repo.title = h.cwd || "repository metadata unavailable";
+			}
+			if (sb.git) {
+				if (h.git) {
+					const parts = [];
+					if (h.git.staged) parts.push(`+${h.git.staged}`);
+					if (h.git.unstaged) parts.push(`~${h.git.unstaged}`);
+					if (h.git.untracked) parts.push(`?${h.git.untracked}`);
+					const branch =
+						h.git.branch === "HEAD"
+							? "HEAD (detached)"
+							: h.git.branch || "unknown branch";
+					sb.git.textContent = parts.length
+						? `${branch} ${parts.join(" ")}`
+						: `${branch} · clean`;
+					sb.git.title = "open Changes review · + staged  ~ unstaged  ? untracked";
+					sb.git.setAttribute("aria-label", "open Changes review: " + sb.git.textContent);
+				} else {
+					sb.git.textContent = "Git unavailable";
+					sb.git.title = "open Changes review · Git unavailable";
+				}
 			}
 			queueSbOverflow();
 		})
-		.catch(() => {});
+		.catch(() => {
+			if (sb.repo) {
+				sb.repo.textContent = "unavailable";
+				sb.repo.title = "repository metadata unavailable";
+			}
+			if (sb.git) {
+				sb.git.textContent = "Git unavailable";
+				sb.git.title = "open Changes review · Git unavailable";
+			}
+			queueSbOverflow();
+		});
 }
 function refreshStats() {
 	api({ type: "get_session_stats", id: "sb-stats" });
@@ -4713,7 +4757,11 @@ const ctxMeter = $("ctx-meter");
 const ctxLabel = $("ctx-label");
 function updateCtxMeter(cu) {
 	if (!ctxMeter) return;
-	const p = cu && cu.percent != null ? cu.percent : null;
+	const rawPercent = cu && cu.percent;
+	const numericPercent = Number(rawPercent);
+	const p = Number.isFinite(numericPercent)
+		? Math.max(0, Math.min(100, numericPercent))
+		: null;
 	document.body.classList.toggle("ctx-on", p != null);
 	document.body.classList.toggle(
 		"ctx-mid",
@@ -4790,12 +4838,15 @@ function applyModels(models) {
 function applyStats(data) {
 	if (!data) return;
 	lastStats = data;
+	// Update this first: the context meter must not depend on optional quota or
+	// rail rendering below it completing successfully.
+	updateCtxMeter(data.contextUsage);
 	const t = data.tokens || {};
 	if (usageViewKind(currentProvider) === "session") {
 		sessionUsage = t;
 		refreshUsageBar();
 	}
-	sb.tok.textContent = `${fmt(t.input)}↓ ${fmt(t.output)}↑`;
+	if (sb.tok) sb.tok.textContent = `${fmt(t.input)}↓ ${fmt(t.output)}↑`;
 	// cache hit rate = cacheRead / total input. pi's `input` is the NON-cached
 	// portion only (Anthropic convention), so total = input + cacheRead —
 	// dividing by `input` alone yielded >100% values (saw 542%). Always ≤100%.
@@ -4805,8 +4856,8 @@ function applyStats(data) {
 	sb.cache.textContent = `${fmt(t.cacheRead)}↓ ${fmt(t.cacheWrite)}↑${hit != null ? ` ${hit}%` : ""}`;
 	sb.cache.title =
 		"cache: read↓ (from cache) / write↑ (newly created); % = reads ÷ (reads + fresh input)";
-	sb.cost.textContent = data.cost != null ? data.cost.toFixed(3) : "…";
-	updateCtxMeter(data.contextUsage); // spec FR-10 — same event that refreshes the readout
+	if (sb.cost)
+		sb.cost.textContent = data.cost != null ? data.cost.toFixed(3) : "…";
 	queueSbOverflow();
 	refreshOpenAnalysis();
 	recordUsageSample(false);
@@ -5054,7 +5105,9 @@ es.onmessage = (ev) => {
 				(p.command === "switch_session" || p.command === "new_session") &&
 				(!p.data || !p.data.cancelled)
 			) {
-				// session replaced (resume / new) — re-render history + state for the now-active session
+				// session replaced (resume / new) — clear review context before the
+				// fresh history/state arrives, so old file links cannot linger.
+				resetGitReviewState();
 				fetchSnapshot();
 			}
 		} else if (p.type === "extension_ui_request") {
@@ -5102,6 +5155,7 @@ es.onmessage = (ev) => {
 		setTodos([]);
 		setSafeHtml(feedEl, "");
 		toolBlocks.clear();
+		resetGitReviewState();
 		curSessionFile = null;
 		resetUsageSession();
 		setStreaming(false);
@@ -6186,6 +6240,7 @@ function resumeSession(sessionPath, current) {
 	setTodos([]); // fresh todo panel for the resumed session
 	setSafeHtml(feedEl, "");
 	toolBlocks.clear();
+	resetGitReviewState();
 	api({ type: "switch_session", sessionPath, id: "resume" });
 }
 
@@ -6247,6 +6302,7 @@ $("new").onclick = () =>
 		"Start a new session? Current chat stays saved on the pi side.",
 		() => {
 			setTodos([]); // clear the todo panel for the fresh session
+			resetGitReviewState();
 			api({ type: "new_session" });
 		},
 	);
@@ -6282,6 +6338,7 @@ async function refreshWorkspaces() {
 	try {
 		data = await (await fetch("/api/workspaces")).json();
 	} catch {
+		setSafeHtml(host, '<div class="ws-empty">workspace metadata unavailable</div>');
 		return;
 	}
 	const ws = (data.ok && data.workspaces) || [];
@@ -6295,13 +6352,20 @@ async function refreshWorkspaces() {
 		row.type = "button";
 		row.className = "ws-row" + (w.active ? " active" : "");
 		row.title = w.path;
+		row.setAttribute("data-workspace-path", w.path);
+		row.setAttribute(
+			"aria-label",
+			`${w.name} workspace: ${w.path} · ${w.active ? "current · " : ""}${
+				w.sessions || 0
+			} session${w.sessions === 1 ? "" : "s"}`,
+		);
 		if (w.active) row.setAttribute("aria-current", "true");
 		setSafeHtml(
 			row,
 			`<span class="ws-name">${esc(w.name)}</span>` +
-				`<span class="ws-meta">${w.sessions || 0} session${
-					w.sessions === 1 ? "" : "s"
-				}</span>`,
+				`<span class="ws-meta">${w.active ? "current · " : ""}${
+					w.sessions || 0
+				} session${w.sessions === 1 ? "" : "s"}</span>`,
 		);
 		if (w.active)
 			row.disabled = true; // current workspace — can't switch to self
@@ -6331,6 +6395,7 @@ async function refreshSessionsSidebar() {
 	try {
 		data = await (await fetch("/api/sessions")).json();
 	} catch {
+		setSafeHtml(host, '<div class="ws-empty">session metadata unavailable</div>');
 		return;
 	}
 	const rows = (data.ok && data.sessions) || [];
@@ -6344,6 +6409,12 @@ async function refreshSessionsSidebar() {
 		const row = document.createElement("button");
 		row.type = "button";
 		row.className = "ws-row" + (current ? " active" : "");
+		row.title = `${s.name || s.preview || "session"} · ${s.path || ""}`;
+		row.setAttribute("data-session-path", s.path || "");
+		row.setAttribute(
+			"aria-label",
+			`${s.name || s.preview || "unnamed"} session · ${fmtSessionDate(s.when)} · ${sessionSizeLabel(s)}`,
+		);
 		if (current) row.setAttribute("aria-current", "true");
 		setSafeHtml(
 			row,
@@ -6374,6 +6445,7 @@ function collapseWsbar() {
 	}
 }
 function expandWsbar() {
+	if (railNarrow() && railSt.open) closeRail();
 	document.body.classList.add("ws-on");
 	localStorage.setItem(WS_KEY, "on");
 	const open = $("ws-open");
@@ -6387,9 +6459,11 @@ function expandWsbar() {
 	refreshSessionsSidebar();
 }
 (function initWsbar() {
-	// default on (first run); honor an explicit "off".
+	// Narrow starts closed so a persisted desktop drawer cannot cover most of
+	// the viewport; the launcher still makes it one click to open.
 	const open = $("ws-open");
-	if (localStorage.getItem(WS_KEY) === "off") {
+	const narrow = document.body.classList.contains("w-narrow");
+	if (localStorage.getItem(WS_KEY) === "off" || narrow) {
 		if (open) open.hidden = false;
 	} else {
 		document.body.classList.add("ws-on");
@@ -6405,6 +6479,19 @@ function expandWsbar() {
 	if (open) open.onclick = expandWsbar;
 	const scrim = $("ws-scrim");
 	if (scrim) scrim.onclick = collapseWsbar;
+	// A desktop-to-drawer resize should not leave the sidebar covering the new
+	// narrow viewport. Same-mode resizes preserve an explicitly opened drawer.
+	document.body.addEventListener("widthchange", (e) => {
+		const next = e.detail && e.detail.cls;
+		const prev = e.detail && e.detail.prev;
+		if (
+			next &&
+			next !== "w-wide" &&
+			next !== prev &&
+			document.body.classList.contains("ws-on")
+		)
+			collapseWsbar();
+	});
 	// Escape closes the drawer — but never while the modal is open (the
 	// capture-phase onModalKey owns Escape then) or the settings drawer.
 	document.addEventListener("keydown", (e) => {
@@ -6423,6 +6510,7 @@ function expandWsbar() {
 				"Start a new session? Current chat stays saved on the pi side.",
 				() => {
 					setTodos([]);
+					resetGitReviewState();
 					api({ type: "new_session" });
 				},
 			);
@@ -7056,44 +7144,125 @@ let gitEl = null;
 function gEl() {
 	return gitEl;
 }
-let gitLastSnap = null; // last list snapshot (back-button re-render)
+let gitLastSnap = null; // normalized list snapshot (back-button re-render)
+let gitReviewTab = "changes"; // internal tab state; rail.js remains the only persisted nav
+let gitSelectedPath = null;
+let gitSelectedCommit = null;
+let gitPendingPath = null;
+let gitReviewNotice = "";
+let gitDiffGen = 0;
+function resetGitReviewState() {
+	gitDiffGen++;
+	gitLastSnap = null;
+	gitSelectedPath = null;
+	gitSelectedCommit = null;
+	gitPendingPath = null;
+	gitReviewNotice = "";
+	gitReviewTab = "changes";
+	gitBadgeSnap = null;
+	if (gEl() && gEl().isConnected && railWidget && railWidget.id === "git")
+		setSafeHtml(gEl(), '<div class="git"><p class="um-hint">loading…</p></div>');
+}
+function openToolReview(path) {
+	gitPendingPath = path;
+	gitSelectedPath = path;
+	gitSelectedCommit = null;
+	gitReviewTab = "files";
+	openRailWidget("git");
+}
 function gitBack() {
+	gitDiffGen++;
+	gitSelectedPath = null;
+	gitSelectedCommit = null;
 	if (gitLastSnap) renderGitList(gitLastSnap);
 }
-function renderGitList(s) {
-	gitLastSnap = s;
-	if (!s.repository) {
+function renderGitList(s, notice) {
+	const review =
+		s && s.state ? s : gitReview.normalizeReviewSnapshot(s);
+	gitLastSnap = review;
+	const message = notice || gitReviewNotice;
+	gitReviewNotice = "";
+	if (gitSelectedPath && !gitSelectedCommit && !gitReview.reconcileReviewSelection(review, gitSelectedPath)) {
+		gitSelectedPath = null;
+		gitSelectedCommit = null;
+	}
+	if (review.state === "unavailable") {
 		setSafeHtml(
 			gEl(),
-			'<div class="git"><h3>Git</h3><p class="um-hint">not a git repository</p></div>',
+			'<div class="git git-state"><h3>Git</h3><p class="um-hint">Git unavailable</p></div>',
 		);
 		return;
 	}
+	if (review.state === "error") {
+		setSafeHtml(
+			gEl(),
+			'<div class="git git-state"><h3>Git</h3><p class="um-hint">' +
+				esc(review.error || "Git unavailable") +
+				"</p></div>",
+		);
+		return;
+	}
+	const summary = review.summary;
+	const tab = gitReviewTab === "files" ? "files" : "changes";
+	const branch = review.detached
+		? "HEAD (detached)"
+		: review.branch || "unknown branch";
+	const summaryLabel =
+		summary.changed +
+			" changed · " +
+			summary.staged +
+			" staged · " +
+			summary.unstaged +
+			" unstaged · " +
+			summary.untracked +
+			" untracked";
 	const parts = [];
 	parts.push('<div class="git">');
 	parts.push('<div class="git-head">');
-	parts.push('<span class="git-branch">⎇ ' + esc(s.branch) + "</span>");
-	if (s.ahead > 0)
-		parts.push('<span class="git-ahead">▲ ' + s.ahead + " unpushed</span>");
-	parts.push('<span class="git-count">' + s.files.length + " changed</span>");
+	parts.push('<span class="git-branch">⎇ ' + esc(branch) + "</span>");
+	if (review.ahead > 0)
+		parts.push(
+			'<span class="git-ahead">▲ ' + review.ahead + " unpushed</span>",
+		);
+	parts.push('<span class="git-count">' + summary.changed + " changed</span>");
 	parts.push("</div>");
-	parts.push(gitActionButtons(s));
-	if (s.files.length) {
-		parts.push('<div class="git-sec-h">changes</div>');
-		parts.push('<div class="git-files">');
-		s.files.forEach((f) => parts.push(gitFileBtn(f)));
-		parts.push("</div>");
-	} else {
-		parts.push('<p class="um-hint">clean working tree</p>');
-	}
-	if (s.commits.length) {
+	parts.push('<div class="git-summary git-status" role="status" aria-label="' + esc(summaryLabel) + '">');
+	parts.push('<span class="git-summary-item">staged <b>' + summary.staged + "</b></span>");
+	parts.push('<span class="git-summary-item">unstaged <b>' + summary.unstaged + "</b></span>");
+	parts.push('<span class="git-summary-item">untracked <b>' + summary.untracked + "</b></span>");
+	parts.push("</div>");
+	parts.push('<div class="git-tabs" role="tablist" aria-label="Git review">');
+	parts.push(
+		'<button type="button" class="git-tab" data-git-tab="changes" role="tab" aria-selected="' +
+			(tab === "changes") +
+			'" aria-controls="git-panel-changes">Changes</button>',
+	);
+	parts.push(
+		'<button type="button" class="git-tab" data-git-tab="files" role="tab" aria-selected="' +
+			(tab === "files") +
+			'" aria-controls="git-panel-files">Files</button>',
+	);
+	parts.push("</div>");
+	if (message)
+		parts.push('<p class="um-hint git-review-notice" role="status">' + esc(message) + "</p>");
+	parts.push(
+		'<section id="git-panel-changes" class="git-tab-panel" role="tabpanel" aria-label="Changes"' +
+			(tab === "changes" ? "" : ' hidden') +
+			">",
+	);
+	parts.push(gitActionButtons(review));
+	if (review.state === "clean")
+		parts.push('<p class="um-hint git-empty">No changes</p>');
+	else
+		parts.push('<p class="um-hint git-selection-hint">Select a file in Files to review its current diff.</p>');
+	if (review.commits.length) {
 		parts.push(
 			'<div class="git-sec-h">unpushed commits (' +
-				s.commits.length +
+				review.commits.length +
 				")</div>",
 		);
 		parts.push('<div class="git-files">');
-		s.commits.forEach((c) => {
+		review.commits.forEach((c) => {
 			parts.push(
 				'<div class="git-commit"><span class="git-csubj">' +
 					esc(c.subject) +
@@ -7105,8 +7274,27 @@ function renderGitList(s) {
 		});
 		parts.push("</div>");
 	}
-	parts.push("</div>");
+	parts.push("</section>");
+	parts.push(
+		'<section id="git-panel-files" class="git-tab-panel" role="tabpanel" aria-label="Files"' +
+			(tab === "files" ? "" : ' hidden') +
+			">",
+	);
+	if (review.files.length) {
+		parts.push('<div class="git-sec-h">changed files</div><div class="git-files">');
+		review.files.forEach((f) => parts.push(gitFileBtn(f)));
+		parts.push("</div>");
+	} else {
+		parts.push('<p class="um-hint git-empty">No changes</p>');
+	}
+	parts.push("</section></div>");
 	setSafeHtml(gEl(), parts.join(""));
+	gEl().querySelectorAll("[data-git-tab]").forEach((button) => {
+		button.addEventListener("click", () => {
+			gitReviewTab = button.getAttribute("data-git-tab") || "changes";
+			renderGitList(gitLastSnap);
+		});
+	});
 	const commitBtn = gEl().querySelector(".git-act.primary");
 	if (commitBtn) commitBtn.addEventListener("click", gitCommitModal);
 	const pushBtn = gEl().querySelector(".git-push");
@@ -7114,7 +7302,7 @@ function renderGitList(s) {
 		pushBtn.addEventListener("click", () =>
 			gitConfirm(
 				"push",
-				"Push " + s.ahead + " commit(s) to the remote?",
+				"Push " + review.ahead + " commit(s) to the remote?",
 				"/api/git/push",
 			),
 		);
@@ -7130,12 +7318,11 @@ function renderGitList(s) {
 	gEl()
 		.querySelectorAll(".git-file[data-path]")
 		.forEach((btn) => {
-			btn.addEventListener("click", () =>
-				showGitDiff(
-					btn.getAttribute("data-path"),
-					btn.getAttribute("data-commit") || null,
-				),
-			);
+			btn.addEventListener("click", () => {
+				gitSelectedPath = btn.getAttribute("data-path");
+				gitSelectedCommit = btn.getAttribute("data-commit") || null;
+				showGitDiff(gitSelectedPath, gitSelectedCommit);
+			});
 		});
 }
 
@@ -7166,18 +7353,75 @@ function gitFileBtn(f, commit) {
 	);
 }
 
+function gitReviewFile(snapshot, p, commit) {
+	if (!snapshot) return null;
+	if (commit) {
+		const entry = (snapshot.commits || []).find((c) => c.hash === commit);
+		return entry && (entry.files || []).find((file) => file.path === p);
+	}
+	return (snapshot.files || []).find((file) => file.path === p) || null;
+}
+function gitDiffShell(p, commit, body) {
+	const file = gitReviewFile(gitLastSnap, p, commit);
+	const status = file ? file.status : "stale";
+	const oldPath =
+		file && file.oldPath
+			? '<span class="git-diff-old">from ' + esc(file.oldPath) + "</span>"
+			: "";
+	return (
+		'<div class="git">' +
+			'<div class="git-diff-actions"><button type="button" class="git-back" aria-label="Back to Git changes">← back</button>' +
+			'<button type="button" class="git-refresh" aria-label="Refresh Git review">↻ refresh</button></div>' +
+			'<div class="git-diff-meta"><div class="git-sec-h git-diffpath">' +
+			esc(p) +
+			oldPath +
+			'</div><span class="git-diff-status">' +
+			esc(status) +
+			"</span></div>" +
+			body +
+			"</div>"
+	);
+}
+function wireGitDiffControls(p, commit) {
+	const back = gEl().querySelector(".git-back");
+	if (back) back.addEventListener("click", gitBack);
+	const refresh = gEl().querySelector(".git-refresh");
+	if (refresh) refresh.addEventListener("click", () => refreshGitReview(p, commit));
+}
+async function refreshGitReview(p, commit) {
+	let data;
+	try {
+		data = await (await fetch("/api/git")).json();
+	} catch (e) {
+		data = { ok: false, error: e.message };
+	}
+	if (!gEl() || (railWidget && railWidget.id !== "git")) return;
+	const review = gitReview.normalizeReviewSnapshot(
+		data.ok === false ? data : data.snapshot,
+	);
+	gitBadgeSnap = review.repository ? { changed: review.summary.changed } : null;
+	const file = gitReviewFile(review, p, commit);
+	if (!file) {
+		gitSelectedPath = null;
+		gitSelectedCommit = null;
+		gitReviewNotice = "File is no longer in the current Git snapshot.";
+		renderGitList(review);
+		return;
+	}
+	gitLastSnap = review;
+	showGitDiff(p, commit);
+}
 async function showGitDiff(p, commit) {
-	const back = '<button type="button" class="git-back">← back</button>';
+	gitSelectedPath = p;
+	gitSelectedCommit = commit || null;
+	const request = (gitDiffGen || 0) + 1;
+	gitDiffGen = request;
+	const file = gitReviewFile(gitLastSnap, p, commit);
 	setSafeHtml(
 		gEl(),
-		'<div class="git">' +
-			back +
-			'<div class="git-sec-h git-diffpath">' +
-			esc(p) +
-			'</div><p class="um-hint">loading diff…</p></div>',
+		gitDiffShell(p, commit, '<p class="um-hint git-diff-state" role="status">loading diff…</p>'),
 	);
-	const backBtn = gEl().querySelector(".git-back");
-	if (backBtn) backBtn.addEventListener("click", gitBack);
+	wireGitDiffControls(p, commit);
 	let data;
 	try {
 		const q =
@@ -7188,23 +7432,24 @@ async function showGitDiff(p, commit) {
 	} catch (e) {
 		data = { ok: false, error: e.message };
 	}
-	if (!data.ok) {
+	if (request !== gitDiffGen) return;
+	const state = gitReview.reviewDiffState(file, data);
+	if (state.state !== "ready") {
 		setSafeHtml(
 			gEl(),
-			'<div class="git">' +
-				back +
-				'<div class="git-sec-h git-diffpath">' +
-				esc(p) +
-				'</div><p class="um-hint">' +
-				esc(data.error || "failed") +
-				"</p></div>",
+			gitDiffShell(
+				p,
+				commit,
+				'<p class="um-hint git-diff-state" role="status">' +
+					esc(state.message) +
+					"</p>",
+			),
 		);
-		const b2 = gEl().querySelector(".git-back");
-		if (b2) b2.addEventListener("click", gitBack);
+		wireGitDiffControls(p, commit);
 		return;
 	}
 	// render the unified diff with +/− line coloring (content escaped per line)
-	const lines = String(data.diff || "").split("\n");
+	const lines = state.diff.split("\n");
 	const body = lines
 		.map((l) => {
 			let cls = "";
@@ -7214,24 +7459,15 @@ async function showGitDiff(p, commit) {
 			return '<span class="' + cls + '">' + esc(l || " ") + "</span>";
 		})
 		.join("\n");
-	setSafeHtml(
-		gEl(),
-		'<div class="git">' +
-			back +
-			'<div class="git-sec-h git-diffpath">' +
-			esc(p) +
-			'</div><pre class="git-diff">' +
-			body +
-			"</pre></div>",
-	);
-	const b3 = gEl().querySelector(".git-back");
-	if (b3) b3.addEventListener("click", gitBack);
+	setSafeHtml(gEl(), gitDiffShell(p, commit, '<pre class="git-diff">' + body + "</pre>"));
+	wireGitDiffControls(p, commit);
 }
 
 // W1 chunk 6: rail widget body — lazy fetch on open, gen-stamped (FR-8):
 // a response landing after the user switched widgets is dropped.
 async function gitRenderRail(el, g) {
 	gitEl = el;
+	gitBadgeSnap = null;
 	setSafeHtml(gEl(), '<div class="git"><p class="um-hint">loading…</p></div>');
 	let data;
 	try {
@@ -7240,17 +7476,29 @@ async function gitRenderRail(el, g) {
 		data = { ok: false, error: e.message };
 	}
 	if (railGen.stale(g)) return; // user moved on — drop
-	if (!data.ok) {
-		setSafeHtml(
-			gEl(),
-			'<div class="git"><p class="um-hint">' +
-				esc(data.error || "failed to load") +
-				"</p></div>",
-		);
+	const review = gitReview.normalizeReviewSnapshot(
+		data.ok === false ? data : data.snapshot,
+	);
+	gitBadgeSnap = review.repository
+		? { changed: review.summary.changed }
+		: null;
+	const pending = gitPendingPath;
+	gitPendingPath = null;
+	if (pending && gitReview.reconcileReviewSelection(review, pending)) {
+		gitSelectedPath = pending;
+		gitSelectedCommit = null;
+		gitReviewTab = "files";
+		renderGitList(review);
+		renderRail(false); // refresh the badge only
+		showGitDiff(pending, null);
 		return;
 	}
-	gitBadgeSnap = { changed: (data.snapshot.files || []).length }; // API field is files
-	renderGitList(data.snapshot);
+	if (pending) {
+		gitSelectedPath = null;
+		gitSelectedCommit = null;
+		gitReviewNotice = "File is not in the current Git snapshot.";
+	}
+	renderGitList(review);
 	renderRail(false); // refresh the badge only
 }
 
@@ -7260,8 +7508,9 @@ async function gitRefresh() {
 	try {
 		const data = await (await fetch("/api/git")).json();
 		if (data.ok) {
-			gitBadgeSnap = { changed: (data.snapshot.files || []).length }; // API field is files
-			renderGitList(data.snapshot);
+			const review = gitReview.normalizeReviewSnapshot(data.snapshot);
+			gitBadgeSnap = { changed: review.summary.changed };
+			renderGitList(review);
 		}
 	} catch {}
 }
@@ -7358,9 +7607,10 @@ registerCommand(
 		location.hash = "#fleet";
 	},
 );
-registerCommand("new-session", "new session", "start a fresh session", () =>
-	api({ type: "new_session" }),
-);
+registerCommand("new-session", "new session", "start a fresh session", () => {
+	resetGitReviewState();
+	api({ type: "new_session" });
+});
 registerCommand(
 	"compact",
 	"compact context",

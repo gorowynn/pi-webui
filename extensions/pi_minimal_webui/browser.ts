@@ -291,9 +291,7 @@ class BrowserManager {
 		}
 	}
 
-	private async metadata(
-		signal?: AbortSignal,
-	): Promise<{
+	private async metadata(signal?: AbortSignal): Promise<{
 		url: string;
 		title: string;
 		viewport: { width: number; height: number };

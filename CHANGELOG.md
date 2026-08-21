@@ -6,6 +6,15 @@
 
 ## History
 
+### 2026-08-21 — feat(webui): add the contextual Git review workspace
+
+- Added branch/status context, Changes/Files review, bounded read-only diffs,
+  generation-safe selection reconciliation, and conservative tool-to-file links
+  across `git.js`, `server.js`, `public/git-review.js`, and the existing rail.
+- Added workspace/session orientation metadata and responsive single-surface
+  behavior for the Git rail, drawer, and composer. The 48-file test suite and
+  live browser smoke checks pass.
+
 ### 2026-08-20 — docs(browser): specify proposed browser debugging tools
 
 - Added [`docs/browser-tools.md`](docs/browser-tools.md), defining the

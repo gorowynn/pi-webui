@@ -29,4 +29,11 @@ assert.match(css, /\.msg\.user-turn\s*\{[\s\S]*justify-content:\s*flex-end/);
 assert.match(css, /\.msg\.user-turn \.bubble\s*\{[\s\S]*max-width:\s*min\(88%/);
 assert.match(css, /\.msg\.tool-turn\s*\{[\s\S]*margin-inline:\s*8px/);
 
-console.log("12 passed");
+// C7 — safe tool-to-review links remain compact and explicit.
+assert.match(app, /reviewTargetFromTool/);
+assert.match(app, /data-review-path/);
+assert.match(app, /Open in Changes/);
+assert.match(app, /openRailWidget\("git"\)/);
+assert.match(css, /\.tool-review-link/);
+
+console.log("17 passed");

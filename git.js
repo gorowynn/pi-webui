@@ -98,6 +98,7 @@ async function getGitSnapshot(cwd) {
 			root: null,
 			branch: null,
 			files: [],
+			summary: summarizeGitChanges([]),
 			ahead: 0,
 			commits: [],
 		};
@@ -136,10 +137,7 @@ async function getGitSnapshot(cwd) {
 	// untracked files have no numstat; fetch per-file diff --no-index for additions
 	await Promise.all(
 		changes
-			.filter(
-				(change) =>
-					change.status === "added" && !counts.has(change.path),
-			)
+			.filter((change) => change.untracked && !counts.has(change.path))
 			.map((change) =>
 				runGit(
 					cwd,
@@ -170,13 +168,22 @@ async function getGitSnapshot(cwd) {
 		repository: true,
 		root: root.stdout.trim() || null,
 		branch: branch.stdout.trim() || "HEAD",
+		summary: summarizeGitChanges(changes),
 		files: changes.map((change) => {
 			const count = counts.get(change.path);
+			const binary =
+				!!count && count.additions == null && count.deletions == null;
 			return {
 				path: change.path,
+				oldPath: change.oldPath || null,
 				status: change.status,
+				staged: change.staged,
+				unstaged: change.unstaged,
+				untracked: change.untracked,
 				additions: count ? count.additions : null,
 				deletions: count ? count.deletions : null,
+				binary,
+				diffAvailable: !!count && !binary,
 			};
 		}),
 		ahead: commits.length,
@@ -228,6 +235,7 @@ async function unpushedCommits(cwd) {
 					const count = counts.get(change.path);
 					return {
 						path: change.path,
+						oldPath: change.oldPath || null,
 						status: change.status,
 						additions: count ? count.additions : null,
 						deletions: count ? count.deletions : null,
@@ -245,7 +253,10 @@ async function getGitFileDiff(cwd, repoPath, commitHash) {
 	if (commitHash) {
 		const commit = snapshot.commits.find((c) => c.hash === commitHash);
 		const file = commit && commit.files.find((c) => c.path === repoPath);
-		if (!file || (file.status !== "added" && file.status !== "modified"))
+		if (
+			!file ||
+			!["added", "modified", "deleted", "renamed"].includes(file.status)
+		)
 			throw new Error("This file cannot be displayed.");
 		const result = await runGit(cwd, [
 			"diff-tree",
@@ -258,23 +269,32 @@ async function getGitFileDiff(cwd, repoPath, commitHash) {
 			"--",
 			repoPath,
 		]);
-		return { path: repoPath, diff: result.stdout };
+		return boundedGitDiff(repoPath, result.stdout);
 	}
 	const file = snapshot.files.find((c) => c.path === repoPath);
-	if (!file || (file.status !== "added" && file.status !== "modified"))
+	if (
+		!file ||
+		!["added", "modified", "deleted", "renamed", "untracked"].includes(
+			file.status,
+		)
+	)
 		throw new Error("This file cannot be displayed.");
+	if (file.binary || file.diffAvailable === false)
+		return { path: repoPath, diff: "", unavailable: "binary" };
 	const trackedDiff = await runGit(
 		cwd,
 		["diff", "HEAD", "--", repoPath],
 		[0, 128],
 	);
-	if (trackedDiff.stdout) return { path: repoPath, diff: trackedDiff.stdout };
+	if (trackedDiff.stdout) return boundedGitDiff(repoPath, trackedDiff.stdout);
+	if (file.status === "deleted")
+		return { path: repoPath, diff: "", unavailable: "deleted" };
 	const untrackedDiff = await runGit(
 		cwd,
 		["diff", "--no-index", "--", "/dev/null", repoPath],
 		[0, 1],
 	);
-	return { path: repoPath, diff: untrackedDiff.stdout };
+	return boundedGitDiff(repoPath, untrackedDiff.stdout);
 }
 
 // ---- pure parsers (exported for tests) ----
@@ -286,8 +306,19 @@ function parseGitStatus(output) {
 		if (!field) continue;
 		const code = field.slice(0, 2);
 		const p = field.slice(3);
-		if (code.indexOf("R") >= 0 || code.indexOf("C") >= 0) index += 1;
-		changes.push({ path: p, status: statusFor(code) });
+		const untracked = code === "??";
+		const oldPath =
+			code.indexOf("R") >= 0 || code.indexOf("C") >= 0
+				? fields[++index] || null
+				: null;
+		changes.push({
+			path: p,
+			oldPath,
+			status: statusFor(code),
+			staged: !untracked && code[0] !== " " && code[0] !== "?",
+			unstaged: !untracked && code[1] !== " " && code[1] !== "?",
+			untracked,
+		});
 	}
 	return changes;
 }
@@ -297,17 +328,44 @@ function parseGitNameStatus(output) {
 	const changes = [];
 	for (let index = 0; index < fields.length - 1; index += 1) {
 		const code = fields[index];
-		const p = fields[++index];
-		if (!code || !p) continue;
+		const oldPath = fields[++index];
+		if (!code || !oldPath) continue;
 		if (code.startsWith("R") || code.startsWith("C")) {
 			const newPath = fields[++index];
 			if (newPath)
-				changes.push({ path: newPath, status: statusFor(code) });
+				changes.push({
+					path: newPath,
+					oldPath,
+					status: statusFor(code),
+				});
 			continue;
 		}
-		changes.push({ path: p, status: statusFor(code) });
+		changes.push({ path: oldPath, status: statusFor(code) });
 	}
 	return changes;
+}
+
+function summarizeGitChanges(changes) {
+	const list = Array.isArray(changes) ? changes : [];
+	return {
+		changed: list.length,
+		staged: list.filter((change) => change && change.staged === true).length,
+		unstaged: list.filter((change) => change && change.unstaged === true).length,
+		untracked: list.filter((change) => change && change.untracked === true).length,
+		added: list.filter((change) => change && change.status === "added").length,
+		modified: list.filter((change) => change && change.status === "modified").length,
+		deleted: list.filter((change) => change && change.status === "deleted").length,
+		renamed: list.filter((change) => change && change.status === "renamed").length,
+	};
+}
+
+const MAX_DIFF_BYTES = 1024 * 1024;
+function boundedGitDiff(repoPath, diff, maxBytes) {
+	const text = typeof diff === "string" ? diff : "";
+	const limit = Number.isFinite(Number(maxBytes)) ? Number(maxBytes) : MAX_DIFF_BYTES;
+	if (Buffer.byteLength(text, "utf8") <= limit)
+		return { path: repoPath, diff: text, unavailable: null };
+	return { path: repoPath, diff: "", unavailable: "oversized" };
 }
 
 function mergeNumstats() {
@@ -512,6 +570,8 @@ module.exports = {
 	parseGitNameStatus: parseGitNameStatus,
 	mergeNumstats: mergeNumstats,
 	parseNumstat: parseNumstat,
+	summarizeGitChanges: summarizeGitChanges,
+	boundedGitDiff: boundedGitDiff,
 	statusFor: statusFor,
 	numberOrNull: numberOrNull,
 	gitExecutableForPlatform: gitExecutableForPlatform,

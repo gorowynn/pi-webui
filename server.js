@@ -132,6 +132,10 @@ const STATIC = {
 		file: "permissions-ux.js",
 		type: "text/javascript; charset=utf-8",
 	},
+	"/git-review.js": {
+		file: "git-review.js",
+		type: "text/javascript; charset=utf-8",
+	},
 	"/rail.js": {
 		file: "rail.js",
 		type: "text/javascript; charset=utf-8",
@@ -1790,6 +1794,7 @@ const server = http.createServer(async (req, res) => {
 					ok: true,
 					diff: result.diff,
 					path: result.path,
+					unavailable: result.unavailable || null,
 				}),
 			);
 		} catch (e) {

@@ -299,7 +299,7 @@ assert.ok(
 		css.includes("overflow-x: auto"),
 	"narrow rail uses a contained bottom-sheet layout",
 );
-for (const id of ["sb-git", "sb-tok", "sb-cost"]) {
+for (const id of ["sb-tok", "sb-cost"]) {
 	assert.ok(!html.includes(`id="${id}"`), `${id} retired after rail parity`);
 }
 
