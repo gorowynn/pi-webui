@@ -4,7 +4,7 @@
  * tool summaries, the stats fallback, and formatters. Plan 4.2.
  */
 
-const assert = require("assert/strict");
+// const assert unused — helpers ok()/eq() cover all checks
 const A = require("../public/session-analysis.js");
 
 let pass = 0;
@@ -261,6 +261,88 @@ function usage(input, cacheRead, output, cost) {
 	eq("formatTokens small", A.formatTokens(410), "410");
 	ok("formatDuration ms", A.formatDuration(500) === "500 ms");
 	ok("formatDuration seconds", /\.?\d?\s/.test(A.formatDuration(2500)));
+})();
+
+// ===== notices + chars formatter (usage-tab FR-10 / FR-12) =====
+(() => {
+	const ids = (input) => A.sessionNotices(input).map((n) => n.id);
+	// context-high # FR-10
+	ok(
+		"context-high fires at 80 and 95",
+		ids({ contextPercent: 80 }).includes("context-high") &&
+			ids({ contextPercent: 95 }).includes("context-high"),
+	);
+	ok(
+		"context-high absent at 79",
+		!ids({ contextPercent: 79 }).includes("context-high"),
+	);
+	ok(
+		"context-high absent when contextPercent null/missing (E3)",
+		!ids({ contextPercent: null }).includes("context-high") &&
+			!ids({}).includes("context-high"),
+	);
+	// tool-errors # FR-10
+	ok(
+		"tool-errors fires at 1/5 (20%)",
+		ids({ failedToolCalls: 1, totalToolCalls: 5 }).includes("tool-errors"),
+	);
+	ok(
+		"tool-errors absent at 1/6 (17%)",
+		!ids({ failedToolCalls: 1, totalToolCalls: 6 }).includes("tool-errors"),
+	);
+	ok(
+		"tool-errors absent below min-call gate (4/4)",
+		!ids({ failedToolCalls: 4, totalToolCalls: 4 }).includes("tool-errors"),
+	);
+	// pending-idle # FR-10
+	ok(
+		"pending-idle fires at 2 pending, not running",
+		ids({ pendingTools: 2, running: false }).includes("pending-idle"),
+	);
+	ok(
+		"pending-idle absent while running",
+		!ids({ pendingTools: 2, running: true }).includes("pending-idle"),
+	);
+	ok(
+		"pending-idle absent at 0 pending",
+		!ids({ pendingTools: 0, running: false }).includes("pending-idle"),
+	);
+	// ordering + purity # FR-10
+	const all = A.sessionNotices({
+		contextPercent: 90,
+		failedToolCalls: 3,
+		totalToolCalls: 10,
+		pendingTools: 1,
+		running: false,
+	});
+	ok(
+		"ordering context-high -> tool-errors -> pending-idle",
+		JSON.stringify(all.map((n) => n.id)) ===
+			JSON.stringify(["context-high", "tool-errors", "pending-idle"]),
+	);
+	const pureIn = {
+		contextPercent: 85,
+		failedToolCalls: 2,
+		totalToolCalls: 8,
+		pendingTools: 1,
+		running: false,
+	};
+	const pureSnapshot = JSON.stringify(pureIn);
+	const outA = A.sessionNotices(pureIn);
+	const outB = A.sessionNotices(pureIn);
+	ok(
+		"pure: equal output, input not mutated",
+		JSON.stringify(outA) === JSON.stringify(outB) &&
+			JSON.stringify(pureIn) === pureSnapshot,
+	);
+	ok(
+		"tones: context-high attention, tool-errors danger",
+		all[0].tone === "attention" && all[1].tone === "danger",
+	);
+	// formatChars # FR-12
+	eq("formatChars k", A.formatChars(8400), "8.4k chars");
+	eq("formatChars small", A.formatChars(410), "410 chars");
+	eq("formatChars million", A.formatChars(1200000), "1.2M chars");
 })();
 
 console.log("\n" + pass + " passed");

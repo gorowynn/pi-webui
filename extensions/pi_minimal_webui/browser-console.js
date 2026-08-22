@@ -2,6 +2,7 @@ const { truncateUtf8 } = require("./browser-snapshot.js");
 
 const CONSOLE_SCHEMA = "pi-webui.browser-console/v1";
 const MAX_ENTRIES = 50;
+const MAX_DELTA_ENTRIES = 20;
 const MAX_TEXT_BYTES = 4096;
 const MAX_SOURCE_BYTES = 2048;
 
@@ -80,13 +81,15 @@ class ConsoleCollector {
 	constructor(maxEntries = MAX_ENTRIES) {
 		this.maxEntries = Math.max(1, Math.min(MAX_ENTRIES, maxEntries));
 		this.entries = [];
+		this.nextSequence = 1;
+		this.readCursor = 0;
 		this.unsubscribers = [];
 	}
 
 	push(method, params) {
 		const entry = normalizeConsoleEvent(method, params);
 		if (!entry) return false;
-		this.entries.push(entry);
+		this.entries.push({ ...entry, sequence: this.nextSequence++ });
 		if (this.entries.length > this.maxEntries)
 			this.entries.splice(0, this.entries.length - this.maxEntries);
 		return true;
@@ -119,19 +122,46 @@ class ConsoleCollector {
 
 	clear() {
 		this.entries = [];
+		this.nextSequence = 1;
+		this.readCursor = 0;
 	}
 
-	result(url) {
+	result(url, options = {}) {
+		const mode = options.mode === "full" ? "full" : "delta";
+		const latest = this.nextSequence - 1;
+		const explicitSince = Number.isInteger(options.since) && options.since >= 0;
+		const since = explicitSince ? options.since : this.readCursor;
+		let entries;
+		let dropped = false;
+		if (mode === "full") {
+			entries = this.entries.slice(-this.maxEntries);
+		} else {
+			const first = this.entries[0]?.sequence ?? latest + 1;
+			dropped = since < first - 1;
+			entries = this.entries
+				.filter((entry) => entry.sequence > since)
+				.slice(0, MAX_DELTA_ENTRIES);
+		}
+		const cursor = entries.length
+			? entries.at(-1).sequence
+			: Math.min(since, latest);
+		if (mode === "full") this.readCursor = Math.max(this.readCursor, latest);
+		else if (!explicitSince)
+			this.readCursor = Math.max(this.readCursor, cursor);
 		return {
 			schema: CONSOLE_SCHEMA,
 			url: truncateUtf8(url || "", 2048),
-			entries: this.entries.map((entry) => ({ ...entry })),
+			entries: entries.map((entry) => ({ ...entry })),
+			cursor,
+			dropped,
+			mode,
 		};
 	}
 }
 
 module.exports = {
 	CONSOLE_SCHEMA,
+	MAX_DELTA_ENTRIES,
 	MAX_ENTRIES,
 	MAX_SOURCE_BYTES,
 	MAX_TEXT_BYTES,

@@ -51,6 +51,10 @@ let usageHistory = usageTelemetry
 let usageEvents = usageLedgerFor(usageHistory);
 let usageLastSampleAt = 0;
 let suppressUsageEnd = false;
+let anTelOpen = false; // usage-tab FR-3: PERFORMANCE <details> open state (survives re-render)
+let anMetric = null; // usage-tab FR-4: resolved bar metric ("cost"|"output"|"context")
+let anShownAll = false; // usage-tab FR-6: rail bar window expanded
+let anSelected = null; // usage-tab FR-8: selected turn messageIndex
 function setUsageSession(sessionFile) {
 	if (!usageTelemetry) return;
 	const key =
@@ -750,13 +754,16 @@ function ensureToolGroup() {
 	fold.open = true;
 	setSafeHtml(
 		fold,
-		'<summary class="tool-group-head"><span class="tool-group-caret">▸</span><span class="tool-group-label">tool activity</span><span class="tool-group-meta"></span></summary><div class="tool-group-list"></div>',
+		'<summary class="tool-group-head"><span class="tool-group-caret">▸</span><span class="tool-group-label">tool activity</span><span class="tool-group-tools"></span><span class="tool-group-meta"></span></summary><div class="tool-group-list"></div>',
 	);
 	const group = {
 		el,
 		fold,
+		head: fold.querySelector(".tool-group-head"),
+		tools: fold.querySelector(".tool-group-tools"),
 		meta: fold.querySelector(".tool-group-meta"),
 		list: fold.querySelector(".tool-group-list"),
+		toolNames: [],
 		count: 0,
 		running: 0,
 		errors: 0,
@@ -774,11 +781,20 @@ function refreshToolGroup(group) {
 		: "";
 	group.el.classList.toggle("run", group.running > 0);
 	group.el.classList.toggle("err", group.errors > 0);
+	const tools = toolPresent.toolUsageSummary(group.toolNames);
+	group.tools.textContent = tools;
+	group.tools.title = tools;
 	group.meta.textContent = toolPresent.toolGroupSummary(
 		group.count,
 		group.running,
 		group.errors,
 		duration,
+	);
+	group.head.setAttribute(
+		"aria-label",
+		["tool activity", tools, group.meta.textContent]
+			.filter(Boolean)
+			.join(" · "),
 	);
 	if (group.errors) group.fold.open = true;
 	else if (!group.running && transcript.dataset.view !== "detailed")
@@ -831,6 +847,7 @@ function toolBlock(id, name, args, running) {
 		const toggle = () => openTool(wrap, !el.classList.contains("open"));
 		head.addEventListener("click", toggle); // Enter/Space are native on <button>
 		const group = ensureToolGroup();
+		group.toolNames.push(name);
 		group.list.appendChild(el);
 		group.count++;
 		if (running) {
@@ -2382,6 +2399,7 @@ let railWidget = null; // mounted widget entry (null = panel closed)
 let sddRel = null; // SDD doc pointer (the open artifact)
 let sddInit = false; // restore-once guard so the 30s poll can't reopen a user-closed pane
 let gitBadgeSnap = null; // {changed} once the git widget caches a snapshot (chunk 6) — MUST be let (assigned on fetch)
+let fleetBadgeCounts = null; // {active,stopping,failed,completed} from the fleet poll — MUST stay let (assigned on fetch; a biome const-demotion here blanked the whole fleet UI silently)
 let quotaBadgePct = null; // max window pct once the 60s poll resolves — MUST be let (assigned in refreshUsageBar)
 let railReturnFocus = null;
 let railReturnWidget = null;
@@ -2533,6 +2551,17 @@ const WIDGETS = [
 		badge: () => rail.todosBadge(todos),
 		render: todosRender,
 		onOpen: () => {},
+		onClose: () => {},
+	},
+	{
+		id: "fleet",
+		label: "Fleet",
+		icon: "\u21c9",
+		commandId: "fleet",
+		refresh: "interval:5000",
+		badge: () => rail.fleetBadge(fleetBadgeCounts),
+		render: (el) => setSafeHtml(el, '<p class="um-hint">loading…</p>'),
+		onOpen: (g) => fleetRenderRail($("tools-body"), g),
 		onClose: () => {},
 	},
 ].map((w) => {
@@ -2706,7 +2735,8 @@ function renderRail(renderPanel = true) {
 function openRailWidget(id) {
 	const w = WIDGETS.find((x) => x.id === id);
 	if (!w || !widgetVisible(w)) return;
-	if (railNarrow() && document.body.classList.contains("ws-on")) collapseWsbar();
+	if (railNarrow() && document.body.classList.contains("ws-on"))
+		collapseWsbar();
 	const active = document.activeElement;
 	railReturnFocus =
 		active &&
@@ -2758,6 +2788,10 @@ function refreshRailWidget(w) {
 	}
 	if (w.id === "quotas") {
 		quotasRender(el, railGen.cur()).then(() => (el.scrollTop = st));
+		return;
+	}
+	if (w.id === "fleet") {
+		fleetRenderRail(el, railGen.cur()).then(() => (el.scrollTop = st));
 		return;
 	}
 	w.render(el); // sync renders (analysis / todos)
@@ -4690,8 +4724,12 @@ function refreshHealth() {
 					sb.git.textContent = parts.length
 						? `${branch} ${parts.join(" ")}`
 						: `${branch} · clean`;
-					sb.git.title = "open Changes review · + staged  ~ unstaged  ? untracked";
-					sb.git.setAttribute("aria-label", "open Changes review: " + sb.git.textContent);
+					sb.git.title =
+						"open Changes review · + staged  ~ unstaged  ? untracked";
+					sb.git.setAttribute(
+						"aria-label",
+						"open Changes review: " + sb.git.textContent,
+					);
 				} else {
 					sb.git.textContent = "Git unavailable";
 					sb.git.title = "open Changes review · Git unavailable";
@@ -5167,6 +5205,7 @@ es.onmessage = (ev) => {
 			`switched to ${env.workspace ? env.workspace.split(/[\\/]/).pop() : "workspace"}`,
 			"ok",
 		);
+		Object.assign(wsState, sidebarUxSafe.resetState()); // FR-11: compact again + query cleared
 		fetchSnapshot();
 		refreshWorkspaces();
 		refreshSessionsSidebar();
@@ -5300,6 +5339,8 @@ const permPageEls = {
 	explainOut: $("perm-explain-out"),
 };
 let permData = null; // last GET /api/permissions payload
+let permTree = null;
+let permFilterText = "";
 const pu = window.permissionsUx; // pure helpers (dual-mode module)
 
 // ---- composer mode chip (always-visible permission posture) ----
@@ -5370,6 +5411,135 @@ const sau = window.subagentsUx; // pure helpers (dual-mode module)
 let fleetTimer = null;
 let fleetSteerTarget = null; // run id selected for steering (click a row)
 const fleetLogs = new Map(); // runId → log text (survives re-renders)
+let fleetRuns = []; // last projection input (FR-41..47)
+let fleetViewNow = null; // last fleetView output (steer gating reads this)
+let fleetStatusFilter = "all";
+let fleetTextFilter = "";
+let fleetHistoryOpen = false;
+let fleetFetchedAt = 0;
+
+// Shared fleet body (page + rail panel): summary chips, priority rows,
+// completed-history disclosure. No steer bar — that's page-only (FR-47).
+function fleetBodyHtml(view) {
+	const c = view.counts;
+	const chip = (n, label, cls) =>
+		`<span class="fl-count${cls ? " " + cls : ""}">${n} ${label}</span>`;
+	let h =
+		`<div class="fl-summary">` +
+		chip(c.active, "active") +
+		(c.stopping ? chip(c.stopping, "stopping", "warn") : "") +
+		(c.failed ? chip(c.failed, "failed", "err") : "") +
+		chip(c.completed, "done") +
+		(view.stale ? '<span class="fl-count stale">stale</span>' : "") +
+		"</div>";
+	if (view.empty)
+		h += sau.fleetHtml(
+			[],
+			"no background subagent runs — spawn one via the subagent tool (async)",
+		);
+	else {
+		if (view.rows.length) h += sau.fleetHtml(view.rows);
+		else if (!view.history.length)
+			h += '<div class="fl-empty">no matching runs</div>';
+		if (view.history.length)
+			h +=
+				`<details class="fl-history"><summary>completed history · ${view.history.length}</summary>` +
+				sau.fleetHtml(view.history) +
+				"</details>";
+	}
+	return h;
+}
+// post-mount: history toggle, cached-log restore, selection marks, failure text
+function mountFleetRows(host) {
+	const hist = host.querySelector(".fl-history");
+	if (hist) {
+		hist.open = fleetHistoryOpen;
+		hist.addEventListener("toggle", () => {
+			fleetHistoryOpen = hist.open;
+		});
+	}
+	for (const row of host.querySelectorAll(".fl-row")) {
+		const id = row.dataset.id;
+		row.classList.toggle("sel", id === fleetSteerTarget);
+		const log = fleetLogs.get(id);
+		if (log != null) {
+			const pre = row.querySelector("pre.fl-log");
+			pre.textContent = log;
+			pre.hidden = false;
+		}
+		const fail = row.querySelector(".fl-err");
+		if (fail && !fail.textContent)
+			fail.textContent = sau.failureSummary(
+				fleetRuns.find((r) => r.id === id) || {},
+			);
+	}
+}
+function updateFleetBadge(view) {
+	const next = view ? view.counts : null;
+	if (JSON.stringify(next) === JSON.stringify(fleetBadgeCounts)) return;
+	fleetBadgeCounts = next;
+	renderRail(false); // badge-only refresh, panel untouched
+}
+
+function renderFleetList() {
+	const view = sau.fleetView(fleetRuns, {
+		statusFilter: fleetStatusFilter,
+		textFilter: fleetTextFilter,
+		historyExpanded: fleetHistoryOpen,
+		selectedRunId: fleetSteerTarget,
+		fetchedAt: fleetFetchedAt,
+	});
+	fleetViewNow = view;
+	updateFleetBadge(view);
+	setSafeHtml(fleetListEl, fleetBodyHtml(view));
+	try {
+	} catch {}
+	mountFleetRows(fleetListEl);
+	// steer bar names the target and gates sending (FR-47)
+	const label = $("fl-steer-label");
+	const send = $("fl-steer-send");
+	const target = view.steerableId
+		? fleetRuns.find((r) => r.id === view.steerableId)
+		: null;
+	if (label)
+		label.textContent = target
+			? `→ ${target.description || target.id}`.slice(0, 60)
+			: "";
+	if (send) send.disabled = !view.steerableId;
+}
+
+// Rail panel (Fleet widget): same body, compact — fetch is gen-stamped so a
+// stale response after a widget switch never paints (git/quotas pattern).
+// Stop / logs work via the shared delegated handler (tools-body); steering
+// stays on the full #fleet page.
+async function fleetRenderRail(el, gen) {
+	let j;
+	try {
+		j = await (await fetch("/api/subagents")).json();
+	} catch {
+		if (gen == null || gen === railGen.cur())
+			setSafeHtml(el, '<p class="um-hint">fleet unavailable</p>');
+		return;
+	}
+	if (!j || !j.ok) return;
+	if (gen != null && gen !== railGen.cur()) return; // stale — widget switched
+	fleetRuns = j.runs || [];
+	fleetFetchedAt = Date.now();
+	const view = sau.fleetView(fleetRuns, {
+		historyExpanded: fleetHistoryOpen,
+		selectedRunId: fleetSteerTarget,
+		fetchedAt: fleetFetchedAt,
+	});
+	updateFleetBadge(view);
+	const st = el.scrollTop;
+	setSafeHtml(
+		el,
+		fleetBodyHtml(view) +
+			'<p class="um-hint"><a href="#fleet">open the fleet page to steer →</a></p>',
+	);
+	mountFleetRows(el);
+	el.scrollTop = st;
+}
 
 function openFleetPage() {
 	closeSettings();
@@ -5407,27 +5577,27 @@ async function refreshFleet() {
 		const r = await fetch("/api/subagents");
 		const j = await r.json();
 		if (!j || !j.ok) return;
-		setSafeHtml(
-			fleetListEl,
-			sau.fleetHtml(
-				j.runs,
-				"no background subagent runs — spawn one via the subagent tool (async)",
-			),
-		);
-		// restore open logs + selection across the re-render
-		for (const row of fleetListEl.querySelectorAll(".fl-row")) {
-			const id = row.dataset.id;
-			row.classList.toggle("sel", id === fleetSteerTarget);
-			const log = fleetLogs.get(id);
-			if (log != null) {
-				const pre = row.querySelector("pre.fl-log");
-				pre.textContent = log;
-				pre.hidden = false;
-			}
-		}
-	} catch {
-		/* transient — next tick retries */
+		fleetRuns = j.runs || [];
+		fleetFetchedAt = Date.now();
+		renderFleetList();
+	} catch (e) {
+		/* transient fetch — next tick retries; render bugs must NOT hide here */
+		console.error("fleet refresh failed:", e);
 	}
+}
+{
+	const statusSel = $("fleet-status");
+	if (statusSel)
+		statusSel.onchange = () => {
+			fleetStatusFilter = statusSel.value;
+			renderFleetList();
+		};
+	const textInput = $("fleet-filter");
+	if (textInput)
+		textInput.oninput = () => {
+			fleetTextFilter = textInput.value;
+			renderFleetList();
+		};
 }
 
 async function fleetControl(body) {
@@ -5447,7 +5617,9 @@ async function fleetControl(body) {
 }
 
 // one delegated handler: stop / step-log / run-log / row-select (steer target)
-fleetListEl.addEventListener("click", async (e) => {
+// one delegated handler, bound to BOTH hosts (page list + rail panel):
+// stop / step-log / run-log / row-select (steer target)
+async function onFleetListClick(e) {
 	const row = e.target.closest(".fl-row");
 	if (!row) return;
 	const id = row.dataset.id;
@@ -5507,20 +5679,21 @@ fleetListEl.addEventListener("click", async (e) => {
 	}
 	// clicking anywhere else on the row selects it as the steer target
 	fleetSteerTarget = fleetSteerTarget === id ? null : id;
-	for (const r2 of fleetListEl.querySelectorAll(".fl-row"))
-		r2.classList.toggle("sel", r2.dataset.id === fleetSteerTarget);
-});
+	renderFleetList(); // re-projection refreshes .sel rows + steer gating
+	if (railWidget && railWidget.id === "fleet")
+		fleetRenderRail($("tools-body"), railGen.cur()); // keep the panel in sync
+}
+fleetListEl.addEventListener("click", onFleetListClick);
+// the rail panel shares the same rows (tools-body outlives its content swaps)
+const fleetRailHost = $("tools-body");
+if (fleetRailHost) fleetRailHost.addEventListener("click", onFleetListClick);
 
 // steer bar: sends to the selected row (or the only active run)
 async function sendFleetSteer() {
 	const input = $("fl-steer-input");
 	const message = input.value.trim();
 	if (!message) return;
-	let id = fleetSteerTarget;
-	if (!id) {
-		const stops = fleetListEl.querySelectorAll(".fl-row .fl-stop");
-		if (stops.length === 1) id = stops[0].dataset.id;
-	}
+	const id = fleetViewNow ? fleetViewNow.steerableId : fleetSteerTarget;
 	if (!id) {
 		toast("select a run first (click its row)", "warn");
 		return;
@@ -5538,6 +5711,18 @@ $("fl-steer-input").addEventListener("keydown", (e) => {
 		sendFleetSteer();
 	}
 });
+// badge freshness without any fleet surface open: slow local poll (the page
+// polls 2s while open; the rail panel refreshes on its own tick when open).
+setInterval(async () => {
+	if (!fleetEl.hidden) return; // page poll owns it
+	if (railWidget && railWidget.id === "fleet") return; // rail tick owns it
+	try {
+		const j = await (await fetch("/api/subagents")).json();
+		if (j && j.ok) updateFleetBadge(sau.fleetView(j.runs || [], {}));
+	} catch {
+		/* transient — next tick retries */
+	}
+}, 60000);
 async function refreshPermPage() {
 	try {
 		const r = await fetch("/api/permissions");
@@ -5565,7 +5750,8 @@ async function refreshPermPage() {
 			j.layers.workspace,
 			j.diagnostics,
 		);
-		setSafeHtml(permPageEls.layers, renderLayerTree(tree.tools, j.layers.user));
+		permTree = tree; // cached for transient re-filtering (FR-36)
+		renderPermRules();
 		wireRuleRemove();
 		fillPermTools(j);
 		if (tree.diagnostics.length) {
@@ -5589,26 +5775,75 @@ async function refreshPermPage() {
 		toast("permissions fetch failed: " + e.message, "err");
 	}
 }
-function renderLayerTree(tools, userCfg) {
-	if (!tools || !tools.length)
-		return "<p class='perm-empty'>no per-tool rules</p>";
-	let h = "";
-	for (const t of tools) {
-		h += `<div class="perm-tool"><div class="perm-tool-head"><span class="perm-tool-name">${esc(t.tool)}</span><span class="perm-fallback">fallback ${esc(t.fallback)}</span></div>`;
-		for (const r of t.rules) {
-			h += `<div class="perm-rule"><code>${esc(r.pattern)}</code><span class="perm-action ${esc(r.action)}">${esc(r.action)}</span>`;
-			h += r.layers
-				.map((l) => `<span class="perm-layer">${esc(l)}</span>`)
-				.join("");
-			// user-layer rules are the editable layer (floor locked, workspace
-			// tighten-only via its own file) — offer remove for those
-			if (r.layers.includes("user"))
-				h += `<button type="button" class="perm-rule-rm" data-rm="${esc(t.tool)}" data-pat="${esc(r.pattern)}" title="remove rule">×</button>`;
-			h += `</div>`;
+// ui-density-navigation FR-33..37: render through the pure prioritized
+// projection — editable user rules first, inherited floor/workspace rules
+// grouped by tool behind a native collapsed <details> disclosure. Native
+// details = keyboard/open state for free; remove buttons stay user-layer only.
+function renderPermRules() {
+	if (!permTree) return;
+	const view = pu.permView(permTree, { filter: permFilterText });
+	const groupsOf = (rows) => {
+		const byTool = new Map();
+		for (const r of rows) {
+			if (!byTool.has(r.tool)) byTool.set(r.tool, []);
+			byTool.get(r.tool).push(r);
 		}
-		h += `</div>`;
+		return [...byTool];
+	};
+	const rowHtml = (r, toolName) => {
+		const exp = pu.selectorExplain(r.pattern);
+		return (
+			`<div class="perm-rule"><code>${esc(r.pattern)}</code>` +
+			(exp ? `<span class="perm-rule-exp">${esc(exp)}</span>` : "") +
+			`<span class="perm-action ${esc(r.action)}">${esc(r.action)}</span>` +
+			r.layers
+				.map((l) => `<span class="perm-layer">${esc(l)}</span>`)
+				.join("") +
+			(r.layers.includes("user")
+				? `<button type="button" class="perm-rule-rm" data-rm="${esc(toolName)}" data-pat="${esc(r.pattern)}" title="remove rule">×</button>`
+				: "") +
+			"</div>"
+		);
+	};
+	const toolHtml = ([tool, rules]) => {
+		const fallback = permTree.tools.find((t) => t.tool === tool)?.fallback;
+		return (
+			`<div class="perm-tool"><div class="perm-tool-head"><span class="perm-tool-name">${esc(tool)}</span>` +
+			(fallback
+				? `<span class="perm-fallback">fallback ${esc(fallback)}</span>`
+				: "") +
+			"</div>" +
+			rules.map((r) => rowHtml(r, tool)).join("") +
+			"</div>"
+		);
+	};
+	if (!view.counts.user && !view.counts.inherited) {
+		setSafeHtml(
+			permPageEls.layers,
+			"<p class='perm-empty'>no matching rules</p>",
+		);
+		return;
 	}
-	return h;
+	let h = "";
+	if (view.userRules.length)
+		h +=
+			'<h4 class="perm-sub">your rules</h4>' +
+			groupsOf(view.userRules).map(toolHtml).join("");
+	if (view.inheritedGroups.length)
+		h +=
+			`<details class="perm-inherited"><summary>inherited policy · ${view.counts.inherited} rule${view.counts.inherited === 1 ? "" : "s"}</summary>` +
+			view.inheritedGroups.map((g) => toolHtml([g.tool, g.rules])).join("") +
+			"</details>";
+	setSafeHtml(permPageEls.layers, h);
+}
+{
+	const filterInput = $("perm-filter");
+	if (filterInput)
+		filterInput.oninput = () => {
+			permFilterText = filterInput.value;
+			renderPermRules();
+			wireRuleRemove();
+		};
 }
 // remove buttons on user-layer rules → mutate the user cfg + revision-checked PUT
 function wireRuleRemove() {
@@ -6330,6 +6565,75 @@ if (barOvf) {
 // switch and toasts on failure. Collapse persists in localStorage["pi:wsbar"].
 const WS_KEY = "pi:wsbar";
 let noSwitch = false; // PI_WEBUI_NO_SWITCH — hide the workspace list (IDE mode)
+// ponytail: degrade to the pre-collapse behavior when sidebar-ux.js is missing
+// (stale server process pre-whitelist — same silent-degrade idiom as md/hljs).
+const sidebarUxSafe = window.sidebarUx || {
+	sidebarState: () => ({ expanded: false, query: "" }),
+	resetState: () => ({ expanded: false, query: "" }),
+	workspaceView: (ws) => ({
+		rows: Array.isArray(ws) ? ws : [],
+		expanded: true,
+		canExpand: false,
+	}),
+	sessionView: (ss, q) => ({
+		rows: Array.isArray(ss) ? ss : [],
+		query: q || "",
+	}),
+};
+const wsState = sidebarUxSafe.sidebarState(); // view-local: collapsed + no query
+function setWorkspaceCollapsed(collapsed) {
+	wsState.expanded = !collapsed;
+	const bar = $("wsbar");
+	if (bar) bar.classList.toggle("ws-collapsed", collapsed);
+	const toggle = $("ws-toggle");
+	if (toggle) {
+		toggle.setAttribute("aria-expanded", String(!collapsed));
+		toggle.setAttribute(
+			"aria-label",
+			collapsed ? "show all workspaces" : "hide inactive workspaces",
+		);
+		toggle.title = collapsed
+			? "show all workspaces"
+			: "hide inactive workspaces";
+	}
+}
+// Removed workspaces: server-side archive (~/.pi/agent/pi-webui-removed,
+// sibling of sessions/ — outside discovery). Recoverable for 7 days, then
+// purged for real (server GCs on startup + every workspaces read).
+async function archiveWorkspaceRemote(path, name) {
+	try {
+		const r = await (
+			await fetch("/api/workspaces/remove", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ path }),
+			})
+		).json();
+		if (r.ok) {
+			toast(`workspace “${name}” removed — restorable for 7 days`, "ok");
+			refreshWorkspaces();
+		} else toast("remove failed: " + (r.error || ""), "err");
+	} catch (e) {
+		toast("remove failed: " + e.message, "err");
+	}
+}
+async function restoreWorkspaceRemote(dir) {
+	try {
+		const r = await (
+			await fetch("/api/workspaces/restore", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ dir }),
+			})
+		).json();
+		if (r.ok) {
+			toast("workspace restored", "ok");
+			refreshWorkspaces();
+		} else toast("restore failed: " + (r.error || ""), "err");
+	} catch (e) {
+		toast("restore failed: " + e.message, "err");
+	}
+}
 async function refreshWorkspaces() {
 	if (noSwitch) return; // IDE mode: workspace list is hidden — skip fetch/render
 	const host = $("ws-workspaces");
@@ -6337,17 +6641,35 @@ async function refreshWorkspaces() {
 	let data;
 	try {
 		data = await (await fetch("/api/workspaces")).json();
+		host.classList.remove("ws-error");
 	} catch {
-		setSafeHtml(host, '<div class="ws-empty">workspace metadata unavailable</div>');
+		host.classList.add("ws-error"); // FR-10: error state is explicit, never collapsed-empty
+		setSafeHtml(
+			host,
+			'<div class="ws-empty">workspace metadata unavailable</div>',
+		);
+		setWorkspaceCollapsed(false);
 		return;
 	}
-	const ws = (data.ok && data.workspaces) || [];
+	const wsAll = (data.ok && data.workspaces) || [];
+	const archived = (data.ok && data.archived) || [];
+	const view = sidebarUxSafe.workspaceView(wsAll, {
+		expanded: wsState.expanded,
+		status: "ready",
+	});
 	setSafeHtml(host, "");
-	if (!ws.length) {
+	if (!wsAll.length) {
 		setSafeHtml(host, '<div class="ws-empty">no workspaces</div>');
+		setWorkspaceCollapsed(false);
 		return;
 	}
-	for (const w of ws) {
+	// FR-7/9: render EVERY row — the .ws-collapsed CSS class hides the
+	// inactive ones, so the ⋯ toggle is instant with no refetch. (Rendering
+	// only view.rows was the expand-does-nothing bug: inactive rows never
+	// existed in the DOM for the class to reveal.)
+	for (const w of wsAll) {
+		const wrap = document.createElement("div");
+		wrap.className = "ws-row-wrap";
 		const row = document.createElement("button");
 		row.type = "button";
 		row.className = "ws-row" + (w.active ? " active" : "");
@@ -6370,8 +6692,43 @@ async function refreshWorkspaces() {
 		if (w.active)
 			row.disabled = true; // current workspace — can't switch to self
 		else row.onclick = () => switchWorkspace(w.path);
-		host.appendChild(row);
+		wrap.appendChild(row);
+		if (!w.active) {
+			const rm = document.createElement("button");
+			rm.type = "button";
+			rm.className = "ws-row-x";
+			rm.title = "remove workspace";
+			rm.setAttribute("aria-label", "remove workspace " + w.name);
+			rm.textContent = "×";
+			rm.onclick = (e) => {
+				e.stopPropagation(); // the wrap's row must not switch workspaces
+				confirmModal(
+					`Remove workspace ${w.name}? Its session history moves to a recoverable archive and is deleted after 7 days.`,
+					() => archiveWorkspaceRemote(w.path, w.name),
+				);
+			};
+			wrap.appendChild(rm);
+		}
+		host.appendChild(wrap);
 	}
+	if (archived.length) {
+		const det = document.createElement("details");
+		det.className = "ws-archived";
+		let inner = `<summary>removed · ${archived.length} · kept 7 days</summary>`;
+		for (const a of archived)
+			inner +=
+				`<div class="ws-arch-row"><span class="ws-name" title="${esc(a.path || a.dir)}">${esc(a.name)}</span>` +
+				`<button type="button" class="ws-mini" data-restore="${esc(a.dir)}" title="restore workspace" aria-label="restore workspace ${esc(a.name)}">↩</button></div>`;
+		setSafeHtml(det, inner); // archived names/dir are server-listed + esc'd
+		det.addEventListener("click", (e) => {
+			const b = e.target.closest("[data-restore]");
+			if (b) restoreWorkspaceRemote(b.dataset.restore);
+		});
+		host.appendChild(det);
+	}
+	const toggle = $("ws-toggle");
+	if (toggle) toggle.hidden = !view.canExpand; // single workspace: nothing to expand
+	setWorkspaceCollapsed(!view.expanded);
 }
 async function switchWorkspace(path) {
 	// POST; the workspace_changed SSE resyncs every tab (incl. this one).
@@ -6388,23 +6745,18 @@ async function switchWorkspace(path) {
 		toast("switch failed: " + e.message, "err");
 	}
 }
-async function refreshSessionsSidebar() {
+let wsSessionRows = []; // last fetched rows — the filter is client-side + transient (FR-14/15)
+function renderSessionsList() {
 	const host = $("ws-sessions");
 	if (!host) return;
-	let data;
-	try {
-		data = await (await fetch("/api/sessions")).json();
-	} catch {
-		setSafeHtml(host, '<div class="ws-empty">session metadata unavailable</div>');
-		return;
-	}
-	const rows = (data.ok && data.sessions) || [];
+	const view = sidebarUxSafe.sessionView(wsSessionRows, wsState.query);
 	setSafeHtml(host, "");
-	if (!rows.length) {
+	if (view.query && !view.count) {
+		setSafeHtml(host, '<div class="ws-empty">no matching sessions</div>');
+	} else if (!view.total) {
 		setSafeHtml(host, '<div class="ws-empty">no sessions yet</div>');
-		return;
 	}
-	for (const s of rows) {
+	for (const s of view.rows) {
 		const current = curSessionFile && pathEq(s.path, curSessionFile);
 		const row = document.createElement("button");
 		row.type = "button";
@@ -6428,55 +6780,136 @@ async function refreshSessionsSidebar() {
 		else row.onclick = () => resumeSession(s.path, false);
 		host.appendChild(row);
 	}
+	const count = $("ws-search-count");
+	if (count)
+		count.textContent =
+			view.query && view.count !== view.total
+				? `${view.count} of ${view.total}`
+				: "";
+	// launcher-rail session count badge (total, capped)
+	const railCount = $("ws-rail-count");
+	if (railCount) {
+		railCount.textContent = view.total > 99 ? "99+" : String(view.total);
+		railCount.hidden = !view.total;
+	}
+	const clear = $("ws-search-clear");
+	if (clear) clear.hidden = !view.query;
+}
+async function refreshSessionsSidebar() {
+	const host = $("ws-sessions");
+	if (!host) return;
+	let data;
+	try {
+		data = await (await fetch("/api/sessions")).json();
+	} catch {
+		setSafeHtml(
+			host,
+			'<div class="ws-empty">session metadata unavailable</div>',
+		);
+		return;
+	}
+	wsSessionRows = (data.ok && data.sessions) || [];
+	renderSessionsList();
 }
 // ponytail: drawer mode = w-mid/w-narrow (spec FR-2). Push-vs-drawer is pure
 // CSS off body.w-* — a widthchange conversion (FR-2.3) needs no JS here.
 function drawerMode() {
 	return !document.body.classList.contains("w-wide");
 }
+let wsRailFocus = null; // last-used #ws-rail button — collapse returns focus there (FR-2.4)
+function wsRailSync() {
+	const open = document.body.classList.contains("ws-on");
+	const view = document.body.dataset.wsView;
+	for (const [id, v] of [
+		["ws-rail-workspaces", "workspaces"],
+		["ws-rail-sessions", "sessions"],
+	]) {
+		const b = $(id);
+		if (b) {
+			const selected = open && view === v;
+			b.setAttribute("aria-expanded", selected ? "true" : "false");
+			b.classList.toggle("sel", selected);
+		}
+	}
+}
+function setWsView(v) {
+	document.body.dataset.wsView = v;
+	localStorage.setItem("pi:ws-view", v);
+	wsRailSync();
+}
 function collapseWsbar() {
 	document.body.classList.remove("ws-on");
 	localStorage.setItem(WS_KEY, "off");
-	const open = $("ws-open");
-	if (open) {
-		open.hidden = false;
-		open.setAttribute("aria-expanded", "false");
-		open.focus(); // return focus to the launcher (spec FR-2.4)
-	}
+	wsRailSync();
+	if (wsRailFocus && document.contains(wsRailFocus)) wsRailFocus.focus(); // return focus to the launcher (spec FR-2.4)
 }
-function expandWsbar() {
+function expandWsbar(v) {
 	if (railNarrow() && railSt.open) closeRail();
+	if (v) setWsView(v);
 	document.body.classList.add("ws-on");
 	localStorage.setItem(WS_KEY, "on");
-	const open = $("ws-open");
-	if (open) {
-		open.hidden = true;
-		open.setAttribute("aria-expanded", "true");
-	}
+	wsRailSync();
 	const bar = $("wsbar");
 	if (bar) bar.focus(); // drawer gets initial focus (spec FR-2.4)
 	refreshWorkspaces();
 	refreshSessionsSidebar();
 }
 (function initWsbar() {
+	// FR-7 (ui-density-navigation): the workspace section starts compact on
+	// load — only the active row until the user expands (refreshWorkspaces
+	// re-applies per data: no-active/empty/error force expanded).
+	setWorkspaceCollapsed(true);
 	// Narrow starts closed so a persisted desktop drawer cannot cover most of
-	// the viewport; the launcher still makes it one click to open.
-	const open = $("ws-open");
+	// the viewport; the launcher rail still makes it one click to open.
 	const narrow = document.body.classList.contains("w-narrow");
-	if (localStorage.getItem(WS_KEY) === "off" || narrow) {
-		if (open) open.hidden = false;
-	} else {
+	if (localStorage.getItem(WS_KEY) !== "off" && !narrow)
 		document.body.classList.add("ws-on");
+	// one view at a time — restore the last rail pick (sessions default);
+	// no-switch (IDE) mode has no workspaces section, so force sessions
+	if (!document.body.dataset.wsView)
+		document.body.dataset.wsView = document.body.classList.contains("no-switch")
+			? "sessions"
+			: localStorage.getItem("pi:ws-view") || "sessions";
+	wsRailSync();
+	// launcher rail: each button owns its view — click opens the sidebar with
+	// ONLY that section (like a right-rail tab); click again closes it
+	for (const [id, v] of [
+		["ws-rail-workspaces", "workspaces"],
+		["ws-rail-sessions", "sessions"],
+	]) {
+		const b = $(id);
+		if (!b) continue;
+		b.onclick = () => {
+			wsRailFocus = b;
+			if (
+				document.body.classList.contains("ws-on") &&
+				document.body.dataset.wsView === v
+			) {
+				collapseWsbar();
+				return;
+			}
+			expandWsbar(v);
+		};
 	}
-	if (open) {
-		open.setAttribute(
-			"aria-expanded",
-			document.body.classList.contains("ws-on") ? "true" : "false",
-		);
+	const wsToggle = $("ws-toggle");
+	if (wsToggle)
+		wsToggle.onclick = () => setWorkspaceCollapsed(wsState.expanded);
+	const search = $("ws-search");
+	const searchClear = $("ws-search-clear");
+	if (search) {
+		search.value = wsState.query; // survived an expand? restore
+		search.oninput = () => {
+			wsState.query = search.value;
+			renderSessionsList();
+		};
 	}
-	const collapse = $("ws-collapse");
-	if (collapse) collapse.onclick = collapseWsbar;
-	if (open) open.onclick = expandWsbar;
+	if (searchClear)
+		searchClear.onclick = () => {
+			wsState.query = "";
+			if (search) search.value = "";
+			renderSessionsList();
+			if (search) search.focus();
+		};
 	const scrim = $("ws-scrim");
 	if (scrim) scrim.onclick = collapseWsbar;
 	// A desktop-to-drawer resize should not leave the sidebar covering the new
@@ -6511,6 +6944,8 @@ function expandWsbar() {
 				() => {
 					setTodos([]);
 					resetGitReviewState();
+					wsState.query = ""; // FR-15: the filter is transient
+					if (search) search.value = "";
 					api({ type: "new_session" });
 				},
 			);
@@ -6802,10 +7237,6 @@ function analysisBody() {
 	if (!SA || !SA.analyzeSession) return "";
 	const a = SA.analyzeSession(lastMessages, lastStats, lastRunning);
 	const turns = a.turns;
-	// bar metric: cost if any attributed, else output tokens (still useful signal)
-	const useCost = a.attributedCost > 0;
-	const metric = useCost ? (t) => t.cost : (t) => t.usage.output;
-	const shown = turns.slice(-Math.min(100, turns.length));
 	const contextWindow =
 		lastStats &&
 		lastStats.contextUsage &&
@@ -6822,22 +7253,72 @@ function analysisBody() {
 		);
 		return Math.max(0, Math.min(100, (tokens / contextWindow) * 100));
 	};
-	const maxV = shown.reduce((m, t) => Math.max(m, metric(t)), 0);
+	// FR-4: bar metric — persisted pi:an-metric if still available, else cost → output
+	const METRICS = {
+		cost: {
+			label: "cost",
+			read: (t) => t.cost,
+			fmt: (v) => SA.formatTurnCost(v),
+			avail: a.attributedCost > 0,
+			reason: "no attributed cost yet",
+		},
+		output: {
+			label: "output",
+			read: (t) => (t.usage && t.usage.output) || 0,
+			fmt: (v) => SA.formatTokens(v) + " tok",
+			avail: true,
+			reason: "",
+		},
+		context: {
+			label: "context",
+			read: (t) => contextForTurn(t) || 0,
+			fmt: (v) => Math.round(v) + "%",
+			avail: !!contextWindow,
+			reason: "context window unknown",
+		},
+	};
+	let storedMetric = null;
+	try {
+		storedMetric = localStorage.getItem("pi:an-metric");
+	} catch {
+		/* localStorage unavailable (IDE JCEF) — fall back below */
+	}
+	anMetric =
+		storedMetric &&
+		Object.hasOwn(METRICS, storedMetric) &&
+		METRICS[storedMetric].avail
+			? storedMetric
+			: METRICS.cost.avail
+				? "cost"
+				: "output";
+	const metric = METRICS[anMetric];
+	const showOverlay = anMetric !== "context" && !!contextWindow; // FR-5
+	// FR-6: hard cap 100 (E6), rail default window 20, module-scope expand toggle
+	const capped = turns.slice(-Math.min(100, turns.length));
+	const shown = anShownAll ? capped : capped.slice(-20);
+	// FR-8: auto-clear when the selected turn left the shown window (E5)
+	if (anSelected != null && !shown.some((t) => t.messageIndex === anSelected))
+		anSelected = null;
+	const selTurn =
+		anSelected != null
+			? shown.find((t) => t.messageIndex === anSelected)
+			: undefined;
+	const maxV = shown.reduce((m, t) => Math.max(m, metric.read(t)), 0);
 	const bars = shown
 		.map((t) => {
-			const v = metric(t);
+			const v = metric.read(t);
 			const h = maxV > 0 ? Math.max(3, Math.round((v / maxV) * 100)) : 3;
-			const context = contextForTurn(t);
+			const context = showOverlay ? contextForTurn(t) : null;
 			const lbl =
 				"turn " +
 				t.number +
-				(useCost
-					? " · " + SA.formatTurnCost(v)
-					: " · " + SA.formatTokens(v) + " out tok") +
+				" · " +
+				metric.fmt(v) +
 				(context != null ? " · " + Math.round(context) + "% context" : "");
 			return (
 				'<button type="button" class="an-bar' +
-				(useCost && v === maxV && maxV > 0 ? " peak" : "") +
+				(v === maxV && maxV > 0 ? " peak" : "") +
+				(anSelected === t.messageIndex ? " sel" : "") +
 				'" data-mi="' +
 				t.messageIndex +
 				'" title="' +
@@ -6852,7 +7333,7 @@ function analysisBody() {
 		a.tokens.cacheRead,
 		a.tokens.cacheMiss + a.tokens.cacheRead,
 	);
-	const contextPoints = contextWindow
+	const contextPoints = showOverlay
 		? shown.map((t, i) => {
 				const pct = contextForTurn(t);
 				return {
@@ -6962,9 +7443,16 @@ function analysisBody() {
 		'</span><span class="an-item-sub">' +
 		esc(sub || "") +
 		"</span></button>";
+	// ranked list row without a jump target (FR-11): never a button
+	const staticItem = (main, sub) =>
+		'<div class="an-row"><span class="an-item-main">' +
+		esc(main) +
+		'</span><span class="an-item-sub">' +
+		esc(sub || "") +
+		"</span></div>";
 	const parts = [];
 	parts.push('<div class="analysis">');
-	// stat row
+	// headline (FR-2): exactly 4 answer-first cards; turn count lives in TURN HISTORY
 	parts.push('<div class="an-head">');
 	parts.push(
 		stat(
@@ -6972,25 +7460,6 @@ function analysisBody() {
 			a.costAvailable ? SA.formatTurnCost(a.totalCost) : "not reported",
 			"total",
 			"primary",
-		),
-	);
-	parts.push(stat("turns", String(a.turnCount), "turns"));
-	parts.push(
-		stat(
-			"avg-turn",
-			a.attributedCost > 0 && a.turnCount
-				? SA.formatTurnCost(a.averageTurnCost)
-				: "not reported",
-			"avg/turn",
-		),
-	);
-	parts.push(
-		stat(
-			"median-turn",
-			a.attributedCost > 0 && a.turnCount
-				? SA.formatTurnCost(a.medianTurnCost)
-				: "not reported",
-			"median",
 		),
 	);
 	parts.push(
@@ -7003,44 +7472,115 @@ function analysisBody() {
 	parts.push(
 		stat("cache-hit", a.tokensAvailable ? cacheHit + "%" : "—", "cache hit"),
 	);
-	parts.push("</div>");
-	parts.push('<div class="an-section an-recent">');
-	parts.push('<div class="an-sec-h">RECENT TELEMETRY</div>');
+	const failRate =
+		a.totalToolCalls >= 5 && a.failedToolCalls > 0
+			? " · " + Math.round((a.failedToolCalls / a.totalToolCalls) * 100) + "%"
+			: "";
 	parts.push(
-		'<div class="an-metrics">' +
-			[
-				"output-tps",
-				"avg-output-call",
-				"cost-minute",
-				"tool-error",
-				"tool-calls-minute",
-				"pending-tools",
-				"headroom",
-				"turn-duration",
-				"first-token",
-				"tool-latency",
-			]
-				.map((id) => {
-					const view = usageView(id, id);
-					return stat(id, view.valueText, view.label);
-				})
+		stat(
+			"failures",
+			a.failedToolCalls + "/" + a.totalToolCalls + failRate,
+			"failures",
+		),
+	);
+	parts.push("</div>");
+	// FR-10: threshold notices (pure helper; degrades when module is stale)
+	const pendingView = usageView("pending-tools", "pending tools");
+	const notices = SA.sessionNotices
+		? SA.sessionNotices({
+				contextPercent: a.contextPercent,
+				failedToolCalls: a.failedToolCalls,
+				totalToolCalls: a.totalToolCalls,
+				pendingTools: pendingView.available
+					? parseInt(pendingView.valueText, 10) || 0
+					: 0,
+				running: lastRunning,
+			})
+		: [];
+	parts.push(
+		'<div class="an-notices">' +
+			notices
+				.map(
+					(n) =>
+						'<div class="an-notice tone-' +
+						esc(n.tone) +
+						'">' +
+						esc(n.text) +
+						"</div>",
+				)
 				.join("") +
-			"</div></div>",
+			"</div>",
 	);
 	// per-turn bars
 	if (turns.length) {
 		parts.push('<div class="an-section">');
+		// FR-4: metric segmented control; unavailable options disabled with reason
+		const segBtn = (id, def) =>
+			'<button type="button" class="an-seg-btn' +
+			(anMetric === id ? " sel" : "") +
+			'" data-metric="' +
+			id +
+			'"' +
+			(def.avail
+				? ""
+				: ' disabled title="' + esc(def.reason || "unavailable") + '"') +
+			">" +
+			def.label +
+			"</button>";
+		const seg =
+			'<div class="an-seg" role="group" aria-label="bar metric">' +
+			Object.keys(METRICS)
+				.map((id) => segBtn(id, METRICS[id]))
+				.join("") +
+			"</div>";
+		parts.push('<div class="an-sec-row">');
 		parts.push('<div class="an-sec-h">TURN HISTORY</div>');
+		parts.push(seg);
+		parts.push("</div>");
 		parts.push(
-			'<div class="an-sec-sub">last ' +
+			'<div class="an-sec-sub"><span>last ' +
 				shown.length +
 				(turns.length > shown.length ? " of " + turns.length : "") +
-				" billed model turns" +
-				(contextLine ? " · line = context" : "") +
-				" · click to jump</div>",
+				" billed model turns · click to jump</span>" +
+				(capped.length > 20
+					? '<button type="button" class="an-showall">' +
+						(anShownAll ? "less" : "show all") +
+						"</button>"
+					: "") +
+				"</div>",
 		);
 		parts.push('<div class="an-bars">' + bars + contextLine + "</div>");
-		if (!useCost) {
+		// FR-7: legend — active metric + conditional context overlay
+		parts.push(
+			'<div class="an-legend"><span class="an-sw an-sw-metric" aria-hidden="true"></span>' +
+				esc(metric.label) +
+				(showOverlay
+					? '<span class="an-sw an-sw-context" aria-hidden="true"></span>context'
+					: "") +
+				"</div>",
+		);
+		// FR-8: persistent selected-turn readout with Jump
+		if (selTurn) {
+			parts.push(
+				'<div class="an-readout"><span class="an-readout-txt">turn ' +
+					selTurn.number +
+					" · " +
+					SA.formatTurnCost(selTurn.cost) +
+					" · " +
+					SA.formatTokens(selTurn.usage.output) +
+					" out tok" +
+					(contextWindow
+						? " · " + Math.round(contextForTurn(selTurn)) + "% context"
+						: "") +
+					" · " +
+					selTurn.toolCallCount +
+					" tools</span>" +
+					'<button type="button" class="an-readout-jump" data-mi="' +
+					selTurn.messageIndex +
+					'">Jump</button></div>',
+			);
+		}
+		if (anMetric === "output" && !METRICS.cost.avail) {
 			parts.push(
 				'<p class="um-hint">Provider cost is not available; showing output tokens per turn.</p>',
 			);
@@ -7070,12 +7610,9 @@ function analysisBody() {
 		parts.push(
 			topTools
 				.map((t) =>
-					jump(
-						-1,
+					staticItem(
 						t.name + " ×" + t.count,
-						t.failed
-							? t.failed + " failed"
-							: SA.formatTokens(t.outputLength) + " out",
+						t.failed ? t.failed + " failed" : SA.formatChars(t.outputLength),
 					),
 				)
 				.join(""),
@@ -7105,23 +7642,50 @@ function analysisBody() {
 			failed
 				.slice(0, 12)
 				.map((c) =>
-					jump(
-						c.turnMessageIndex != null ? c.turnMessageIndex : -1,
-						c.name,
-						c.turnMessageIndex != null ? "turn near call" : "",
-					),
+					c.turnMessageIndex != null
+						? jump(c.turnMessageIndex, c.name, "turn near call")
+						: staticItem(c.name, ""),
 				)
 				.join(""),
 		);
 		parts.push("</div>");
 	}
-	parts.push("</div></div>");
+	parts.push("</div>"); // an-cols
+	// PERFORMANCE (FR-3): 12 telemetry cards behind a collapsed <details>;
+	// open state lives in anTelOpen so setSafeHtml re-renders can't wipe it (E7).
+	parts.push(
+		'<details class="an-perf"' +
+			(anTelOpen ? " open" : "") +
+			'><summary>PERFORMANCE</summary><div class="an-metrics">' +
+			[
+				"output-tps",
+				"avg-output-call",
+				"cost-minute",
+				"tool-error",
+				"tool-calls-minute",
+				"pending-tools",
+				"headroom",
+				"turn-duration",
+				"first-token",
+				"tool-latency",
+				"avg-turn",
+				"median-turn",
+			]
+				.map((id) => {
+					const view = usageView(id, id);
+					return stat(id, view.valueText, view.label);
+				})
+				.join("") +
+			"</div></details>",
+	);
+	parts.push("</div>");
 	return parts.join("");
 }
 // wire click→scroll on every [data-mi] inside a container (skip -1
 // placeholders); the rail stays open while a jump targets the transcript
 function wireAnalysis(container, onJump) {
 	container.querySelectorAll('[data-mi]:not([data-mi="-1"])').forEach((el) => {
+		if (el.classList.contains("an-bar")) return; // bars select, not jump (FR-8)
 		el.addEventListener("click", () => {
 			const mi = el.getAttribute("data-mi");
 			if (onJump) onJump();
@@ -7136,6 +7700,41 @@ function analysisRender(el) {
 		analysisBody() || '<p class="w-placeholder">no session data yet</p>',
 	);
 	wireAnalysis(el, null); // rail: keep the panel open, just scroll
+	// FR-4: metric segmented control — persist + re-render
+	el.querySelectorAll(".an-seg-btn").forEach((b) => {
+		b.addEventListener("click", () => {
+			if (b.disabled) return;
+			anMetric = b.dataset.metric;
+			try {
+				localStorage.setItem("pi:an-metric", anMetric);
+			} catch {
+				/* storage unavailable — selection stays for this render cycle */
+			}
+			analysisRender(el);
+		});
+	});
+	// FR-8: bars select/deselect (click-again deselects); Enter is native on <button>
+	el.querySelectorAll(".an-bar").forEach((b) => {
+		b.addEventListener("click", () => {
+			const mi = parseInt(b.getAttribute("data-mi"), 10);
+			if (Number.isNaN(mi)) return;
+			anSelected = anSelected === mi ? null : mi;
+			analysisRender(el);
+		});
+	});
+	// FR-6: window toggle — module-scope only, resets on reload
+	el.querySelectorAll(".an-showall").forEach((b) => {
+		b.addEventListener("click", () => {
+			anShownAll = !anShownAll;
+			analysisRender(el);
+		});
+	});
+	// FR-3: persist the PERFORMANCE details open state across wholesale re-renders (E7)
+	const perf = el.querySelector(".an-perf");
+	if (perf)
+		perf.addEventListener("toggle", () => {
+			anTelOpen = perf.open;
+		});
 }
 
 // ---- git rail ---------------------------------------------------------------
@@ -7161,7 +7760,10 @@ function resetGitReviewState() {
 	gitReviewTab = "changes";
 	gitBadgeSnap = null;
 	if (gEl() && gEl().isConnected && railWidget && railWidget.id === "git")
-		setSafeHtml(gEl(), '<div class="git"><p class="um-hint">loading…</p></div>');
+		setSafeHtml(
+			gEl(),
+			'<div class="git"><p class="um-hint">loading…</p></div>',
+		);
 }
 function openToolReview(path) {
 	gitPendingPath = path;
@@ -7177,12 +7779,15 @@ function gitBack() {
 	if (gitLastSnap) renderGitList(gitLastSnap);
 }
 function renderGitList(s, notice) {
-	const review =
-		s && s.state ? s : gitReview.normalizeReviewSnapshot(s);
+	const review = s && s.state ? s : gitReview.normalizeReviewSnapshot(s);
 	gitLastSnap = review;
 	const message = notice || gitReviewNotice;
 	gitReviewNotice = "";
-	if (gitSelectedPath && !gitSelectedCommit && !gitReview.reconcileReviewSelection(review, gitSelectedPath)) {
+	if (
+		gitSelectedPath &&
+		!gitSelectedCommit &&
+		!gitReview.reconcileReviewSelection(review, gitSelectedPath)
+	) {
 		gitSelectedPath = null;
 		gitSelectedCommit = null;
 	}
@@ -7209,13 +7814,13 @@ function renderGitList(s, notice) {
 		: review.branch || "unknown branch";
 	const summaryLabel =
 		summary.changed +
-			" changed · " +
-			summary.staged +
-			" staged · " +
-			summary.unstaged +
-			" unstaged · " +
-			summary.untracked +
-			" untracked";
+		" changed · " +
+		summary.staged +
+		" staged · " +
+		summary.unstaged +
+		" unstaged · " +
+		summary.untracked +
+		" untracked";
 	const parts = [];
 	parts.push('<div class="git">');
 	parts.push('<div class="git-head">');
@@ -7226,10 +7831,26 @@ function renderGitList(s, notice) {
 		);
 	parts.push('<span class="git-count">' + summary.changed + " changed</span>");
 	parts.push("</div>");
-	parts.push('<div class="git-summary git-status" role="status" aria-label="' + esc(summaryLabel) + '">');
-	parts.push('<span class="git-summary-item">staged <b>' + summary.staged + "</b></span>");
-	parts.push('<span class="git-summary-item">unstaged <b>' + summary.unstaged + "</b></span>");
-	parts.push('<span class="git-summary-item">untracked <b>' + summary.untracked + "</b></span>");
+	parts.push(
+		'<div class="git-summary git-status" role="status" aria-label="' +
+			esc(summaryLabel) +
+			'">',
+	);
+	parts.push(
+		'<span class="git-summary-item">staged <b>' +
+			summary.staged +
+			"</b></span>",
+	);
+	parts.push(
+		'<span class="git-summary-item">unstaged <b>' +
+			summary.unstaged +
+			"</b></span>",
+	);
+	parts.push(
+		'<span class="git-summary-item">untracked <b>' +
+			summary.untracked +
+			"</b></span>",
+	);
 	parts.push("</div>");
 	parts.push('<div class="git-tabs" role="tablist" aria-label="Git review">');
 	parts.push(
@@ -7244,17 +7865,23 @@ function renderGitList(s, notice) {
 	);
 	parts.push("</div>");
 	if (message)
-		parts.push('<p class="um-hint git-review-notice" role="status">' + esc(message) + "</p>");
+		parts.push(
+			'<p class="um-hint git-review-notice" role="status">' +
+				esc(message) +
+				"</p>",
+		);
 	parts.push(
 		'<section id="git-panel-changes" class="git-tab-panel" role="tabpanel" aria-label="Changes"' +
-			(tab === "changes" ? "" : ' hidden') +
+			(tab === "changes" ? "" : " hidden") +
 			">",
 	);
 	parts.push(gitActionButtons(review));
 	if (review.state === "clean")
 		parts.push('<p class="um-hint git-empty">No changes</p>');
 	else
-		parts.push('<p class="um-hint git-selection-hint">Select a file in Files to review its current diff.</p>');
+		parts.push(
+			'<p class="um-hint git-selection-hint">Select a file in Files to review its current diff.</p>',
+		);
 	if (review.commits.length) {
 		parts.push(
 			'<div class="git-sec-h">unpushed commits (' +
@@ -7277,11 +7904,13 @@ function renderGitList(s, notice) {
 	parts.push("</section>");
 	parts.push(
 		'<section id="git-panel-files" class="git-tab-panel" role="tabpanel" aria-label="Files"' +
-			(tab === "files" ? "" : ' hidden') +
+			(tab === "files" ? "" : " hidden") +
 			">",
 	);
 	if (review.files.length) {
-		parts.push('<div class="git-sec-h">changed files</div><div class="git-files">');
+		parts.push(
+			'<div class="git-sec-h">changed files</div><div class="git-files">',
+		);
 		review.files.forEach((f) => parts.push(gitFileBtn(f)));
 		parts.push("</div>");
 	} else {
@@ -7289,12 +7918,14 @@ function renderGitList(s, notice) {
 	}
 	parts.push("</section></div>");
 	setSafeHtml(gEl(), parts.join(""));
-	gEl().querySelectorAll("[data-git-tab]").forEach((button) => {
-		button.addEventListener("click", () => {
-			gitReviewTab = button.getAttribute("data-git-tab") || "changes";
-			renderGitList(gitLastSnap);
+	gEl()
+		.querySelectorAll("[data-git-tab]")
+		.forEach((button) => {
+			button.addEventListener("click", () => {
+				gitReviewTab = button.getAttribute("data-git-tab") || "changes";
+				renderGitList(gitLastSnap);
+			});
 		});
-	});
 	const commitBtn = gEl().querySelector(".git-act.primary");
 	if (commitBtn) commitBtn.addEventListener("click", gitCommitModal);
 	const pushBtn = gEl().querySelector(".git-push");
@@ -7370,23 +8001,24 @@ function gitDiffShell(p, commit, body) {
 			: "";
 	return (
 		'<div class="git">' +
-			'<div class="git-diff-actions"><button type="button" class="git-back" aria-label="Back to Git changes">← back</button>' +
-			'<button type="button" class="git-refresh" aria-label="Refresh Git review">↻ refresh</button></div>' +
-			'<div class="git-diff-meta"><div class="git-sec-h git-diffpath">' +
-			esc(p) +
-			oldPath +
-			'</div><span class="git-diff-status">' +
-			esc(status) +
-			"</span></div>" +
-			body +
-			"</div>"
+		'<div class="git-diff-actions"><button type="button" class="git-back" aria-label="Back to Git changes">← back</button>' +
+		'<button type="button" class="git-refresh" aria-label="Refresh Git review">↻ refresh</button></div>' +
+		'<div class="git-diff-meta"><div class="git-sec-h git-diffpath">' +
+		esc(p) +
+		oldPath +
+		'</div><span class="git-diff-status">' +
+		esc(status) +
+		"</span></div>" +
+		body +
+		"</div>"
 	);
 }
 function wireGitDiffControls(p, commit) {
 	const back = gEl().querySelector(".git-back");
 	if (back) back.addEventListener("click", gitBack);
 	const refresh = gEl().querySelector(".git-refresh");
-	if (refresh) refresh.addEventListener("click", () => refreshGitReview(p, commit));
+	if (refresh)
+		refresh.addEventListener("click", () => refreshGitReview(p, commit));
 }
 async function refreshGitReview(p, commit) {
 	let data;
@@ -7419,7 +8051,11 @@ async function showGitDiff(p, commit) {
 	const file = gitReviewFile(gitLastSnap, p, commit);
 	setSafeHtml(
 		gEl(),
-		gitDiffShell(p, commit, '<p class="um-hint git-diff-state" role="status">loading diff…</p>'),
+		gitDiffShell(
+			p,
+			commit,
+			'<p class="um-hint git-diff-state" role="status">loading diff…</p>',
+		),
 	);
 	wireGitDiffControls(p, commit);
 	let data;
@@ -7459,7 +8095,10 @@ async function showGitDiff(p, commit) {
 			return '<span class="' + cls + '">' + esc(l || " ") + "</span>";
 		})
 		.join("\n");
-	setSafeHtml(gEl(), gitDiffShell(p, commit, '<pre class="git-diff">' + body + "</pre>"));
+	setSafeHtml(
+		gEl(),
+		gitDiffShell(p, commit, '<pre class="git-diff">' + body + "</pre>"),
+	);
 	wireGitDiffControls(p, commit);
 }
 
@@ -7479,9 +8118,7 @@ async function gitRenderRail(el, g) {
 	const review = gitReview.normalizeReviewSnapshot(
 		data.ok === false ? data : data.snapshot,
 	);
-	gitBadgeSnap = review.repository
-		? { changed: review.summary.changed }
-		: null;
+	gitBadgeSnap = review.repository ? { changed: review.summary.changed } : null;
 	const pending = gitPendingPath;
 	gitPendingPath = null;
 	if (pending && gitReview.reconcileReviewSelection(review, pending)) {
@@ -7602,10 +8239,8 @@ registerCommand(
 registerCommand(
 	"fleet",
 	"subagent fleet",
-	"background subagent runs — status, logs, stop, steer",
-	() => {
-		location.hash = "#fleet";
-	},
+	"background subagent runs — status, logs, stop (steer on the full page)",
+	() => openRailWidget("fleet"),
 );
 registerCommand("new-session", "new session", "start a fresh session", () => {
 	resetGitReviewState();

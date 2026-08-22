@@ -25,15 +25,15 @@ assert.match(
 	css,
 	/\.ws-row\.active\s*\{[\s\S]*background:\s*var\(--accent-soft\)/,
 );
-assert.match(css, /\.tools-rail\s*\{[\s\S]*background:\s*var\(--surface\)/);
+assert.match(css, /\.rail-strip\s*\{[\s\S]*background:\s*var\(--surface\)/);
 assert.match(css, /\.rail-tab\.sel\s*\{[\s\S]*border-color:\s*color-mix/);
 assert.match(
 	css,
-	/#toolsbar \.rt-lbl\s*\{[\s\S]*position:\s*static[\s\S]*font:[\s\S]*9px/,
+	/\.rail-strip \.rt-lbl\s*\{[\s\S]*position:\s*static[\s\S]*font:[\s\S]*10px/,
 );
 assert.match(
 	css,
-	/\.rt-badge\s*\{[\s\S]*position:\s*static[\s\S]*font:[\s\S]*9px[\s\S]*color:\s*var\(--ink\)/,
+	/\.rt-badge\s*\{[\s\S]*position:\s*static[\s\S]*font:[\s\S]*10px[\s\S]*color:\s*var\(--ink\)/,
 );
 assert.match(css, /var\(--rail-width, min\(440px, 60vw\)\)/);
 assert.match(
@@ -52,8 +52,10 @@ assert.match(app, /"total",\s*"primary"/);
 assert.match(app, /Provider cost is not available/);
 assert.match(app, /No completed model turns yet/);
 assert.match(app, /class="an-context-line"/);
-assert.match(app, /line = context/);
-assert.match(app, /SA\.formatTokens\(v\) \+ " out tok"/);
+// usage-tab: legend replaces the old "line = context" sub-header hint
+assert.match(app, /class="an-legend"/);
+assert.match(app, /an-sw-context/);
+assert.match(app, /metric\.fmt\(v\)/);
 assert.match(app, /Math\.round\(context\) \+ "% context"/);
 assert.doesNotMatch(css, /\.rail-tab\.sel::before/);
 

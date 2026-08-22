@@ -1,7 +1,10 @@
 const { truncateUtf8 } = require("./browser-snapshot.js");
 
 const MAX_SCREENSHOT_BYTES = 300 * 1024;
-const DEFAULT_JPEG_QUALITY = 70;
+const CONTEXT_MAX_WIDTH = 1280;
+const CONTEXT_MAX_HEIGHT = 720;
+const DEFAULT_JPEG_QUALITY = 60;
+const MAX_JPEG_QUALITY = 80;
 const MIN_JPEG_QUALITY = 40;
 const QUALITY_STEP = 10;
 const MAX_VIEWPORT_DIMENSION = 4096;
@@ -20,6 +23,29 @@ function viewportSize(viewport = {}) {
 		? Math.max(0, Math.min(MAX_VIEWPORT_DIMENSION, Math.floor(viewport.height)))
 		: 0;
 	return { width, height };
+}
+
+function captureGeometry(viewport, size = "context") {
+	const maxWidth = size === "viewport" ? viewport.width : CONTEXT_MAX_WIDTH;
+	const maxHeight = size === "viewport" ? viewport.height : CONTEXT_MAX_HEIGHT;
+	if (!viewport.width || !viewport.height)
+		return { width: 0, height: 0, scale: 1, clip: undefined };
+	const scale = Math.min(
+		1,
+		maxWidth / viewport.width,
+		maxHeight / viewport.height,
+	);
+	const width = Math.max(1, Math.floor(viewport.width * scale));
+	const height = Math.max(1, Math.floor(viewport.height * scale));
+	return {
+		width,
+		height,
+		scale,
+		clip:
+			scale < 1
+				? { x: 0, y: 0, width: viewport.width, height: viewport.height, scale }
+				: undefined,
+	};
 }
 
 function decodeImage(data) {
@@ -49,12 +75,17 @@ function screenshotText(url, imageIncluded) {
 async function captureScreenshot(session, options = {}) {
 	const url = options.url || "";
 	const viewport = viewportSize(options.viewport);
+	const size = options.size === "viewport" ? "viewport" : "context";
+	const geometry = captureGeometry(viewport, size);
 	const details = {
 		url: truncateUtf8(url, 2048),
-		width: viewport.width,
-		height: viewport.height,
+		width: geometry.width,
+		height: geometry.height,
+		viewport: { ...viewport },
 		bytes: 0,
 		imageIncluded: false,
+		scale: geometry.scale,
+		size,
 	};
 	if (options.imageSupported !== true) {
 		return {
@@ -73,13 +104,21 @@ async function captureScreenshot(session, options = {}) {
 		? Math.floor(options.quality)
 		: DEFAULT_JPEG_QUALITY;
 	for (
-		let quality = Math.max(MIN_JPEG_QUALITY, Math.min(100, requestedQuality));
+		let quality = Math.max(
+			MIN_JPEG_QUALITY,
+			Math.min(MAX_JPEG_QUALITY, requestedQuality),
+		);
 		quality >= MIN_JPEG_QUALITY;
 		quality -= QUALITY_STEP
 	) {
 		const response = await session.command(
 			"Page.captureScreenshot",
-			{ format: "jpeg", quality, captureBeyondViewport: false },
+			{
+				format: "jpeg",
+				quality,
+				captureBeyondViewport: false,
+				...(geometry.clip ? { clip: geometry.clip } : {}),
+			},
 			signal,
 			commandOptions,
 		);
@@ -106,10 +145,14 @@ async function captureScreenshot(session, options = {}) {
 }
 
 module.exports = {
+	CONTEXT_MAX_HEIGHT,
+	CONTEXT_MAX_WIDTH,
 	DEFAULT_JPEG_QUALITY,
+	MAX_JPEG_QUALITY,
 	MAX_SCREENSHOT_BYTES,
 	MAX_VIEWPORT_DIMENSION,
 	MIN_JPEG_QUALITY,
+	captureGeometry,
 	captureScreenshot,
 	decodeImage,
 	screenshotError,

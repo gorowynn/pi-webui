@@ -25,8 +25,8 @@ const check = (cond, name) => {
 check(
 	Array.isArray(rail.WIDGET_IDS) &&
 		Object.isFrozen(rail.WIDGET_IDS) &&
-		rail.WIDGET_IDS.join(",") === "sdd,analysis,git,quotas,todos",
-	"WIDGET_IDS is the frozen 5-list",
+		rail.WIDGET_IDS.join(",") === "sdd,analysis,git,quotas,todos,fleet",
+	"WIDGET_IDS is the frozen 6-list",
 );
 check(
 	!rail.WIDGET_IDS.includes("permissions"),
@@ -290,6 +290,25 @@ console.log(`rail: ${n} checks`);
 	check(JSON.stringify(rail.approvalsBadge(0)) === N, "approvalsBadge: none");
 
 	check(
+		JSON.stringify(rail.fleetBadge({ failed: 1, active: 2 })) ===
+			JSON.stringify({ text: "1 failed", tone: "err" }),
+		"fleetBadge: failed outranks activity",
+	);
+	check(
+		JSON.stringify(rail.fleetBadge({ active: 1, stopping: 1 })) ===
+			JSON.stringify({ text: "2 runs", tone: "warn" }),
+		"fleetBadge: active + stopping -> warn",
+	);
+	check(
+		JSON.stringify(rail.fleetBadge({ completed: 5 })) === N,
+		"fleetBadge: completed history -> none",
+	);
+	check(
+		JSON.stringify(rail.fleetBadge(null)) === N,
+		"fleetBadge: no data -> none",
+	);
+
+	check(
 		JSON.stringify(rail.quotaBadge(92)) ===
 			JSON.stringify({ text: "92%", tone: "err" }),
 		"quotaBadge: >=90 err",
@@ -412,6 +431,12 @@ console.log(`rail: ${n} checks`);
 	check(
 		app.includes("renderUsage(provider)"),
 		"quota detail reuses renderUsage (dashboard note for no-API providers) (# FR-11)",
+	);
+	check(
+		/w\.id === "fleet"[\s\S]{0,120}fleetRenderRail\(el, railGen\.cur\(\)\)/.test(
+			app,
+		),
+		"fleet rail tick routes through fleetRenderRail (never the loading placeholder)",
 	);
 }
 

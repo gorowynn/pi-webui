@@ -334,10 +334,13 @@ main {
 	font-family: var(--mono);
 }
 .msg.assistant-turn .role {
-	margin-bottom: 8px;
-	font-weight: 600;
-	text-transform: none;
-	letter-spacing: 0.02em;
+	margin-bottom: 6px;
+	font-weight: 400;
+	font-size: 11px;
+	text-transform: lowercase;
+	letter-spacing: 0.04em;
+	color: var(--muted);
+	opacity: 0.85;
 }
 .msg.tool-turn {
 	margin-inline: 8px;
@@ -568,6 +571,7 @@ pre code.hljs {
 	border-color: var(--danger);
 }
 .tool-group-head {
+	min-width: 0;
 	cursor: pointer;
 	list-style: none;
 	display: flex;
@@ -588,6 +592,7 @@ pre code.hljs {
 	outline-offset: -2px;
 }
 .tool-group-caret {
+	flex: 0 0 auto;
 	font-size: 10px;
 	line-height: 1;
 	color: var(--muted);
@@ -597,7 +602,9 @@ pre code.hljs {
 	transform: rotate(90deg);
 }
 .tool-group-label {
+	flex: 0 0 auto;
 	color: var(--ink);
+	white-space: nowrap;
 }
 .tool-group.run .tool-group-label {
 	color: var(--accent);
@@ -605,7 +612,18 @@ pre code.hljs {
 .tool-group.err .tool-group-label {
 	color: var(--danger);
 }
+.tool-group-tools {
+	min-width: 0;
+	overflow: hidden;
+	color: var(--ink);
+	font-size: 10px;
+	letter-spacing: 0.02em;
+	text-overflow: ellipsis;
+	text-transform: none;
+	white-space: nowrap;
+}
 .tool-group-meta {
+	flex: 0 0 auto;
 	margin-left: auto;
 	color: var(--muted);
 	font-size: 10px;
@@ -1911,13 +1929,14 @@ body.ctx-on.ctx-hot .ctx-bar {
 body.ctx-hot .ctx-label {
 	color: var(--danger);
 }
-/* narrow: Compact hides into the overflow row… and is promoted back with a
-   clear nudge while context is hot (FR-10.3) — pure CSS, no DOM moves. */
-body.w-narrow #compact {
-	display: none;
+/* narrow: Compact lives in the ⋯ popover with the other secondary actions
+   (FR-54, ui-density-navigation) — never fully hidden. ctx-hot flags BOTH the
+   toggle and the Compact button inside (nudge, FR-10.3) — pure CSS. */
+body.ctx-hot #compact {
+	border-color: var(--danger);
+	color: var(--danger);
 }
-body.w-narrow.ctx-hot #compact {
-	display: inline-block;
+body.w-narrow.ctx-hot .composer .bar-ovf > summary {
 	border-color: var(--danger);
 	color: var(--danger);
 }
@@ -2700,10 +2719,11 @@ body.w-narrow #modal .card {
 	max-height: 92vh;
 }
 /* ponytail: narrow screens never let the sidebar squeeze the transcript — body
-   margin stays 0 (the drawer rules live in the #wsbar section). */
+   margin stays at the launcher strip (the drawer rules live in the #wsbar
+   section). */
 body.w-narrow.ws-on,
 body.w-mid.ws-on {
-	margin-left: 0;
+	margin-left: var(--rail-strip);
 }
 
 /* ---- provider quota bar (inline in header, click for details) ---- */
@@ -3025,11 +3045,43 @@ body.page-open .activity {
    Persistent left edge: auto-discovered project roots (one-click switch via
    POST /api/workspace) + the active project's session history (resume without
    the footer modal). Mirrors #toolsbar's fixed-edge + body-margin pattern on the
-   opposite edge. Collapsible (body.ws-on); an edge launcher (#ws-open) re-shows
-   it. Collapse persists in localStorage["pi:wsbar"]. */
-#wsbar {
+   opposite edge. Collapsible (body.ws-on); the shared #ws-rail tabs toggle it.
+   Collapse persists in localStorage["pi:wsbar"]. */
+/* left launcher rail — shares .rail-strip/.rail-tab with the right
+   workspace-tools strip; the full sidebar (#wsbar) expands next to it. */
+/* Both edge strips use the same rail surface, rhythm, insets, and scrolling;
+   only their fixed edge/border direction differs. */
+.rail-strip {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 10px 0 8px;
+	padding-left: 12px;
+	padding-right: 12px;
+	background: var(--surface);
+	overflow-y: auto;
+}
+#ws-rail {
 	position: fixed;
 	left: 0;
+	top: 0;
+	bottom: 0;
+	z-index: 30;
+	width: var(--rail-strip);
+	/* #toolsbar carries the same safe-area inset for its vertical strip. */
+	padding-top: calc(10px + env(safe-area-inset-top));
+	padding-bottom: calc(8px + env(safe-area-inset-bottom));
+	border-right: 1px solid var(--line);
+}
+body {
+	margin-left: var(--rail-strip);
+}
+body.no-switch #ws-rail-workspaces {
+	display: none; /* IDE mode (PI_WEBUI_NO_SWITCH): fixed project, no list */
+}
+#wsbar {
+	position: fixed;
+	left: var(--rail-strip);
 	top: 0;
 	bottom: 0;
 	z-index: 30;
@@ -3044,31 +3096,56 @@ body.page-open .activity {
 	display: none;
 }
 body.ws-on #wsbar {
+	display: flex;
+	flex-direction: column;
+}
+/* FR-13 (ui-density-navigation): sessions own the remaining sidebar height —
+   heading + search stay put, the list scrolls independently. */
+#ws-sessions-sec {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
+}
+#ws-sessions {
+	overflow-y: auto;
+	min-height: 0;
+	scrollbar-gutter: stable;
+}
+.ws-search {
+	display: flex;
+	gap: 4px;
+	align-items: center;
+	margin-top: 2px;
+}
+.ws-search input {
+	flex: 1 1 auto;
+	min-width: 0;
+	background: var(--surface-inset);
+	color: var(--ink);
+	border: 1px solid var(--line);
+	border-radius: calc(var(--r) - 2px);
+	padding: 3px 8px;
+	font-size: 11px;
+}
+.ws-search-count {
 	display: block;
+	color: var(--muted);
+	font-size: 10px;
+	margin-top: 2px;
+	min-height: 12px;
 }
 body.ws-on {
-	margin-left: var(--wsbar-w);
+	margin-left: calc(var(--rail-strip) + var(--wsbar-w));
 }
 body.no-switch #ws-workspaces-sec {
 	display: none; /* IDE mode (PI_WEBUI_NO_SWITCH): fixed project, no list */
 }
-.ws-x {
-	position: absolute;
-	top: 50%;
-	right: 6px;
-	transform: translateY(-50%);
-	width: 24px; /* a11y FR-11: ≥24×24 touch target */
-	height: 24px;
-	line-height: 1;
-	background: none;
-	border: 1px solid transparent;
-	border-radius: 4px;
-	color: var(--muted);
-	cursor: pointer;
-}
-.ws-x:hover {
-	border-color: var(--line);
-	color: var(--ink);
+/* One view at a time: the active rail tab (body[data-ws-view]) picks the
+   section; the ws-collapse button is gone — the rail tab itself closes. */
+body[data-ws-view="workspaces"] #ws-sessions-sec,
+body[data-ws-view="sessions"] #ws-workspaces-sec {
+	display: none;
 }
 .ws-sec {
 	padding: 4px 8px 10px;
@@ -3170,6 +3247,74 @@ body.no-switch #ws-workspaces-sec {
 .ws-row.active .ws-name {
 	color: var(--accent);
 }
+/* FR-7/FR-9 (ui-density-navigation): collapsed workspace section — only the
+   INACTIVE rows hide; the active row, heading, and toggle stay visible. */
+#wsbar.ws-collapsed #ws-workspaces .ws-row-wrap:not(:has(.ws-row.active)) {
+	display: none;
+}
+/* row + remove affordance: the switch target stays a full-width button; the
+   × hides that workspace from THIS browser (restore line appears below). */
+.ws-row-wrap {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+.ws-row-wrap .ws-row {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+.ws-row-x {
+	flex: 0 0 auto;
+	background: none;
+	border: 1px solid transparent;
+	color: var(--muted);
+	border-radius: 4px;
+	cursor: pointer;
+	font-size: 12px;
+	line-height: 1;
+	padding: 2px 4px;
+	min-width: 22px;
+	min-height: 22px;
+}
+.ws-row-x:hover {
+	color: var(--danger);
+	border-color: var(--danger);
+}
+.ws-restore {
+	background: none;
+	border: none;
+	color: var(--muted);
+	font-size: 10px;
+	cursor: pointer;
+	padding: 4px 2px 0;
+	min-height: 22px;
+	text-decoration: underline dotted;
+}
+/* removed-workspace archive disclosure: server-side, 7-day retention */
+.ws-archived {
+	margin-top: 4px;
+}
+.ws-archived > summary {
+	cursor: pointer;
+	color: var(--muted);
+	font-size: 10px;
+	padding: 4px 2px;
+	list-style: revert;
+}
+.ws-arch-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+.ws-arch-row .ws-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--muted);
+	font-size: 11px;
+}
 .ws-row .ws-name {
 	font-size: 12px;
 	font-weight: 600;
@@ -3195,33 +3340,16 @@ body.no-switch #ws-workspaces-sec {
 		sans-serif;
 	padding: 6px 8px;
 }
-/* edge launcher — visible only while the sidebar is collapsed (hidden) */
-#ws-open {
-	position: fixed;
-	left: env(safe-area-inset-left); /* spec FR-9 */
-	top: 50%;
-	transform: translateY(-50%);
-	z-index: 30;
-	width: 24px; /* a11y FR-11: ≥24×24 touch target */
-	height: 34px;
-	background: var(--surface);
-	border: 1px solid var(--line);
-	border-left: none;
-	border-radius: 0 6px 6px 0;
-	color: var(--muted);
-	cursor: pointer;
-}
-#ws-open:hover {
-	color: var(--ink);
-}
+/* (the old #ws-open edge launcher is gone — #ws-rail is the launcher now) */
 /* drawer mode (w-mid / w-narrow, spec FR-2): the sidebar is an off-canvas
-   overlay — always mounted so ws-on slides it in; the scrim dims the content
-   and the body margin stays 0. w-wide keeps the push model above. */
+   overlay — always mounted so ws-on slides in next to the strip; the scrim
+   dims the content and the body margin stays at the strip. w-wide keeps the
+   push model above. */
 body.w-mid #wsbar,
 body.w-narrow #wsbar {
 	display: block;
 	width: min(280px, 84vw);
-	transform: translateX(-100%);
+	transform: translateX(calc(-100% - var(--rail-strip)));
 	visibility: hidden;
 	transition:
 		transform 0.18s ease,
@@ -3332,10 +3460,15 @@ body.w-narrow.rail-on.rail-open .tools-rail {
 	overflow-x: auto;
 	overflow-y: hidden;
 }
-body.w-mid.rail-on.rail-open .rail-tab,
+/* Open horizontal tabs keep the same inner width as the vertical tabs:
+   the strip's inset is excluded from the tab width on both rails. */
+body.w-mid.rail-on.rail-open .rail-tab {
+	flex: 0 0 calc(var(--rail-strip) - 24px);
+	width: calc(var(--rail-strip) - 24px);
+}
 body.w-narrow.rail-on.rail-open .rail-tab {
-	flex: 0 0 64px;
-	width: 64px;
+	flex: 0 0 calc(var(--rail-strip) - 16px);
+	width: calc(var(--rail-strip) - 16px);
 }
 /* right-rail drag-resize handle (plan 3.5 / U§2.6) — on the bar's left edge;
    width persists via the --rail-width CSS var (set by app.js). Flat surface,
@@ -3379,14 +3512,9 @@ body.w-narrow.rail-on.rail-open .rail-tab {
 	}
 }
 .tools-rail {
-	flex: 0 0 var(--rail-strip, 64px);
-	display: flex;
-	flex-direction: column;
-	padding: 10px 0 8px 0;
-	background: var(--surface);
-	padding-left: 24px; /* a11y FR-11: reserves the resize handle's hit zone */
-	gap: 4px;
-	overflow-y: auto;
+	flex: 0 0 var(--rail-strip);
+	/* The resize handle overlays the strip's left edge; shared 12px insets
+	   keep the tab center true while preserving the 24px hit zone. */
 	border-left: 1px solid var(--line);
 }
 /* Icon-first inspector tabs reserve labels for native hover titles and assistive
@@ -3400,8 +3528,9 @@ body.w-narrow.rail-on.rail-open .rail-tab {
 	gap: 1px;
 	width: 100%;
 	min-width: 32px;
-	min-height: 46px;
-	padding: 7px 2px;
+	height: 64px;
+	min-height: 64px;
+	padding: 7px 0;
 	border: 1px solid transparent;
 	border-radius: var(--r);
 	background: transparent;
@@ -3447,8 +3576,10 @@ body.w-narrow.rail-on.rail-open .rail-tab {
 	white-space: nowrap;
 	border: 0;
 }
-/* Labels stay visible in the compact rail: icon → name → readable status. */
-#toolsbar .rt-lbl {
+/* Both rails use the same compact icon → label → status stack. The left rail
+   uses short visible labels (with full aria-label/title text) just like the
+   right rail's "Perms" abbreviation, so every tab stays one line tall. */
+.rail-strip .rt-lbl {
 	position: static;
 	width: auto;
 	height: auto;
@@ -3460,16 +3591,16 @@ body.w-narrow.rail-on.rail-open .rail-tab {
 	white-space: nowrap;
 	text-overflow: ellipsis;
 	font:
-		700 9px / 1 "JetBrains Mono",
+		700 10px / 1 "JetBrains Mono",
 		ui-monospace,
 		monospace;
 	letter-spacing: 0.01em;
 	text-align: center;
 	color: var(--muted);
 }
-#toolsbar .rail-tab.sel .rt-lbl,
-#toolsbar .rail-tab:hover .rt-lbl,
-#toolsbar .rail-tab:focus-visible .rt-lbl {
+.rail-strip .rail-tab.sel .rt-lbl,
+.rail-strip .rail-tab:hover .rt-lbl,
+.rail-strip .rail-tab:focus-visible .rt-lbl {
 	color: var(--accent);
 }
 .rt-badge {
@@ -3480,7 +3611,7 @@ body.w-narrow.rail-on.rail-open .rail-tab {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	font:
-		700 9px / 1.15 "JetBrains Mono",
+		700 10px / 1.15 "JetBrains Mono",
 		ui-monospace,
 		monospace;
 	letter-spacing: -0.02em;
@@ -3506,13 +3637,18 @@ body.w-narrow.rail-on.rail-open .rail-tab {
 	border-color: var(--success);
 	background: var(--surface-raised);
 }
-body.w-narrow #toolsbar .rt-lbl,
-body.w-narrow #toolsbar .rt-badge {
-	display: none;
+body.w-narrow .rail-strip .rt-lbl,
+body.w-narrow .rail-strip .rt-badge {
+	display: none; /* both rails become the same 48px icon-only strip */
 }
 body.w-narrow .rail-tab {
-	min-width: 24px;
+	min-width: 32px;
+	height: 40px;
 	min-height: 40px;
+}
+body.w-narrow .rail-strip {
+	padding-left: 8px; /* resize handle is sheet-hidden on narrow — no dead zone */
+	padding-right: 8px;
 }
 /* FR-7: permissions launcher — pinned below the widget tabs, visually
    detached from them. */
@@ -3828,11 +3964,26 @@ body.w-narrow .rail-tab {
    [data-theme="paperlike"].
 */
 
-/* ===== session-analysis modal (plan 4.3) ===== */
-/* A wider free modal (between the 640px default and the 1500px .wide diff
-   preview) so the bars + two-column ranked lists breathe. */
-#modal-wrap:has(.card.an-card) {
-	width: min(760px, 94vw);
+/* ===== session-analysis rail panel (plan 4.3 / usage-tab) ===== */
+/* FR-10: threshold notices between headline and TURN HISTORY */
+.an-notices:empty {
+	display: none;
+}
+.an-notice {
+	padding: 5px 8px;
+	font-size: 11px;
+	border-radius: calc(var(--r) - 2px);
+	border: 1px solid var(--line);
+}
+.an-notice.tone-attention {
+	color: var(--warning);
+	border-color: color-mix(in srgb, var(--warning) 35%, var(--line));
+	background: color-mix(in srgb, var(--warning) 8%, var(--surface-inset));
+}
+.an-notice.tone-danger {
+	color: var(--danger);
+	border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+	background: color-mix(in srgb, var(--danger) 8%, var(--surface-inset));
 }
 .analysis {
 	display: flex;
@@ -3927,6 +4078,135 @@ body.w-narrow .rail-tab {
 .an-sec-sub {
 	font-weight: 400;
 	color: var(--muted);
+}
+/* FR-3: collapsed PERFORMANCE telemetry section */
+.an-perf summary {
+	cursor: pointer;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--ink);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	padding: 4px 0;
+}
+.an-perf summary:hover {
+	color: var(--accent);
+}
+.an-perf[open] summary {
+	margin-bottom: 6px;
+}
+/* FR-4: metric segmented control in the TURN HISTORY header row */
+.an-sec-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	min-width: 0;
+}
+.an-seg {
+	display: inline-flex;
+	flex-shrink: 0;
+	border: 1px solid var(--line);
+	border-radius: calc(var(--r) - 2px);
+	overflow: hidden;
+}
+.an-seg-btn {
+	border: none;
+	background: none;
+	color: var(--muted);
+	font-size: 11px;
+	font-family: inherit;
+	padding: 3px 8px;
+	cursor: pointer;
+}
+.an-seg-btn + .an-seg-btn {
+	border-left: 1px solid var(--line);
+}
+.an-seg-btn:hover:not(:disabled) {
+	background: var(--surface-inset);
+	color: var(--ink);
+}
+.an-seg-btn.sel {
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+.an-seg-btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+/* FR-6: show-all window toggle in the sub-header */
+.an-showall {
+	border: 1px solid var(--line);
+	background: none;
+	color: var(--muted);
+	font-size: 11px;
+	font-family: inherit;
+	padding: 2px 8px;
+	border-radius: 999px;
+	cursor: pointer;
+	flex-shrink: 0;
+}
+.an-showall:hover {
+	color: var(--ink);
+	background: var(--surface-inset);
+}
+/* FR-7: legend under the bars */
+.an-legend {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 11px;
+	color: var(--muted);
+}
+.an-sw {
+	width: 8px;
+	height: 8px;
+	border-radius: 2px;
+	display: inline-block;
+}
+.an-sw-metric {
+	background: var(--accent);
+}
+.an-sw-context {
+	background: var(--warning);
+	margin-left: 8px;
+}
+/* FR-8: selected-turn readout row */
+.an-readout {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px;
+	background: var(--surface-inset);
+	border: 1px solid var(--line);
+	border-radius: calc(var(--r) - 2px);
+	font-size: 12px;
+}
+.an-readout-txt {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--ink);
+}
+.an-readout-jump {
+	border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-size: 11px;
+	font-family: inherit;
+	padding: 3px 10px;
+	border-radius: 999px;
+	cursor: pointer;
+	flex-shrink: 0;
+}
+.an-readout-jump:hover {
+	background: var(--accent);
+	color: var(--canvas);
+}
+.an-bar.sel {
+	background: var(--accent);
 }
 .an-metrics {
 	display: grid;
@@ -4079,7 +4359,8 @@ body.w-narrow .rail-tab {
 	text-transform: uppercase;
 	letter-spacing: 0.05em;
 }
-.an-item {
+.an-item,
+.an-row {
 	display: flex;
 	justify-content: space-between;
 	gap: 8px;
@@ -4088,10 +4369,16 @@ body.w-narrow .rail-tab {
 	background: none;
 	padding: 5px 4px;
 	border-bottom: 1px solid var(--line);
-	cursor: pointer;
 	text-align: left;
 	font-size: 12px;
 	color: var(--ink);
+}
+.an-item {
+	cursor: pointer;
+}
+/* FR-11: rows without a jump target are static text, never buttons */
+.an-row {
+	cursor: default;
 }
 .an-item:hover {
 	background: var(--surface-inset);
@@ -4754,6 +5041,28 @@ body.w-narrow #modal-wrap {
 	color: var(--muted, #8b949e);
 	font-size: 12px;
 }
+.perm-sub {
+	margin: 0 0 4px;
+	color: var(--ink, #e6edf3);
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+}
+.perm-rule-exp {
+	color: var(--muted, #8b949e);
+	font-size: 10px;
+	white-space: nowrap;
+}
+.perm-inherited > summary {
+	cursor: pointer;
+	color: var(--muted, #8b949e);
+	font-size: 11px;
+	padding: 6px 0;
+	list-style: revert; /* native disclosure marker */
+}
+.perm-inherited[open] > summary {
+	color: var(--ink, #e6edf3);
+}
 #permissions button {
 	min-height: 24px;
 	padding: 3px 12px;
@@ -4779,6 +5088,65 @@ body.w-narrow #modal-wrap {
 }
 
 /* ---- #fleet page (pi-subagents async runs) + notice cards ---- */
+.fl-summary {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	flex-wrap: wrap;
+	margin-bottom: 8px;
+}
+.fl-count {
+	font-size: 11px;
+	color: var(--muted, #8b949e);
+	border: 1px solid var(--line, #30363d);
+	border-radius: 999px;
+	padding: 1px 8px;
+}
+.fl-count.err {
+	color: var(--danger, #f85149);
+	border-color: var(--danger, #f85149);
+}
+.fl-count.warn {
+	color: var(--warning-strong, #e3b341);
+	border-color: var(--warning, #d29922);
+}
+.fl-count.stale {
+	font-style: italic;
+}
+.fl-filters {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	margin-bottom: 8px;
+}
+.fl-filters select,
+.fl-filters input {
+	min-height: 26px;
+	padding: 2px 8px;
+	border-radius: calc(var(--r, 8px) - 2px);
+	border: 1px solid var(--line, #30363d);
+	background: var(--surface, #0d1117);
+	color: var(--ink, #e6edf3);
+	font-size: 12px;
+}
+.fl-filters input {
+	flex: 0 1 260px;
+}
+.fl-history > summary {
+	cursor: pointer;
+	color: var(--muted, #8b949e);
+	font-size: 11px;
+	padding: 6px 0;
+	list-style: revert;
+}
+.fl-steer-label {
+	font-size: 11px;
+	color: var(--accent, #4493f8);
+	max-width: 22ch;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
 #fleet .fl-steer {
 	display: flex;
 	gap: 6px;
@@ -4984,4 +5352,68 @@ body.w-narrow #modal-wrap {
 	font-size: 11px;
 	font-family: var(--mono);
 	margin-top: 2px;
+}
+
+/* UI density foundation (ui-density-navigation Chunk 1). Keep ordinary
+   controls readable, then raise the same hit area on hoverless/touch input. */
+:root {
+	--ui-text-size: 13px;
+	--ui-meta-size: 11px;
+	--target-pointer: 32px;
+	--target-touch: 44px;
+}
+body {
+	font-size: var(--ui-text-size);
+}
+button,
+select,
+input:not([type="hidden"]),
+textarea {
+	min-height: var(--target-pointer);
+	font-size: max(var(--ui-text-size), 1em);
+}
+button[class],
+button[id],
+select[class],
+select[id],
+input[class],
+input[id] {
+	min-height: var(--target-pointer);
+	font-size: max(var(--ui-text-size), 1em);
+}
+.sb-meta,
+.ws-meta,
+.rt-badge,
+.perm-muted,
+.perm-layer,
+.sa-note-foot {
+	font-size: var(--ui-meta-size);
+}
+@media (hover: none) {
+	button,
+	select,
+	input:not([type="hidden"]),
+	textarea,
+	button[class],
+	button[id],
+	select[class],
+	select[id],
+	input[class],
+	input[id],
+	#permissions button,
+	#permissions input,
+	#permissions select,
+	#toolsbar .rail-tab,
+	#toolsbar .rail-perm {
+		min-height: var(--target-touch);
+	}
+}
+
+/* Utility pages (FR-31, ui-density-navigation): on ≥1440px displays
+   Permissions/Fleet use more of the available width for rule/run detail;
+   the transcript keeps its reading cap. */
+@media (min-width: 1440px) {
+	.perm-body {
+		max-width: 1240px;
+	}
 }

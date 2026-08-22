@@ -33,7 +33,14 @@ const {
 // from resolving this repository's git.js through Windows PATHEXT.
 sanitizeWindowsPathExt(process.env, process.platform);
 const { improvePrompt } = require("./isolated-prompt.js"); // disposable isolated pi prompt (plan 4.7/4.8)
-const { discoverWorkspaces, isKnownWorkspacePath } = require("./workspaces.js");
+const {
+	discoverWorkspaces,
+	isKnownWorkspacePath,
+	archiveWorkspace,
+	listArchived,
+	restoreArchived,
+	purgeArchived,
+} = require("./workspaces.js");
 const { opencodeGoWindows } = require("./public/usage-provider.js"); // dashboard HTML parser (shared with the browser, like md.js)
 const { createBroker } = require("./broker.js"); // pending-approval broker (U6 C7)
 const policyEngine = require("./extensions/pi_minimal_webui/policy-engine.js"); // THE policy engine (shared with safeguard.ts)
@@ -114,6 +121,10 @@ function permissionsPayload() {
 }
 const AUTH_FILE = path.join(os.homedir(), ".pi", "agent", "auth.json");
 const AGENT_DIR = path.dirname(AUTH_FILE); // ~/.pi/agent — pi's agent dir
+// removed-workspace archive: a SIBLING of sessions/ (discovery scans every
+// subdir of sessions/, so anything inside it would be re-discovered). Kept 7
+// days (purge on read + at startup), restorable, then deleted for real.
+const ARCHIVE_DIR = path.join(AGENT_DIR, "pi-webui-removed");
 const USER_SAFEGUARD_PATH = path.join(AGENT_DIR, "safeguard.json"); // user policy layer (shared with safeguard.ts)
 const WORKSPACE_SAFEGUARD_PATH = () =>
 	path.join(PI_CWD, ".pi", "safeguard.json"); // tighten-only workspace layer
@@ -142,6 +153,10 @@ const STATIC = {
 	},
 	"/subagents-ux.js": {
 		file: "subagents-ux.js",
+		type: "text/javascript; charset=utf-8",
+	},
+	"/sidebar-ux.js": {
+		file: "sidebar-ux.js",
 		type: "text/javascript; charset=utf-8",
 	},
 	"/a11y-contrast.js": {
@@ -211,15 +226,31 @@ const STATIC = {
 // process.env.PI_WEBUI_ASK_MARKER) take this value, so the literal can't drift.
 const ASK_MARKER = "\u0000pi-webui:ask-user-question";
 process.env.PI_WEBUI_ASK_MARKER = ASK_MARKER;
-// Inject the marker into the page before app.js loads; cache once at startup.
-const HTML = fs
-	.readFileSync(HTML_PATH, "utf8")
-	.replace(
-		'<script src="app.js"></script>',
-		"<script>window.__PI_ASK_MARKER=" +
-			JSON.stringify(ASK_MARKER) +
-			';</script>\n    <script src="app.js"></script>',
-	);
+// Inject the marker into the page before app.js loads. mtime-cached so an
+// index.html edit + refresh works like the app.js/style.css dev loop (the
+// old boot-time cache served stale HTML until a server restart).
+let htmlCache = { mtime: 0, body: "" };
+function pageHtml() {
+	try {
+		const st = fs.statSync(HTML_PATH);
+		if (st.mtimeMs !== htmlCache.mtime) {
+			htmlCache = {
+				mtime: st.mtimeMs,
+				body: fs
+					.readFileSync(HTML_PATH, "utf8")
+					.replace(
+						'<script src="app.js"></script>',
+						"<script>window.__PI_ASK_MARKER=" +
+							JSON.stringify(ASK_MARKER) +
+							'\';</script>\n    <script src="app.js"></script>',
+					),
+			};
+		}
+	} catch {
+		/* stat/read failure — fall through to the last good body */
+	}
+	return htmlCache.body;
+}
 
 // ponytail: one shared agent process for all tabs. Multi-session is a later concern.
 let pi = null;
@@ -1013,7 +1044,7 @@ const server = http.createServer(async (req, res) => {
 		(url.pathname === "/" || url.pathname === "/index.html")
 	) {
 		res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-		return res.end(HTML);
+		return res.end(pageHtml());
 	}
 
 	if (req.method === "GET" && STATIC[url.pathname]) {
@@ -1632,7 +1663,9 @@ const server = http.createServer(async (req, res) => {
 
 	if (req.method === "GET" && url.pathname === "/api/workspaces") {
 		// auto-discovered project roots (FR-1/FR-2): scan pi's session storage,
-		// always including the current cwd. No client path is accepted.
+		// always including the current cwd. No client path is accepted. The
+		// removed-workspace archive rides along (purged first — read = GC tick).
+		purgeArchived(ARCHIVE_DIR);
 		res.writeHead(200, { "Content-Type": "application/json" });
 		return res.end(
 			JSON.stringify({
@@ -1642,8 +1675,98 @@ const server = http.createServer(async (req, res) => {
 					path.join(AGENT_DIR, "sessions"),
 					PI_CWD,
 				),
+				archived: listArchived(ARCHIVE_DIR),
 			}),
 		);
+	}
+	// remove a workspace = move its session folder into the 7-day archive
+	// (recoverable via /restore; auto-deleted after ARCHIVE_MAX_AGE_MS).
+	// Same trust boundary as switching: only a discovered, NON-ACTIVE workspace
+	// passes; no arbitrary paths can be pointed at.
+	if (req.method === "POST" && url.pathname === "/api/workspaces/remove") {
+		if (NO_SWITCH) {
+			res.writeHead(403, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({ ok: false, error: "switching disabled" }),
+			);
+		}
+		try {
+			const obj = JSON.parse((await readBody(req)) || "{}");
+			const discovered = discoverWorkspaces(
+				path.join(AGENT_DIR, "sessions"),
+				PI_CWD,
+			);
+			// remove: a deleted-on-disk project is the normal case here, so the gate
+			// drops the existsSync half (still discovered-match only). The active
+			// check existsSync-guards realpathSync, which throws on a missing path.
+			if (!isKnownWorkspacePath(discovered, obj.path, false)) {
+				res.writeHead(400, { "Content-Type": "application/json" });
+				return res.end(
+					JSON.stringify({
+						ok: false,
+						error: "not a known workspace",
+					}),
+				);
+			}
+			if (
+				fs.existsSync(obj.path) &&
+				fs.realpathSync(obj.path) === fs.realpathSync(PI_CWD)
+			) {
+				res.writeHead(400, { "Content-Type": "application/json" });
+				return res.end(
+					JSON.stringify({
+						ok: false,
+						error: "cannot remove the active workspace",
+					}),
+				);
+			}
+			const r = archiveWorkspace(
+				path.join(AGENT_DIR, "sessions"),
+				ARCHIVE_DIR,
+				obj.path,
+			);
+			if (!r.ok) {
+				res.writeHead(500, { "Content-Type": "application/json" });
+				return res.end(JSON.stringify({ ok: false, error: r.error }));
+			}
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({
+					ok: true,
+					archived: listArchived(ARCHIVE_DIR),
+				}),
+			);
+		} catch (e) {
+			res.writeHead(500, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
+	}
+	// restore an archived workspace (entry names are basenames from listArchived;
+	// restoreArchived re-validates, so nothing outside ARCHIVE_DIR moves).
+	if (req.method === "POST" && url.pathname === "/api/workspaces/restore") {
+		if (NO_SWITCH) {
+			res.writeHead(403, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({ ok: false, error: "switching disabled" }),
+			);
+		}
+		try {
+			const obj = JSON.parse((await readBody(req)) || "{}");
+			const r = restoreArchived(
+				ARCHIVE_DIR,
+				path.join(AGENT_DIR, "sessions"),
+				obj.dir,
+			);
+			if (!r.ok) {
+				res.writeHead(400, { "Content-Type": "application/json" });
+				return res.end(JSON.stringify({ ok: false, error: r.error }));
+			}
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true }));
+		} catch (e) {
+			res.writeHead(500, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: false, error: e.message }));
+		}
 	}
 	if (req.method === "POST" && url.pathname === "/api/workspace") {
 		if (NO_SWITCH) {
@@ -1927,6 +2050,9 @@ if (require.main === module) {
 		console.log(
 			`pi-webui on http://127.0.0.1:${PORT}  (pi: ${PI_BIN} ${["--mode", "rpc", ...PI_ARGS].join(" ")})`,
 		);
+		// archive GC: 7-day purge at startup (GET /api/workspaces also purges on
+		// read, so a long-running server still collects).
+		purgeArchived(ARCHIVE_DIR);
 	});
 }
 

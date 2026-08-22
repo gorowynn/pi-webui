@@ -303,10 +303,97 @@
 		return runs.map(runRowHtml).join("");
 	}
 
+	// ui-density-navigation FR-41..47/49/59: pure prioritized fleet projection —
+	// active/stopping first, failed second, completed history behind a
+	// disclosure; summary counts, status+text filters (case-insensitive),
+	// steering-target reconciliation, and bounded failure text. Never mutates
+	// the input runs (the caller renders from the returned view).
+	function fleetView(runs, opts) {
+		var o = opts || {};
+		var list = Array.isArray(runs) ? runs.slice() : [];
+		var isStopping = (r) => isActive(r.state) && !!r.stopRequested;
+		var counts = { active: 0, stopping: 0, failed: 0, completed: 0 };
+		for (var i = 0; i < list.length; i++) {
+			var r = list[i];
+			if (isStopping(r)) counts.stopping++;
+			else if (isActive(r.state)) counts.active++;
+			else if (r.state === "failed") counts.failed++;
+			else counts.completed++;
+		}
+		var q = String(o.textFilter || "")
+			.trim()
+			.toLowerCase();
+		var textOf = (r) =>
+			[
+				r.description,
+				r.id,
+				r.runId,
+				r.error,
+				(r.steps || []).map((s) => s.description),
+			]
+				.filter(Boolean)
+				.join(" ")
+				.toLowerCase();
+		var statusOk = (r) => {
+			if (!o.statusFilter || o.statusFilter === "all") return true;
+			if (o.statusFilter === "active") return isActive(r.state);
+			if (o.statusFilter === "failed") return r.state === "failed";
+			return !isActive(r.state) && r.state !== "failed";
+		};
+		var filtered = list.filter(
+			(r) => statusOk(r) && (!q || textOf(r).includes(q)),
+		);
+		var newestFirst = (a) =>
+			a.slice().sort((x, y) => (y.startedAt || 0) - (x.startedAt || 0));
+		var stopping = newestFirst(filtered.filter((r) => isStopping(r)));
+		var active = newestFirst(
+			filtered.filter((r) => isActive(r.state) && !isStopping(r)),
+		);
+		var failed = newestFirst(filtered.filter((r) => r.state === "failed"));
+		var history = newestFirst(
+			filtered.filter((r) => !isActive(r.state) && r.state !== "failed"),
+		);
+		var actives = stopping.concat(active);
+		var steerable = null;
+		if (o.selectedRunId) {
+			if (actives.some((r) => r.id === o.selectedRunId))
+				steerable = o.selectedRunId;
+		} else if (actives.length === 1) steerable = actives[0].id;
+		var now = typeof o.now === "number" ? o.now : Date.now();
+		return {
+			rows: actives.concat(failed),
+			history: history,
+			historyExpanded: !!o.historyExpanded,
+			counts: counts,
+			filteredCounts: {
+				active: actives.length,
+				failed: failed.length,
+				completed: history.length,
+			},
+			steerableId: steerable,
+			empty: list.length === 0,
+			stale:
+				typeof o.fetchedAt === "number" &&
+				now - o.fetchedAt > (o.staleMs || 30000),
+		};
+	}
+
+	/** FR-45: bounded failure reason — first line, ≤160 chars; empty when the
+	 *  run carries no error (the UI shows a generic failed state, not invented
+	 *  detail). */
+	function failureSummary(run) {
+		var e = String((run && run.error) || "").trim();
+		if (!e) return "";
+		var first = e.split("\n")[0];
+		return first.length > 160 ? first.slice(0, 160) + " …" : first;
+	}
+
 	return {
 		isSubagentNotice: isSubagentNotice,
 		noticeHtml: noticeHtml,
 		fleetHtml: fleetHtml,
+		fleetView: fleetView,
+		failureSummary: failureSummary,
 		fmtDur: fmtDur,
 		isActive: isActive,
 		stateMeta: stateMeta,

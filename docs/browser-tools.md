@@ -172,6 +172,9 @@ accessibility tree:
   "title": "pi-webui",
   "viewport": { "width": 1440, "height": 900 },
   "pageText": "...bounded visible text...",
+  "mode": "compact",
+  "revision": "opaque-revision",
+  "unchanged": false,
   "elements": [
     {
       "ref": "e12",
@@ -193,14 +196,44 @@ Refs are manager-owned handles, not page API contracts. They become invalid
 when the page navigates or its structure changes; an action using a stale ref
 returns a short error telling pi to call `browser_snapshot` again.
 
-Proposed bounds:
+Context-aware bounds:
 
-- at most 200 interactive elements;
-- at most 12 KiB of visible text;
-- at most 50 console entries and 50 network entries;
-- at most approximately 300 KiB per screenshot payload.
+- compact snapshots (the default) contain at most 80 interactive elements and
+  4 KiB of visible text;
+- full snapshots contain at most 200 interactive elements and 12 KiB of visible
+  text;
+- console history retains at most 50 warning/error entries, while a delta read
+  returns at most 20 entries;
+- screenshots remain at most approximately 300 KiB, with context mode capped at
+  1280×720 and viewport mode preserving the current viewport dimensions.
+
+Snapshots return an opaque `revision`. Passing it as `since` returns the
+current metadata with `unchanged: true` and empty text/elements when nothing
+model-visible changed. Omitting `since` always requests a complete bounded
+view. Console results return a `cursor`; default delta reads advance the
+manager cursor, while `mode: "full"` recovers the retained window. An expired
+cursor sets `dropped: true` instead of silently losing evidence.
 
 These limits protect the RPC JSONL stream, SSE queue, and model context.
+
+### 6.1 Console delta contract
+
+`browser_console` defaults to `mode: "delta"`. Its result includes a cursor and
+sequence-numbered entries:
+
+```json
+{
+  "schema": "pi-webui.browser-console/v1",
+  "url": "http://127.0.0.1:4317",
+  "entries": [{ "sequence": 12, "level": "error", "text": "..." }],
+  "cursor": 12,
+  "dropped": false,
+  "mode": "delta"
+}
+```
+
+Pass `since` to resume from an explicit cursor, or use `mode: "full"` to
+recover the newest retained entries. An expired cursor sets `dropped: true`.
 
 ## 7. CDP domains
 
@@ -222,8 +255,14 @@ insufficient.
 
 ## 8. Screenshot behavior
 
-`browser_screenshot` should use `Page.captureScreenshot` with a bounded JPEG
-quality and viewport size. It returns:
+`browser_screenshot` uses `Page.captureScreenshot` with bounded JPEG quality
+and an output size independent of the browser viewport. `size: "context"` is
+the default and caps the image at 1280×720; `size: "viewport"` preserves the
+current viewport dimensions without resizing the browser. Both modes preserve
+aspect ratio, never upscale, and remain within the 300 KiB byte cap. Quality is
+bounded to 40–80 and is reduced when necessary.
+
+It returns:
 
 ```js
 {
@@ -231,7 +270,11 @@ quality and viewport size. It returns:
     { type: "text", text: "Screenshot of <url>" },
     { type: "image", data: "...base64...", mimeType: "image/jpeg" }
   ],
-  details: { url, width, height, bytes }
+  details: {
+    url, width, height,
+    viewport: { width, height },
+    bytes, imageIncluded, scale, size
+  }
 }
 ```
 

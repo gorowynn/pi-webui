@@ -18,6 +18,8 @@ const {
 	validateCdpEndpoint,
 } = require("../extensions/pi_minimal_webui/browser-runtime.js");
 const {
+	COMPACT_MAX_ELEMENTS,
+	COMPACT_MAX_PAGE_TEXT_BYTES,
 	MAX_ELEMENTS,
 	MAX_PAGE_TEXT_BYTES,
 	SNAPSHOT_SCHEMA,
@@ -27,6 +29,7 @@ const {
 } = require("../extensions/pi_minimal_webui/browser-snapshot.js");
 const {
 	CONSOLE_SCHEMA,
+	MAX_DELTA_ENTRIES,
 	MAX_ENTRIES,
 	MAX_TEXT_BYTES,
 	ConsoleCollector,
@@ -215,6 +218,18 @@ if (process.platform === "win32") {
 	]);
 	assert.equal(browserSource.includes("browser_evaluate"), false);
 	assert.match(browserSource, /Emulation\.setDeviceMetricsOverride/);
+	assert.match(browserSource, /Page\.navigatedWithinDocument/);
+	assert.match(browserSource, /unsubscribeSameDocumentNavigation/);
+	assert.match(browserSource, /removeAbortListener/);
+	assert.match(browserSource, /safe\.code === "timeout"/);
+	assert.match(browserSource, /SNAPSHOT_PARAMS/);
+	assert.match(browserSource, /CONSOLE_PARAMS/);
+	assert.match(browserSource, /SCREENSHOT_PARAMS/);
+	assert.match(
+		browserSource,
+		/mode: params\?\.mode === "full" \? "full" : "compact"/,
+	);
+	assert.match(browserSource, /Prefer the compact browser_snapshot first/);
 	assert.match(browserSource, /session_shutdown/);
 	assert.match(browserSource, /untrusted data/);
 	assert.match(indexSource, /import browser from "\.\/browser\.js"/);
@@ -320,6 +335,35 @@ if (process.platform === "win32") {
 	);
 	assert.deepEqual(empty.elements, []);
 	ok("ref generations and empty snapshots are fail-closed");
+
+	const compactStore = new SnapshotRefStore();
+	const compact = normalizeSnapshot(raw, compactStore, { mode: "compact" });
+	assert.equal(compact.mode, "compact");
+	assert.equal(compact.elements.length, COMPACT_MAX_ELEMENTS);
+	assert.ok(
+		Buffer.byteLength(compact.pageText, "utf8") <= COMPACT_MAX_PAGE_TEXT_BYTES,
+	);
+	assert.equal(compact.unchanged, false);
+	const unchanged = normalizeSnapshot(raw, compactStore, {
+		mode: "compact",
+		since: compact.revision,
+	});
+	assert.equal(unchanged.unchanged, true);
+	assert.equal(unchanged.pageText, "");
+	assert.deepEqual(unchanged.elements, []);
+	assert.equal(unchanged.revision, compact.revision);
+	const changedContent = normalizeSnapshot(
+		{ ...raw, pageText: "changed" },
+		compactStore,
+		{ mode: "compact" },
+	);
+	assert.notEqual(changedContent.revision, compact.revision);
+	assert.equal(
+		normalizeSnapshot(raw, new SnapshotRefStore(), { mode: "full" }).elements
+			.length,
+		MAX_ELEMENTS,
+	);
+	ok("snapshot compact mode, revisions, and unchanged responses");
 	assert.match(SNAPSHOT_SCRIPT, /querySelectorAll/);
 	assert.equal(/document\\.(eval|execScript)/.test(SNAPSHOT_SCRIPT), false);
 	ok("snapshot inspection is a fixed DOM helper, not arbitrary evaluation");
@@ -363,7 +407,9 @@ if (process.platform === "win32") {
 			type: "error",
 			text: `error-${i}`,
 		});
-	const result = collector.result("http://127.0.0.1:4317/");
+	const result = collector.result("http://127.0.0.1:4317/", {
+		mode: "full",
+	});
 	assert.equal(result.schema, CONSOLE_SCHEMA);
 	assert.equal(result.entries.length, MAX_ENTRIES);
 	assert.equal(result.entries.at(-1).text, "error-59");
@@ -376,6 +422,32 @@ if (process.platform === "win32") {
 		false,
 	);
 	ok("console warnings/errors are normalized and capped at 50 entries");
+
+	const deltaCollector = new ConsoleCollector();
+	for (let i = 0; i < MAX_DELTA_ENTRIES + 2; i++)
+		deltaCollector.push("Runtime.consoleAPICalled", {
+			type: "error",
+			text: `delta-${i}`,
+		});
+	const firstDelta = deltaCollector.result("");
+	assert.equal(firstDelta.mode, "delta");
+	assert.equal(firstDelta.entries.length, MAX_DELTA_ENTRIES);
+	assert.equal(firstDelta.entries[0].sequence, 1);
+	const secondDelta = deltaCollector.result("");
+	assert.equal(secondDelta.entries.length, 2);
+	assert.equal(secondDelta.entries[0].sequence, MAX_DELTA_ENTRIES + 1);
+	const fullAfterDelta = deltaCollector.result("", { mode: "full" });
+	assert.equal(fullAfterDelta.entries.length, MAX_DELTA_ENTRIES + 2);
+	const dropped = new ConsoleCollector();
+	for (let i = 0; i < MAX_ENTRIES + 1; i++)
+		dropped.push("Runtime.consoleAPICalled", {
+			type: "error",
+			text: `retained-${i}`,
+		});
+	const droppedResult = dropped.result("", { since: 0 });
+	assert.equal(droppedResult.dropped, true);
+	assert.equal(droppedResult.entries.length, MAX_DELTA_ENTRIES);
+	ok("console cursors, deltas, full recovery, and dropped windows");
 
 	const subscriptions = new Map();
 	const session = {
@@ -418,6 +490,10 @@ if (process.platform === "win32") {
 	assert.equal(calls[0].method, "Page.captureScreenshot");
 	assert.equal(calls[0].params.format, "jpeg");
 	assert.equal(calls[0].params.captureBeyondViewport, false);
+	assert.ok(calls[0].params.clip.scale < 1);
+	assert.ok(supported.details.width <= 1280);
+	assert.ok(supported.details.height <= 720);
+	assert.deepEqual(supported.details.viewport, { width: 1440, height: 900 });
 	assert.equal(supported.content[1].type, "image");
 	assert.equal(supported.content[1].mimeType, "image/jpeg");
 	assert.equal(supported.details.imageIncluded, true);
@@ -441,10 +517,29 @@ if (process.platform === "win32") {
 			viewport: { width: 99999, height: 99999 },
 		},
 	);
-	assert.deepEqual(qualityCalls, [70, 60, 50, 40]);
-	assert.equal(resized.details.width, 4096);
-	assert.equal(resized.details.height, 4096);
-	ok("oversized captures lower quality and clamp viewport metadata");
+	assert.deepEqual(qualityCalls, [60, 50, 40]);
+	assert.equal(resized.details.width, 720);
+	assert.equal(resized.details.height, 720);
+	assert.deepEqual(resized.details.viewport, { width: 4096, height: 4096 });
+	ok("context screenshots scale independently from viewport metadata");
+
+	const viewportMode = await captureScreenshot(
+		{
+			command: async (_method, params) => {
+				assert.equal(params.clip, undefined);
+				return { data: smallJpeg };
+			},
+		},
+		{
+			imageSupported: true,
+			size: "viewport",
+			url: "http://localhost:4317",
+			viewport: { width: 1920, height: 1080 },
+		},
+	);
+	assert.equal(viewportMode.details.width, 1920);
+	assert.equal(viewportMode.details.height, 1080);
+	ok("viewport screenshots retain the current viewport dimensions");
 
 	const textOnly = await captureScreenshot(
 		{

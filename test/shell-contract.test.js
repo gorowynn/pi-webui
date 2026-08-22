@@ -80,8 +80,40 @@ check(
 	"T3",
 	"A-3.2",
 	"FR-2",
-	"index.html #ws-open carries aria-expanded",
-	/id="ws-open"[\s\S]{0,300}aria-expanded=/.test(html),
+	"index.html #ws-rail launcher buttons carry aria-expanded",
+	/id="ws-rail-sessions"[\s\S]{0,300}aria-expanded=/.test(html) &&
+		/id="ws-rail-workspaces"[\s\S]{0,300}aria-expanded=/.test(html),
+);
+check(
+	"T3",
+	"A-3.5",
+	"FR-2",
+	"app.js ws-rail buttons own one view each (click-again on the active view closes)",
+	/wsRailFocus = b;[\s\S]{0,260}collapseWsbar\(\)/.test(app) &&
+		/expandWsbar\(v\)/.test(app),
+);
+check(
+	"T3",
+	"A-3.6",
+	"FR-2",
+	"both rails share one-line labels and full accessible names",
+	/\.rail-strip \.rt-lbl\s*\{[\s\S]{0,300}white-space:\s*nowrap[\s\S]{0,80}text-overflow:\s*ellipsis/.test(
+		css,
+	) &&
+		/aria-label="workspaces"/.test(html) &&
+		/aria-label="sessions"/.test(html),
+);
+check(
+	"T3",
+	"A-3.7",
+	"FR-2",
+	"one wsbar view at a time (body[data-ws-view] hides the other section); the ws-collapse button is gone",
+	/body\[data-ws-view="workspaces"\] #ws-sessions-sec[\s\S]{0,120}display:\s*none/.test(
+		css,
+	) &&
+		/body\[data-ws-view="sessions"\] #ws-workspaces-sec/.test(css) &&
+		!/ws-collapse/.test(html) &&
+		!/\.ws-x /.test(css),
 );
 check(
 	"T3",
@@ -94,8 +126,10 @@ check(
 	"T3",
 	"A-3.4",
 	"FR-2",
-	"style.css has a drawer translateX(-100%) rule for #wsbar",
-	/#wsbar[\s\S]{0,200}translateX\(-100%\)/.test(css),
+	"style.css has a drawer off-canvas translateX rule for #wsbar",
+	/#wsbar[\s\S]{0,200}translateX\(calc\(-100% - var\(--rail-strip\)\)\)/.test(
+		css,
+	),
 );
 check(
 	"T3",

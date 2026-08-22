@@ -185,7 +185,6 @@ function hasAccessibleName(src, info) {
 
 const ICON_BUTTONS = [
 	"modal-x",
-	"ws-x",
 	"ws-mini",
 	"set-x",
 	"tools-close",
@@ -466,14 +465,13 @@ assert.ok(
 
 const SIZE_RULES = [
 	["modal-x", "width: 24px"],
-	["ws-x", "width: 24px"],
 	["ws-mini", "min-height: 24px"],
 	["set-x", "min-width: 24px"],
 	["tools-close", "min-width: 24px"],
 	["toast-x", "min-width: 24px"],
 	["um-refresh", "min-height: 24px"],
 	["imgthumb-x", "min-width: 24px"],
-	["ws-open", "width: 24px"],
+	["rail-tab", "accent-soft"],
 	["sx-conflict-btn", "min-height: 24px"],
 	["sx-mode-btn", "min-height: 24px"],
 	["sx-ctx-btn", "min-width: 24px"],
@@ -494,10 +492,65 @@ assert.ok(
 	"rail-resize has a 24px hit area",
 );
 assert.ok(
-	css.includes(
-		"padding-left: 24px; /* a11y FR-11: reserves the resize handle's hit zone */",
-	),
-	"the rail's left padding reserves the handle's hit zone",
+	css.includes("padding-left: 12px;"),
+	"the rail keeps symmetric padding so tabs center in the strip (the 24px resize hit zone overlays it)",
+);
+
+// ---- Tool Activity tool identity (tool-activity-tool-names FR-1/6..10) -------
+
+assert.ok(
+	app.includes('<span class="tool-group-tools"></span>'),
+	"tool group header has a distinct tool-name region",
+);
+assert.ok(
+	app.includes("toolNames: []"),
+	"tool group records ordered tool names",
+);
+assert.ok(
+	app.includes("group.toolNames.push(name)"),
+	"each joining tool call records its name before refresh",
+);
+assert.ok(
+	app.includes("toolPresent.toolUsageSummary(group.toolNames)"),
+	"tool group renders names through the pure formatter",
+);
+assert.ok(
+	app.includes("group.meta.textContent = toolPresent.toolGroupSummary("),
+	"existing status metadata stays on the stable summary path",
+);
+assert.ok(
+	!/toolNames\.(?:pop|shift|splice)/.test(app),
+	"settling calls cannot remove or reorder tool identities",
+);
+assert.equal(
+	(app.match(/toolBlock\(/g) || []).length,
+	3,
+	"live and restored tool calls share toolBlock",
+);
+assert.ok(
+	app.includes('transcript.dataset.view !== "detailed"') &&
+		app.includes("if (group.errors) group.fold.open = true"),
+	"density and error-open behavior remains intact",
+);
+assert.ok(
+	app.includes("group.head.setAttribute(") && app.includes('"aria-label",'),
+	"tool disclosure header exposes a complete activity description",
+);
+
+const toolNamesCss = css.match(/\.tool-group-tools\s*\{([^}]*)\}/)?.[1] || "";
+assert.match(toolNamesCss, /min-width:\s*0/, "tool names may shrink");
+assert.match(toolNamesCss, /overflow:\s*hidden/, "tool names are bounded");
+assert.match(
+	toolNamesCss,
+	/text-overflow:\s*ellipsis/,
+	"long tool names use ellipsis",
+);
+assert.match(toolNamesCss, /white-space:\s*nowrap/, "tool names stay one line");
+const toolMetaCss = css.match(/\.tool-group-meta\s*\{([^}]*)\}/)?.[1] || "";
+assert.match(toolMetaCss, /flex:\s*0 0 auto/, "status metadata cannot shrink");
+assert.ok(
+	app.includes("group.tools.title = tools"),
+	"full tool names have native pointer disclosure",
 );
 
 console.log("a11y-contract.test.js — FR-4 + helpers passed");

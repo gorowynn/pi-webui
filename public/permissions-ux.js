@@ -78,7 +78,8 @@
 			"sensitivePaths",
 			"grants",
 		]);
-		if (META.has(t)) return { ok: false, error: `'${t}' is a config key, not a tool` };
+		if (META.has(t))
+			return { ok: false, error: `'${t}' is a config key, not a tool` };
 		const eff = String(effect || "").trim();
 		if (!["allow", "ask", "deny"].includes(eff))
 			return { ok: false, error: "effect must be allow|ask|deny" };
@@ -187,6 +188,72 @@
 		return { confirm: false, value: next };
 	}
 
+	/** ui-density-navigation FR-33..37: prioritized view projection over the
+	 *  layer tree — editable user-layer rules first, inherited (floor/workspace)
+	 *  rules grouped by tool behind a collapsed disclosure; the filter matches
+	 *  tool / action / layer / selector case-insensitively and never mutates
+	 *  anything (FR-59). Pending/security counts ride along independent of the
+	 *  inherited disclosure (FR-40). */
+	function permView(tree, opts) {
+		const o = opts || {};
+		const filter = String(o.filter || "")
+			.trim()
+			.toLowerCase();
+		const matches = (r, tool) =>
+			!filter ||
+			tool.toLowerCase().includes(filter) ||
+			String(r.action).includes(filter) ||
+			r.layers.join(" ").includes(filter) ||
+			String(r.pattern).toLowerCase().includes(filter);
+		const userRules = [];
+		const inheritedByTool = new Map();
+		for (const t of (tree && tree.tools) || []) {
+			for (const r of t.rules) {
+				if (!matches(r, t.tool)) continue;
+				const editable = r.layers[0] === "user";
+				const row = {
+					tool: t.tool,
+					pattern: r.pattern,
+					action: r.action,
+					layers: r.layers,
+					editable,
+				};
+				if (editable) userRules.push(row);
+				else {
+					if (!inheritedByTool.has(t.tool))
+						inheritedByTool.set(t.tool, { tool: t.tool, rules: [] });
+					inheritedByTool.get(t.tool).rules.push(row);
+				}
+			}
+		}
+		return {
+			userRules,
+			inheritedGroups: [...inheritedByTool.values()],
+			inheritedExpanded: Boolean(o.inheritedExpanded),
+			pendingCount: o.pendingCount || 0,
+			counts: {
+				user: userRules.length,
+				inherited: [...inheritedByTool.values()].reduce(
+					(n, g) => n + g.rules.length,
+					0,
+				),
+			},
+			filter,
+		};
+	}
+
+	/** FR-37: bounded human explanation for known common selector shapes; the
+	 *  raw selector always stays authoritative next to it. */
+	function selectorExplain(pattern) {
+		const p = String(pattern || "");
+		if (p === "(tool default)") return "every call of this tool";
+		if (p === "*") return "any selector";
+		if (p.startsWith("re:")) return "regex selector";
+		if (p.includes("**")) return "path glob selector";
+		if (/^[./~\\]/.test(p) || /^[a-z]:/i.test(p)) return "path selector";
+		return "";
+	}
+
 	const api = {
 		buildLayerTree,
 		applyRule,
@@ -195,6 +262,8 @@
 		redactSelector,
 		explainView,
 		modeState,
+		permView,
+		selectorExplain,
 	};
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
 	if (typeof window !== "undefined") window.permissionsUx = api;

@@ -161,21 +161,25 @@
 		</header>
 
 		<aside id="wsbar" aria-label="workspaces and sessions" tabindex="-1">
-			<button
-				class="ws-x"
-				id="ws-collapse"
-				type="button"
-				title="collapse sidebar"
-				aria-label="collapse sidebar"
-			>
-				≪
-			</button>
 			<section
 				class="ws-sec"
 				id="ws-workspaces-sec"
 				aria-labelledby="ws-workspaces-title"
 			>
-				<h4 class="ws-h" id="ws-workspaces-title">workspaces</h4>
+				<div class="ws-sh">
+					<h4 class="ws-h" id="ws-workspaces-title">workspaces</h4>
+					<button
+						class="ws-mini"
+						id="ws-toggle"
+						type="button"
+						aria-expanded="false"
+						aria-controls="ws-workspaces"
+						aria-label="show all workspaces"
+						title="show all workspaces"
+					>
+						⋯
+					</button>
+				</div>
 				<div class="ws-list" id="ws-workspaces"></div>
 			</section>
 			<section
@@ -195,6 +199,30 @@
 						＋
 					</button>
 				</div>
+				<div class="ws-search">
+					<input
+						id="ws-search"
+						type="search"
+						placeholder="filter…"
+						aria-label="filter sessions"
+						autocomplete="off"
+					/>
+					<button
+						class="ws-mini"
+						id="ws-search-clear"
+						type="button"
+						title="clear session filter"
+						aria-label="clear session filter"
+						hidden
+					>
+						×
+					</button>
+				</div>
+				<div
+					class="ws-search-count"
+					id="ws-search-count"
+					aria-live="polite"
+				></div>
 				<div class="ws-list" id="ws-sessions"></div>
 			</section>
 		</aside>
@@ -204,21 +232,41 @@
 			aria-label="close workspace sidebar"
 			tabindex="-1"
 		></button>
-		<button
-			id="ws-open"
-			type="button"
-			title="show workspaces"
-			aria-label="show workspaces"
-			aria-expanded="false"
-			aria-controls="wsbar"
-			hidden
+		<nav
+			class="rail-strip"
+			id="ws-rail"
+			aria-label="workspaces and sessions"
 		>
-			≫
-		</button>
+			<button
+				class="rail-tab ws-rail-btn"
+				id="ws-rail-workspaces"
+				type="button"
+				title="workspaces"
+				aria-label="workspaces"
+				aria-controls="ws-workspaces-sec"
+				aria-expanded="false"
+			>
+				<span class="rt-ic" aria-hidden="true">⌂</span>
+				<span class="rt-lbl">Work</span>
+			</button>
+			<button
+				class="rail-tab ws-rail-btn"
+				id="ws-rail-sessions"
+				type="button"
+				title="sessions"
+				aria-label="sessions"
+				aria-controls="ws-sessions-sec"
+				aria-expanded="false"
+			>
+				<span class="rt-ic" aria-hidden="true">≣</span>
+				<span class="rt-lbl">Sess</span>
+				<span class="rt-badge" id="ws-rail-count" hidden></span>
+			</button>
+		</nav>
 
 		<aside id="toolsbar" aria-hidden="true" aria-label="workspace tools">
 			<nav
-				class="tools-rail"
+				class="rail-strip tools-rail"
 				id="tools-rail"
 				role="tablist"
 				aria-orientation="vertical"
@@ -432,6 +480,13 @@
 						</button>
 					</div>
 					<datalist id="perm-tools"></datalist>
+					<input
+						id="perm-filter"
+						type="search"
+						placeholder="filter rules…"
+						aria-label="filter rules"
+						autocomplete="off"
+					/>
 					<div id="perm-layers" class="perm-layers"></div>
 					<div id="perm-diags" class="perm-diags" hidden></div>
 				</section>
@@ -458,6 +513,7 @@
 			<div class="perm-head">
 				<h2>subagent fleet</h2>
 				<div class="fl-steer" id="fl-steer">
+					<span id="fl-steer-label" class="fl-steer-label"></span>
 					<input
 						id="fl-steer-input"
 						class="fl-steer-input"
@@ -478,6 +534,24 @@
 			</div>
 			<div class="perm-body">
 				<section class="perm-sec">
+					<div class="fl-filters">
+						<select
+							id="fleet-status"
+							aria-label="filter runs by status"
+						>
+							<option value="all">all statuses</option>
+							<option value="active">active</option>
+							<option value="failed">failed</option>
+							<option value="completed">completed</option>
+						</select>
+						<input
+							id="fleet-filter"
+							type="search"
+							placeholder="filter runs…"
+							aria-label="filter runs"
+							autocomplete="off"
+						/>
+					</div>
 					<div id="fleet-list"></div>
 				</section>
 			</div>
@@ -559,12 +633,6 @@
 					</button>
 					<button id="send" class="primary">Send</button>
 					<button id="stop" disabled>Stop</button>
-					<button
-						id="compact"
-						title="compact context (summarize to free space)"
-					>
-						⇲ Compact
-					</button>
 					<details class="bar-ovf" id="bar-ovf" open>
 						<summary
 							aria-label="more composer actions"
@@ -573,6 +641,12 @@
 							⋯
 						</summary>
 						<span class="bar-ovf-items">
+							<button
+								id="compact"
+								title="compact context (summarize to free space)"
+							>
+								⇲ Compact
+							</button>
 							<select
 								id="mode"
 								title="how to deliver while streaming"
@@ -633,6 +707,7 @@
 		<script src="permissions-ux.js"></script>
 		<script src="git-review.js"></script>
 		<script src="subagents-ux.js"></script>
+		<script src="sidebar-ux.js"></script>
 		<script src="a11y-contrast.js"></script>
 		<script src="rail.js"></script>
 		<script src="app.js"></script>

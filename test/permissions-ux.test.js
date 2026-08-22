@@ -9,6 +9,8 @@ const {
 	redactSelector,
 	explainView,
 	modeState,
+	permView,
+	selectorExplain,
 } = require("../public/permissions-ux.js");
 
 let passed = 0;
@@ -54,9 +56,9 @@ const ok = (name) => {
 	const def = { read: { ".env": "ask" } };
 	const usr = { read: { ".env": "deny" } };
 	const { tools } = buildLayerTree(def, usr, {});
-	const env = tools.find((t) => t.tool === "read").rules.find(
-		(r) => r.pattern === ".env",
-	);
+	const env = tools
+		.find((t) => t.tool === "read")
+		.rules.find((r) => r.pattern === ".env");
 	assert.equal(env.action, "deny", "user override beats the floor's action");
 	assert.deepEqual(
 		env.layers,
@@ -227,6 +229,67 @@ const ok = (name) => {
 	ok("modeState: yolo confirm-gated, others pass through (# FR-32b)");
 }
 
+// ---- ui-density-navigation — prioritized view projection (FR-33..37) -------------
+
+{
+	const tree = buildLayerTree(
+		{ bash: { "re:^npm test": "allow" }, read: "allow" },
+		{ bash: { "re:^npm publish": "deny" }, write: { "*": "ask" } },
+		{},
+		[],
+	);
+	const view = permView(tree, {});
+	assert.equal(view.counts.user, 2, "user-layer rules project as editable");
+	assert.equal(view.counts.inherited, 2, "floor rules project as inherited");
+	assert.ok(
+		view.userRules.every((r) => r.editable && r.layers[0] === "user"),
+		"editable rows carry user provenance (FR-35)",
+	);
+	assert.deepEqual(
+		view.inheritedGroups.map((g) => g.tool),
+		["bash", "read"],
+		"inherited rules group by tool (FR-34)",
+	);
+	assert.equal(view.inheritedExpanded, false, "inherited starts collapsed");
+	assert.equal(view.pendingCount, 0);
+
+	const filtered = permView(tree, { filter: "PUBLISH" });
+	assert.equal(filtered.counts.user, 1, "filter matches selector text (FR-36)");
+	assert.equal(filtered.counts.inherited, 0);
+	const byAction = permView(tree, { filter: "deny" });
+	assert.equal(byAction.counts.user, 1, "filter matches action");
+	const byLayer = permView(tree, { filter: "default" });
+	assert.equal(byLayer.counts.inherited, 2, "filter matches layer");
+	const none = permView(tree, { filter: "no-such-thing" });
+	assert.equal(
+		none.counts.user + none.counts.inherited,
+		0,
+		"no-match is explicit",
+	);
+
+	const pending = permView(tree, { filter: "no-such-thing", pendingCount: 2 });
+	assert.equal(
+		pending.pendingCount,
+		2,
+		"pending decisions ride along regardless of filter/collapse (FR-40)",
+	);
+
+	assert.equal(selectorExplain("re:^x"), "regex selector");
+	assert.equal(selectorExplain("(tool default)"), "every call of this tool");
+	assert.equal(selectorExplain("**/src/**"), "path glob selector");
+	assert.equal(selectorExplain("C:\\Users\\x"), "path selector");
+	assert.equal(selectorExplain(""), "", "unknown shapes get no explanation");
+
+	const snapshot = JSON.stringify(tree);
+	permView(tree, { filter: "x" });
+	assert.equal(
+		JSON.stringify(tree),
+		snapshot,
+		"projection never mutates (FR-59)",
+	);
+	ok("permView + selectorExplain: priority, grouping, filter, provenance");
+}
+
 console.log(`\npermissions-ux.test.js — C10 helpers: ${passed} passed`);
 
 // ---- C10 — page wiring (source audit of app.js + index.html) -------------------
@@ -300,6 +363,38 @@ const html = fs.readFileSync(path.join(ROOT, "public", "index.html"), "utf8");
 	ok(
 		"grants panel + mode select: numbered revoke, clear-all, PUT revision, yolo command (# FR-32/17)",
 	);
+}
+
+// ---- ui-density-navigation — prioritized page integration (FR-33..37) ---------
+
+{
+	assert.match(
+		html,
+		/id="perm-filter"[\s\S]{0,200}aria-label="filter rules"/,
+		"labelled filter input above the rule tree",
+	);
+	assert.match(
+		app,
+		/pu\.permView\(/,
+		"page renders through the pure projection",
+	);
+	assert.match(
+		app,
+		/inherited policy/,
+		"inherited rules sit behind a labelled disclosure (FR-34)",
+	);
+	assert.match(app, /no matching rules/, "filter no-match is explicit (FR-39)");
+	assert.match(
+		app,
+		/pu\.selectorExplain\(/,
+		"known selectors get a bounded explanation beside the raw text (FR-37)",
+	);
+	assert.match(
+		app,
+		/permFilterText/,
+		"filter is transient client state re-rendered from the cached tree",
+	);
+	ok("perm page: prioritized projection + disclosure + filter wired");
 }
 
 console.log(`\npermissions-ux.test.js — C10 total: ${passed} passed`);

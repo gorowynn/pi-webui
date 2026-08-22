@@ -166,6 +166,22 @@
 
 	// A compact, text-first turn summary keeps tool detail inspectable without
 	// making every result compete with the conversation.
+	function toolUsageSummary(names) {
+		var counts = new Map();
+		var order = [];
+		(Array.isArray(names) ? names : []).forEach((raw) => {
+			var name = typeof raw === "string" && raw.trim() ? raw : "tool";
+			if (!counts.has(name)) order.push(name);
+			counts.set(name, (counts.get(name) || 0) + 1);
+		});
+		return order
+			.map((name) => {
+				var count = counts.get(name);
+				return name + (count > 1 ? " ×" + count : "");
+			})
+			.join(", ");
+	}
+
 	function toolGroupSummary(count, running, errors, duration) {
 		count = Math.max(0, Number(count) || 0);
 		running = Math.max(0, Number(running) || 0);
@@ -514,6 +530,7 @@
 		contentKindFromPath: contentKindFromPath,
 		describeToolCall: describeToolCall,
 		toolCallDetail: toolCallDetail,
+		toolUsageSummary: toolUsageSummary,
 		toolGroupSummary: toolGroupSummary,
 		toolTextPreview: toolTextPreview,
 		renderTextPreview: renderTextPreview,

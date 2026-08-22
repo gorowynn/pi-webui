@@ -2,14 +2,21 @@
 // Zero-dep, dual-mode: window.rail in the browser (loaded before app.js),
 // require-able in Node for tests. NO DOM here — app.js owns rendering.
 //
-// FR-1: the widget table is FIXED — five entries, no runtime registration
+// FR-1: the widget table is FIXED — six entries, no runtime registration
 // (permissions is a dedicated launcher button, not a widget).
 // FR-4: rail state persists as {widget, open, width} in localStorage
 // "pi:rail"; a legacy "pi:sddbar" {open} migrates once (widget:"sdd").
 // FR-8: every panel open stamps a generation; responses issued under an
 // older generation are stale and must be ignored by the fetcher.
 ((root) => {
-	var WIDGET_IDS = Object.freeze(["sdd", "analysis", "git", "quotas", "todos"]);
+	var WIDGET_IDS = Object.freeze([
+		"sdd",
+		"analysis",
+		"git",
+		"quotas",
+		"todos",
+		"fleet",
+	]);
 
 	var LEGACY_KEY = "pi:sddbar";
 	var LEGACY_WIDTH_KEY = "pi:rail-width";
@@ -176,6 +183,16 @@
 	function approvalsBadge(pending) {
 		return pending > 0 ? { text: pending + " pending", tone: "err" } : NO_BADGE;
 	}
+	// fleet badge: any failed run outranks activity; stopping counts as active
+	// (it still needs watching until the tree is gone).
+	function fleetBadge(counts) {
+		var c = counts || {};
+		if (c.failed) return { text: c.failed + " failed", tone: "err" };
+		var act = (c.active || 0) + (c.stopping || 0);
+		if (act)
+			return { text: act + (act === 1 ? " run" : " runs"), tone: "warn" };
+		return NO_BADGE;
+	}
 	function quotaBadge(pct) {
 		if (typeof pct !== "number") return NO_BADGE;
 		if (pct >= 90) return { text: Math.round(pct) + "%", tone: "err" };
@@ -194,6 +211,7 @@
 		gitBadge: gitBadge,
 		todosBadge: todosBadge,
 		approvalsBadge: approvalsBadge,
+		fleetBadge: fleetBadge,
 		quotaBadge: quotaBadge,
 	};
 

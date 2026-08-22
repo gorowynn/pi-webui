@@ -6,7 +6,10 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { resizeStep } = require("../public/a11y-contrast.js");
-const app = fs.readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
+const app = fs.readFileSync(
+	path.join(__dirname, "..", "public", "app.js"),
+	"utf8",
+);
 
 // basic steps
 assert.equal(resizeStep(50, "ArrowLeft", 0, 100), 55, "ArrowLeft widens by 5");
@@ -81,6 +84,6 @@ assert.equal(statusTextForEvent(undefined), null);
 
 // C8 — only one drawer/sheet surface is active at narrow widths.
 assert.match(app, /railNarrow\(\)[\s\S]{0,160}collapseWsbar/);
-assert.match(app, /function expandWsbar\(\)[\s\S]*closeRail\(\)/);
+assert.match(app, /function expandWsbar\([^)]*\)[\s\S]*closeRail\(\)/);
 
 console.log("rail-resize.test.js — all assertions passed");

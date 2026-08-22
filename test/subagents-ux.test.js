@@ -278,6 +278,107 @@ ok(
 	);
 }
 
+// ---- ui-density-navigation: prioritized fleet projection (FR-41..47/49) ----
+
+{
+	const runs = [
+		{ id: "old-done", state: "complete", startedAt: 1 },
+		{ id: "new-done", state: "complete", startedAt: 5 },
+		{ id: "fail", state: "failed", startedAt: 3, error: "boom\nstack" },
+		{ id: "run", state: "running", startedAt: 4 },
+		{ id: "stop", state: "running", startedAt: 2, stopRequested: true },
+	];
+	const v = ux.fleetView(runs, {});
+	ok(
+		"priority order: stopping → active → failed, history newest-first",
+		JSON.stringify(v.rows.map((r) => r.id)) === '["stop","run","fail"]' &&
+			JSON.stringify(v.history.map((r) => r.id)) === '["new-done","old-done"]',
+	);
+	ok(
+		"summary counts split active/stopping/failed/completed",
+		JSON.stringify(v.counts) ===
+			'{"active":1,"stopping":1,"failed":1,"completed":2}',
+	);
+	ok(
+		"history separated, disclosure starts collapsed",
+		v.history.length === 2 && v.historyExpanded === false,
+	);
+	ok(
+		"text filter matches case-insensitively",
+		ux.fleetView(runs, { textFilter: "FAIL" }).filteredCounts.failed === 1 &&
+			ux.fleetView(runs, { textFilter: "nope" }).rows.length === 0,
+	);
+	ok(
+		"status filter isolates groups",
+		ux.fleetView(runs, { statusFilter: "failed" }).rows.length === 1 &&
+			ux.fleetView(runs, { statusFilter: "active" }).rows.length === 2,
+	);
+	ok(
+		"steering reconciles: kept when active, cleared when gone",
+		ux.fleetView(runs, { selectedRunId: "run" }).steerableId === "run" &&
+			ux.fleetView(runs, { selectedRunId: "old-done" }).steerableId === null,
+	);
+	ok(
+		"single auto-target only when exactly one active",
+		ux.fleetView([runs[3]], {}).steerableId === "run" &&
+			ux.fleetView(runs, {}).steerableId === null,
+	);
+	ok("empty input is explicit", ux.fleetView([], {}).empty === true);
+	ok(
+		"stale detection via injected clock",
+		ux.fleetView(runs, { fetchedAt: 1000, now: 40000 }).stale === true &&
+			ux.fleetView(runs, { fetchedAt: 1000, now: 20000 }).stale === false,
+	);
+	ok(
+		"failure summary bounded to first line/160 chars",
+		ux.failureSummary(runs[2]) === "boom" &&
+			ux.failureSummary({ error: "x".repeat(300) }).length <= 165 &&
+			ux.failureSummary({}) === "",
+	);
+	const snap = JSON.stringify(runs);
+	ux.fleetView(runs, { textFilter: "x", statusFilter: "failed" });
+	ok("projection never mutates input (FR-59)", JSON.stringify(runs) === snap);
+}
+
+// ---- page wiring (source audit: app.js renders through the projection) ------
+
+{
+	const fs = require("node:fs");
+	const path = require("node:path");
+	const root = path.join(__dirname, "..");
+	const app = fs.readFileSync(path.join(root, "public", "app.js"), "utf8");
+	const html = fs.readFileSync(path.join(root, "public", "index.html"), "utf8");
+	ok(
+		"refreshFleet renders through sau.fleetView",
+		app.includes("sau.fleetView("),
+	);
+	// regression: a biome const-demotion of fleetBadgeCounts threw inside
+	// refreshFleet's swallowed catch — blank fleet list, "loading" forever
+	ok(
+		"fleetBadgeCounts stays let (assigned by the poll)",
+		/^let fleetBadgeCounts = null;/m.test(app),
+	);
+	ok(
+		"summary counts + history disclosure rendered",
+		app.includes("fl-history") && /fl-count/.test(app),
+	);
+	ok(
+		"status + text filter controls exist and are labelled",
+		/id="fleet-status"[\s\S]{0,300}aria-label="filter runs by status"/.test(
+			html,
+		) && /id="fleet-filter"[\s\S]{0,300}aria-label="filter runs"/.test(html),
+	);
+	ok(
+		"steer bar names its target and disables without one",
+		app.includes("fl-steer-label") &&
+			/send\.disabled = !view\.steerableId/.test(app),
+	);
+	ok(
+		"failure summary bounded in the page",
+		app.includes("sau.failureSummary("),
+	);
+}
+
 console.log(
 	`subagents-ux: ${pass} checks${process.exitCode ? " (FAILED)" : ""}`,
 );

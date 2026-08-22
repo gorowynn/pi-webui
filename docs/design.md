@@ -170,29 +170,56 @@ second typeface.
 - **Headings** — accent-colored (`primary`), sized via an `em` scale (`##`), preceded by markdown hashes.
 - **Inline code** — subtle blue-gray chip (`#6E7681` @ ~20%) + `primary-soft` text.
 
+### Density floors (ui-density-navigation)
+
+- Ordinary UI text ≥ 13px (`--ui-text-size`), metadata ≥ 11px
+  (`--ui-meta-size`), nothing readable below 10px.
+- Interaction targets ≥ 32px (`--target-pointer`); ≥ 44px
+  (`--target-touch`) where hover is unavailable. Rail labels/badges sit at
+  10px — complete words, ellipsis only as an overflow guard.
+- Assistant turns carry a quiet **lowercase muted marker**, never a loud
+  accent label — prose is the strongest surface in a turn.
+- The workspace sidebar starts compact (active row + ⋯ disclosure), sessions
+  get a transient filter + sticky controls, Permissions orders posture →
+  your-rules → collapsed inherited policy, Fleet orders stopping → active →
+  failed with completed history behind a disclosure, and the composer keeps
+  posture/Send/Stop direct with every secondary action in the single ⋯
+  overflow (Compact included; ctx-hot flags the toggle at narrow).
+- Utility pages (Permissions/Fleet) widen to 1240px on ≥1440px displays; the
+  transcript reading cap does not move.
+
 ## 4. Layout (Layout & Spacing)
 
 - **Frame:** a thin full-width header with the brand, continuously visible
   **repo/model** context, connection state, and compact actions. Live secondary
   telemetry is centered in the remaining header width and fills it in priority
   order; only trailing non-fitting items move into the accessible `details`
-  popover. A left
-  **workspace/session sidebar**; the **transcript** center; and the **composer**
+  popover. A left **launcher rail** (compact strip with centered workspaces /
+  sessions buttons, session-count badge) opens the workspace/session sidebar in
+  a single-section view — each rail button owns its section (click-again on the
+  active one closes it); the **transcript** center; and the **composer**
   input at the bottom complete the shell. Addressable utility views such as
   `#permissions` reuse it and replace the center transcript/composer region with
   a bounded page, rather than opening a nested modal.
 - **Workspace/session sidebar:** workspace and session lists use separated
-  sections, clear active-row tint, compact metadata, and semantic labels. On
-  mid/narrow widths it remains the same keyboard-accessible drawer rather than
-  becoming a second navigation model.
+  sections, clear active-row tint, compact metadata, and semantic labels. Its
+  left launcher uses the same compact strip/tab system as the inspector rail;
+  only the short visible labels differ (`Work` / `Sess`, with full accessible
+  names). On mid/narrow widths it remains the same keyboard-accessible drawer
+  rather than becoming a second navigation model.
 - **Inspector rail:** the right workspace-tools rail is a **64px compact**
   strip with visible icon + text labels and readable status badges. Native hover
   titles and accessible names remain as a fallback; selected state is a soft
   background + accent icon with a quiet boundary, never a side stripe. The
   selected tab opens a roomier calm inset detail pane; on mid/narrow widths it
   becomes a contained bottom sheet with trapped focus and an Escape/close path
-  that restores the rail trigger. The Usage view is headed `TURN HISTORY`,
-  keeps the last 100 billed model turns, and overlays per-turn context usage.
+  that restores the rail trigger. The Usage view leads with four answer-first
+  headline stats (total cost · context · cache hit · failures), then threshold
+  notices, then `TURN HISTORY`: a bar chart over the last 20 billed model turns
+  (expandable to the cap of 100) with a persisted metric selector
+  (`cost | output | context`, `pi:an-metric`), a bar/context legend, and a
+  click-to-select per-turn readout with a Jump action. Rate telemetry lives
+  collapsed in a `PERFORMANCE` disclosure at the bottom.
 - **Conversation density:** the header control cycles **Focus → Balanced → Trace**;
   **Balanced** is the default. Focus hides successful tool work but keeps failures,
   Balanced collapses each turn's tool activity to a summary, and Trace exposes raw
@@ -239,9 +266,11 @@ jump pill / accent chips use `pill` (`999px`). `paperlike` softens `--r` to 6px.
 - **`.think`** (assistant reasoning) — `surface-think` inset panel, a `#21262D`
   border, a `done` (violet) label + spinner while streaming; mono body.
 - **Tool activity** — consecutive calls in an agent turn live in one native
-  `<details>` `.tool-group`, headed by `N tools · state · elapsed`. It has one
-  outer hairline; nested `.tool` rows are flat. Successful groups collapse in
-  Balanced, Trace opens them, and errors stay exposed.
+  `<details>` `.tool-group`, headed by an ordered, repeat-counted tool-name list
+  plus `N tools · state · elapsed`. The name list yields space and ellipsizes
+  before fixed status metadata while its full text remains accessible. It has
+  one outer hairline; nested `.tool` rows are flat. Successful groups collapse
+  in Balanced, Trace opens them, and errors stay exposed.
 - **`.tool` (inside tool activity)** — a full-width row for file mutations,
   carried by the status icon on the left (`●` running / `✓` done / `✗` error)
   and the tool-name color — **no left accent stripe**.

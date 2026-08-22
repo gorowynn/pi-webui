@@ -45,4 +45,34 @@ assert.match(app, /classList\.remove\("dragging"\)/);
 assert.match(css, /\.bar > button\s*\{[\s\S]*flex:\s*0 0 auto/);
 assert.match(css, /body\.w-narrow \.composer \.bar-ovf-items\s*\{/);
 
-console.log("18 passed");
+// ui-density-navigation FR-53..55: posture/Send/Stop stay direct; Compact +
+// Improve + Sessions + New live in the ONE labelled overflow; images stay
+// discoverable outside it; the ctx-hot nudge survives the move.
+const ovf =
+	footer.match(/<details class="bar-ovf"[\s\S]*?<\/details>/)?.[0] || "";
+for (const id of ["mode-chip", "send", "stop", "attach-images"]) {
+	assert.ok(
+		footer.includes(`id="${id}"`) && !ovf.includes(`id="${id}"`),
+		`${id} stays a direct composer control`,
+	);
+}
+for (const id of ["compact", "improve", "sessions", "new"]) {
+	assert.ok(ovf.includes(`id="${id}"`), `${id} lives in the overflow`);
+}
+assert.match(
+	css,
+	/body\.ctx-hot #compact\s*\{[\s\S]*?border-color:\s*var\(--danger\)/,
+	"ctx-hot styles Compact inside the popover",
+);
+assert.match(
+	css,
+	/body\.w-narrow\.ctx-hot \.composer \.bar-ovf > summary\s*\{[\s\S]*?border-color:\s*var\(--danger\)/,
+	"ctx-hot flags the overflow toggle itself at narrow",
+);
+assert.doesNotMatch(
+	css,
+	/body\.w-narrow #compact\s*\{[\s\S]*?display:\s*none/,
+	"Compact is never fully hidden (one action away, FR-54)",
+);
+
+console.log("31 passed");

@@ -163,6 +163,17 @@ keyword to the index in `AGENTS.md`.
     declared (`const uiCommands = []` lives in the command-palette section;
     `let noSwitch` in the left-sidebar section). When reordering sections in
     a reformat, grep top-level call sites vs. their declarations.
+    **Cousin bug — biome const-demotion (2026-08-22 fleet incident):** biome's
+    auto-fix demotes `let x = null` to `const x = null` when the assignment
+    lives far from the declaration; for module-scope state assigned later
+    (`fleetBadgeCounts`, also `anMetric`/`anShownAll`/`anSelected` during the
+    usage-tab work) the first poll throws `Assignment to constant variable` —
+    and when that assignment sits inside a swallowed catch (`refreshFleet`),
+    the surface just goes blank/stuck-loading forever with a clean console.
+    Rule: module-scope `let x = null` state assigned in a distant function
+    gets a source-contract test (`/^let x = /m`, see the fleetBadgeCounts
+    check in `test/subagents-ux.test.js`), and never let a silent `catch {}`
+    wrap render code — log it.
 20. **A new `public/*.js` feature module needs THREE things or it fails in the
     browser while Node tests pass:** (a) a `server.js` `STATIC` whitelist entry
     (missing → silent 404, no JS error — the "explain failed: …

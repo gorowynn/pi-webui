@@ -17,6 +17,14 @@ assert.match(header, /id="sb-inline"/);
 assert.match(header, /id="sb-overflow"/);
 assert.match(header, /data-sb-meta/);
 assert.match(css, /--rail-strip:\s*64px/);
+assert.match(
+	css,
+	/\.rail-tab\s*\{[\s\S]*height:\s*64px[\s\S]*min-height:\s*64px/,
+);
+assert.match(
+	css,
+	/body\.w-narrow \.rail-tab\s*\{[\s\S]*height:\s*40px[\s\S]*min-height:\s*40px/,
+);
 assert.doesNotMatch(css, /\.rail-tab\.sel::before/);
 assert.match(css, /\.rt-lbl\s*\{[\s\S]*clip:\s*rect\(0 0 0 0\)/);
 assert.match(css, /header \.statusbar\s*\{[\s\S]*justify-content:\s*center/);
@@ -51,7 +59,15 @@ assert.match(app, /sb\.repo\.title/);
 
 // C8 — drawer/sheet surfaces are mutually exclusive on narrow widths.
 assert.match(app, /railNarrow\(\)[\s\S]{0,160}collapseWsbar/);
-assert.match(app, /function expandWsbar\(\)[\s\S]*closeRail\(\)/);
+assert.match(app, /function expandWsbar\([^)]*\)[\s\S]*closeRail\(\)/);
 assert.match(css, /body\.w-mid\.rail-on\.rail-open #toolsbar/);
+assert.match(
+	css,
+	/body\.w-mid\.rail-on\.rail-open \.rail-tab\s*\{[\s\S]*calc\(var\(--rail-strip\) - 24px\)/,
+);
+assert.match(
+	css,
+	/body\.w-narrow\.rail-on\.rail-open \.rail-tab\s*\{[\s\S]*calc\(var\(--rail-strip\) - 16px\)/,
+);
 
-console.log("37 passed");
+console.log("41 passed");

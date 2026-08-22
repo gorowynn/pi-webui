@@ -6,6 +6,193 @@
 
 ## History
 
+### 2026-08-22 — feat(shell): centered right-rail tabs + left launcher rail for workspaces/sessions
+
+- Right workspace-tools rail: tabs sat flush against the screen edge (the
+  24px resize-hit-zone reserve ate the left half). Symmetric 12/12 padding
+  puts the icon at the strip's true center; the hit-zone overlay still
+  protects taps (only the outer 12px of each 64px tab overlaps).
+- New left launcher rail `#ws-rail` (mirrors the right strip): centered
+  `⌂ workspaces` / `≣ sessions` buttons with a total-session count badge;
+  clicking expands the full sidebar next to the strip (already open → scrolls
+  to + focuses that section). `#wsbar` now sits at `left: var(--rail-strip)`;
+  drawer mode (w-mid/w-narrow) slides in beside the strip instead of from
+  the viewport edge. The old `#ws-open` edge tab is gone — the rail IS the
+  launcher (aria-expanded sync via `setWsRailExpanded`; collapse returns
+  focus to the last-used rail button, FR-2.4 preserved).
+- server.js: `index.html` was cached once at boot — an HTML edit + refresh
+  served stale markup until restart (broke the documented zero-build dev
+  loop). Now mtime-cached (`pageHtml()`); verified fresh markup + ASK_MARKER
+  injection via a throwaway instance on a spare port.
+- Left rail now visually matches the right rail tab-for-tab: symmetric 12px
+  horizontal inset (buttons are the same 39px shape — labels stop wrapping),
+  the compact visible-label `.rt-lbl` rules extended from `#toolsbar`-only to
+  `#toolsbar, #ws-rail` (left labels were 1px-clipped invisible), and narrow
+  mode mirrors the right rail (8px inset, icon-only 48px strip).
+- Each rail button now owns its view: `body[data-ws-view]` shows ONLY that
+  sidebar section (CSS `display:none` for the other; persisted in
+  `pi:ws-view`, sessions default, no-switch IDE mode pinned to sessions).
+  Click-again on the active view closes the sidebar — the in-sidebar `≪`
+  collapse button (`#ws-collapse` / `.ws-x`) is removed; the rail tab IS the
+  toggle, exactly like the right rail. Rail buttons carry per-section
+  `aria-controls`.
+- Both rails now share `.rail-strip`, `--rail-strip`, tab insets, label/badge
+  typography, one-line label treatment, and `.rail-tab.sel` selection styling.
+  The left rail shows compact `Work` / `Sess` labels with full
+  `aria-label`/title text, matching the right rail's `Perms` abbreviation while
+  keeping the two tabs at the same heights as right-rail tabs.
+- Open mid/narrow tool-sheet tabs now use the same inset-derived inner widths
+  as the vertical launcher tabs instead of expanding to 64/48px when opened.
+- All rail tabs now reserve one 64px row (40px icon-only narrow row), so a
+  badge on the first right-rail tab cannot shift the left/right top rhythm.
+- Tests: shell-contract (launcher aria-expanded, drawer transform literal),
+  a11y-contract (rail padding + `.ws-rail-btn` open-state rule) updated;
+  full suite 53/53.
+
+### 2026-08-22 — fix(fleet): blank page + stuck rail "loading…" (biome const-demotion of fleetBadgeCounts)
+
+- Symptom: the `#fleet` page stayed empty (no chips/rows) and the rail Fleet
+  widget showed `loading…` forever; console clean; `/api/subagents` healthy.
+- Root cause: biome auto-fix had demoted `let fleetBadgeCounts = null` to
+  `const` (app.js:2402). The first poll hit `fleetBadgeCounts = next` in
+  `updateFleetBadge` → `TypeError: Assignment to constant variable`, thrown
+  BEFORE `setSafeHtml` — and `refreshFleet`'s catch swallowed it, so the list
+  never painted and nothing ever logged.
+- Fix: back to `let`; the silent `catch {}` now logs (`console.error(
+  "fleet refresh failed")` — transient fetch noise stays, render bugs can no
+  longer hide); regression guard added in `test/subagents-ux.test.js`
+  (`/^let fleetBadgeCounts = null;/m`).
+- Verified via a throwaway DOM-shim harness that evals `app.js` against the
+  live server: `refreshFleet` → fetch 200 → 6 runs → `#fleet-list` painted
+  4309 chars (`0 active · 6 done` + `completed history · 6` disclosure).
+  Full suite 53/53.
+- Gotcha recorded (GOTCHAS.md #19 cousin note): biome demotes far-assigned
+  `let x = null` to `const`; same failure mode was caught by hand three times
+  during the usage-tab work (`anMetric`/`anShownAll`/`anSelected`) — this one
+  had no test literal and shipped broken.
+
+### 2026-08-22 — feat(rail): usage panel restructure (answer-first, metric selector, readout, notices)
+
+- SDD run `.sdd/usage-tab`: the Usage rail widget led with 16 stat cards before
+  the chart; hierarchy inverted. Now: 4 headline cards (total cost · context ·
+  cache hit · failures) → threshold notices → TURN HISTORY → tokens → ranked
+  lists → collapsed `PERFORMANCE` details (12 telemetry cards; open state survives
+  wholesale re-render via `anTelOpen`).
+- Bar metric is user-selectable (`Cost | Output | Context`), persisted at
+  `pi:an-metric` with availability fallback (persisted → cost → output);
+  unavailable options render disabled with a reason. Context overlay + legend
+  entry hidden when metric = context (bars already show it).
+- Rail bar window defaults to the last 20 turns (cap 100 kept), `show all`
+  toggle; clicking a bar selects the turn → persistent readout
+  (`turn N · $cost · out tok · %ctx · tools`) with a Jump button;
+  click-again deselects; selection auto-clears when the turn leaves the window.
+- New pure helper `sessionNotices()` in `session-analysis.js`: context ≥ 80%,
+  tool-error rate ≥ 20% (≥ 5 calls), pending tools while idle → tone-mapped
+  notice rows.
+- Bug fixes: top-tools rows (and indexless failed rows) were clickable buttons
+  that did nothing (`data-mi="-1"`) — now static `.an-row` divs (own class, not
+  `.an-item-static` — the a11y hover-twin contract forbids hover rules on
+  non-focusable classes); tools output size was a character count formatted as
+  tokens (`formatTokens`) — now `formatChars` with an explicit chars unit.
+- Dead `an-card` modal CSS removed (the session-usage modal path was already
+  gone). Contract tests updated: `usage-telemetry-layout` (new literals),
+  `sidebar-layout` (legend replaces the "line = context" hint);
+  `session-analysis` +15 assertions. Full suite 53/53.
+
+### 2026-08-22 — fix(workspaces): removable dead roots (project dir deleted)
+
+- `POST /api/workspaces/remove` failed with "not a known workspace" exactly
+  when the project directory had been deleted from disk (GoroPi/STDiscordBot
+  case) — `isKnownWorkspacePath`'s `existsSync` half rejected the discovered
+  path even though removal only targets the session folder. The gate now takes
+  `requireExists` (default `true` — switch still demands an existing spawn
+  cwd) and the remove endpoint passes `false`; the active-workspace check
+  `existsSync`-guards its `realpathSync` (throws on a missing path).
+  `workspaces.test.js` gains a dead-root block (discovered via fallback, gate
+  passes with `requireExists:false`, undiscovered still rejected, archive
+  moves the folder). 53/53 files green.
+
+### 2026-08-22 — feat(ui): workspace archive (remove/restore/7-day purge) + Fleet rail-tick fix
+
+- Workspace removal is now real but recoverable: × on an inactive row
+  (confirm-gated) moves its session folder from `~/.pi/agent/sessions/` into
+  `~/.pi/agent/pi-webui-removed/` via `POST /api/workspaces/remove` (same
+  known-workspace security gate as switching; active workspace refused).
+  The sidebar shows a `removed · N · kept 7 days` disclosure with per-entry
+  ↩ restore (`POST /api/workspaces/restore`); the server purges entries older
+  than 7 days on startup and every workspaces read. Name-suffix timestamps
+  (digits-only) drive purge age so dotted encodings like `.pi` never parse as
+  dates; collision restores land under `--<name>-restored-<ts>--` and merge
+  back into discovery by realpath. The earlier browser-local hide
+  (`pi:ws-hidden`) was dropped in favor of the archive.
+- Fixed the Fleet rail widget showing "loading…" forever: the rail refresh
+  tick now routes through `fleetRenderRail` (git/quotas pattern) instead of
+  re-rendering the placeholder, and a failed fetch shows "fleet unavailable".
+- Verified end-to-end against a live server (remove → gone from discovery →
+  archived list → active refused → restore → back, archive empty);
+  `workspaces.test.js` archive suite + `rail.test.js` tick regression added.
+  53/53 files green.
+
+### 2026-08-22 — feat(ui): Fleet rail widget, workspace expansion fix, hideable workspaces
+
+- Fixed the workspace ⋯ toggle: `refreshWorkspaces` rendered only the
+  collapsed projection's rows, so expanding never revealed anything — now all
+  rows render and the `.ws-collapsed` class alone hides inactive ones (instant,
+  no refetch).
+- Inactive workspace rows carry a labelled × that hides them per browser
+  (`pi:ws-hidden` localStorage hint; the active workspace is never hidable)
+  with a `N hidden — show` restore line under the list.
+- Fleet joined the tools rail as the sixth fixed widget (`rail.js` frozen
+  6-list + pure `fleetBadge`: failed→err, active/stopping→warn): shared
+  `fleetBodyHtml`/`mountFleetRows` render page and panel, stop/log actions
+  work in both via a shared delegated handler, steering stays on the full
+  `#fleet` page (linked from the panel), badge fed by the page's 2s poll + a
+  60s background tick. Palette `subagent fleet` now opens the rail widget.
+- rail.test.js 70→75 checks; workspace-collapse/session suites extended;
+  53/53 files green.
+
+### 2026-08-22 — feat(ui): density + navigation overhaul across shell, sidebar, Permissions, Fleet, composer
+
+- Readability floor: 13px ordinary / 11px metadata tokens, 32px pointer +
+  44px hoverless interaction targets, rail labels/badges 9px→10px,
+  quiet lowercase assistant turn markers, transparent prose surface kept.
+- Left sidebar: workspace section starts compact (active row + labelled ⋯
+  disclosure; error/empty/no-active force expanded; resets after a switch),
+  sticky sessions heading + transient case-insensitive session filter with
+  count/clear, independent session-list scrolling (`public/sidebar-ux.js`,
+  new pure dual-mode module).
+- Permissions: `permView` projection renders your-rules first with inherited
+  floor/workspace rules grouped behind a collapsed `inherited policy`
+  disclosure + rule filter + bounded `selectorExplain` hints (raw stays
+  authoritative); revision-checked mutations untouched.
+- Fleet: `fleetView` projection (stopping→active→failed rows, completed history
+  behind a disclosure, summary count chips + stale flag, status/text filters,
+  steering target named + send disabled without a reconciled target).
+- Composer: `#compact` joined Improve/Sessions/New in the single ⋯ overflow
+  (identical wide layout, popover on narrow, ctx-hot flags toggle + button);
+  header overflow contracts locked (whole-item moves only).
+- Utility pages widen to 1240px on ≥1440px displays; transcript cap untouched.
+  New tests: ui-density, sidebar-ux, workspace-collapse, session-search,
+  header-overflow; extended transcript/composer/sidebar/permissions/subagents
+  suites. 53 files green, syntax + lens clean, managed-browser smoke clean.
+
+### 2026-08-22 — feat(chat): show tools used in activity summaries
+
+- Collapsed Tool Activity headers now show ordered tool names with repeat counts
+  while preserving total count, state, errors, and duration.
+- Long name lists truncate before fixed status metadata and retain full native
+  pointer and accessible text; pure formatter and source-level accessibility
+  checks cover live/history parity and narrow layout behavior.
+
+### 2026-08-22 — feat(browser): reduce inspection context overhead
+
+- Added compact/full snapshots with revision-based unchanged responses, cursor
+  based console deltas, and context-sized screenshots that leave the managed
+  1920×1080 viewport unchanged.
+- Hardened same-document navigation cleanup/recovery and documented the new
+  bounded contracts. The 48-file test suite and local managed-browser smoke
+  pass.
+
 ### 2026-08-21 — feat(webui): add the contextual Git review workspace
 
 - Added branch/status context, Changes/Files review, bounded read-only diffs,

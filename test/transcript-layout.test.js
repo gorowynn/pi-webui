@@ -36,4 +36,25 @@ assert.match(app, /Open in Changes/);
 assert.match(app, /openRailWidget\("git"\)/);
 assert.match(css, /\.tool-review-link/);
 
-console.log("17 passed");
+// ui-density-navigation FR-17/18: the repeated per-turn assistant label is a
+// quiet marker — muted, lowercase, ≤11px — never accent competition.
+const assistantRole =
+	css.match(/\.msg\.assistant-turn \.role\s*\{([^}]*)\}/)?.[1] || "";
+assert.match(assistantRole, /color:\s*var\(--muted\)/, "role label is muted");
+assert.match(
+	assistantRole,
+	/text-transform:\s*lowercase/,
+	"role label doesn't shout in caps",
+);
+assert.doesNotMatch(
+	assistantRole,
+	/font-size:\s*(1[2-9]|[2-9][0-9])px/,
+	"role label never out-sizes metadata",
+);
+// FR-18: prose stays the strongest surface — transparent bubble, reading size.
+assert.match(
+	css,
+	/\.msg\.assistant-turn \.bubble\s*\{[\s\S]*?font-size:\s*14px/,
+);
+
+console.log("25 passed");

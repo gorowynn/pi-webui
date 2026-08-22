@@ -1,6 +1,10 @@
+const { createHash } = require("node:crypto");
+
 const SNAPSHOT_SCHEMA = "pi-webui.browser-snapshot/v1";
 const MAX_PAGE_TEXT_BYTES = 12 * 1024;
 const MAX_ELEMENTS = 200;
+const COMPACT_MAX_PAGE_TEXT_BYTES = 4 * 1024;
+const COMPACT_MAX_ELEMENTS = 80;
 const MAX_TITLE_BYTES = 512;
 const MAX_FIELD_BYTES = 1024;
 const MAX_HREF_BYTES = 2048;
@@ -113,6 +117,25 @@ function fingerprint(elements) {
 	);
 }
 
+function snapshotRevision(snapshot, mode) {
+	return createHash("sha256")
+		.update(
+			JSON.stringify({
+				mode,
+				url: snapshot.url,
+				title: snapshot.title,
+				viewport: snapshot.viewport,
+				pageText: snapshot.pageText,
+				elements: snapshot.elements.map(({ element, index }) => ({
+					element,
+					index,
+				})),
+			}),
+		)
+		.digest("hex")
+		.slice(0, 16);
+}
+
 class SnapshotRefStore {
 	constructor() {
 		this.generation = 0;
@@ -161,13 +184,21 @@ class SnapshotRefStore {
 	}
 }
 
-function normalizeSnapshot(raw = {}, refs = new SnapshotRefStore()) {
+function normalizeSnapshot(
+	raw = {},
+	refs = new SnapshotRefStore(),
+	options = {},
+) {
 	const source = raw && typeof raw === "object" ? raw : {};
+	const mode = options.mode === "compact" ? "compact" : "full";
+	const maxElements = mode === "compact" ? COMPACT_MAX_ELEMENTS : MAX_ELEMENTS;
+	const maxPageTextBytes =
+		mode === "compact" ? COMPACT_MAX_PAGE_TEXT_BYTES : MAX_PAGE_TEXT_BYTES;
 	const elements = Array.isArray(source.elements)
 		? source.elements
 				.map(normalizeElement)
 				.filter(Boolean)
-				.slice(0, MAX_ELEMENTS)
+				.slice(0, maxElements)
 		: [];
 	const outputElements = refs.update(elements);
 	const viewport =
@@ -179,17 +210,30 @@ function normalizeSnapshot(raw = {}, refs = new SnapshotRefStore()) {
 					height: Math.max(0, source.viewport.height),
 				}
 			: { width: 0, height: 0 };
-	return {
+	const result = {
 		schema: SNAPSHOT_SCHEMA,
 		url: boundedString(source.url, 2048),
 		title: boundedString(source.title, MAX_TITLE_BYTES),
 		viewport,
-		pageText: truncateUtf8(source.pageText, MAX_PAGE_TEXT_BYTES),
+		pageText: truncateUtf8(source.pageText, maxPageTextBytes),
 		elements: outputElements,
+		mode,
 	};
+	result.revision = snapshotRevision({ ...result, elements }, mode);
+	if (options.since === result.revision) {
+		return {
+			...result,
+			pageText: "",
+			elements: [],
+			unchanged: true,
+		};
+	}
+	return { ...result, unchanged: false };
 }
 
 module.exports = {
+	COMPACT_MAX_ELEMENTS,
+	COMPACT_MAX_PAGE_TEXT_BYTES,
 	MAX_ELEMENTS,
 	MAX_FIELD_BYTES,
 	MAX_HREF_BYTES,
@@ -198,5 +242,6 @@ module.exports = {
 	SNAPSHOT_SCRIPT,
 	SnapshotRefStore,
 	normalizeSnapshot,
+	snapshotRevision,
 	truncateUtf8,
 };

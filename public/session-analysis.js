@@ -390,6 +390,52 @@
 		};
 	}
 
+	// ---- notices (plan FR-10) ----
+	// Pure: deterministic threshold notices from already-computed session state.
+	// input: {contextPercent?, failedToolCalls?, totalToolCalls?, pendingTools?, running?}
+	function sessionNotices(input) {
+		var notices = [];
+		var i = input || {};
+		var contextPercent = finiteNumber(i.contextPercent);
+		if (contextPercent !== undefined && contextPercent >= 80) {
+			notices.push({
+				id: "context-high",
+				tone: "attention",
+				text:
+					"Context at " + Math.round(contextPercent) + "% — compaction soon",
+			});
+		}
+		var failed = i.failedToolCalls | 0;
+		var total = i.totalToolCalls | 0;
+		if (failed >= 1 && total >= 5 && failed / total >= 0.2) {
+			notices.push({
+				id: "tool-errors",
+				tone: "danger",
+				text:
+					"Tool errors " +
+					failed +
+					"/" +
+					total +
+					" (" +
+					Math.round((failed / total) * 100) +
+					"%)",
+			});
+		}
+		var pending = i.pendingTools | 0;
+		if (pending >= 1 && !i.running) {
+			notices.push({
+				id: "pending-idle",
+				tone: "attention",
+				text:
+					pending +
+					" tool " +
+					(pending === 1 ? "call" : "calls") +
+					" pending while idle",
+			});
+		}
+		return notices;
+	}
+
 	// ---- formatters (UI-facing; navigator guarded for Node) ----
 	function formatTurnCost(value) {
 		var digits = value < 0.01 ? 4 : 2;
@@ -403,6 +449,13 @@
 		if (abs >= 1000000) return Math.round(value / 1000000) + "M";
 		if (abs >= 1000) return Math.round(value / 1000) + "k";
 		return String(Math.round(value));
+	}
+	function formatChars(value) {
+		if (!isNumber(value)) return "0 chars";
+		var abs = Math.abs(value);
+		if (abs >= 1000000) return (value / 1000000).toFixed(1) + "M chars";
+		if (abs >= 1000) return (value / 1000).toFixed(1) + "k chars";
+		return String(Math.round(value)) + " chars";
 	}
 	function formatDuration(value) {
 		if (value < 1000) return Math.round(value) + " ms";
@@ -422,7 +475,9 @@
 		statsUsage: statsUsage,
 		formatTurnCost: formatTurnCost,
 		formatTokens: formatTokens,
+		formatChars: formatChars,
 		formatDuration: formatDuration,
+		sessionNotices: sessionNotices,
 		emptyUsage: emptyUsage,
 	};
 	if (typeof module !== "undefined" && module.exports) module.exports = api;
