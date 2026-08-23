@@ -15,42 +15,52 @@
  *
  * CommonJS, depends only on jsonl.js (the strict codec). No browser side.
  */
-"use strict";
 
-const { spawn, execSync } = require("child_process");
+const { spawn, execFileSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { JsonLineDecoder, encodeJsonLine } = require("./jsonl.js");
+const { boundedText, normalizeLimits } = require("./secondary-runs.js");
 
 const ISOLATED_DIR = path.join(os.homedir(), ".pi", "pi-webui-isolated");
-const TIMEOUT_MS = 120000;
 
 // ---- isolated profile dir (copy auth/models once) ----
 let dirReady = false;
 function ensureIsolatedDir() {
-	if (dirReady) return;
-	fs.mkdirSync(ISOLATED_DIR, { recursive: true });
-	const mainDir = process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent");
+	if (!dirReady) {
+		fs.mkdirSync(ISOLATED_DIR, { recursive: true });
+		dirReady = true;
+	}
+	const mainDir =
+		process.env.PI_CODING_AGENT_DIR ||
+		path.join(os.homedir(), ".pi", "agent");
 	for (const file of ["auth.json", "models.json"]) {
+		const source = path.join(mainDir, file);
 		const dest = path.join(ISOLATED_DIR, file);
 		try {
-			fs.statSync(dest);
-		} catch {
+			const sourceStat = fs.statSync(source);
+			let copy = true;
 			try {
-				fs.copyFileSync(path.join(mainDir, file), dest);
-			} catch {
-				// file may not exist (e.g. no custom models.json) — fine
-			}
+				const destStat = fs.statSync(dest);
+				copy =
+					sourceStat.size !== destStat.size ||
+					sourceStat.mtimeMs > destStat.mtimeMs;
+			} catch {}
+			if (copy) fs.copyFileSync(source, dest);
+		} catch {
+			// file may not exist (e.g. no custom models.json) — fine
 		}
 	}
-	dirReady = true;
 }
 
 function killPidTree(pid) {
+	if (!pid) return;
 	try {
 		if (process.platform === "win32")
-			execSync("taskkill /pid " + pid + " /T /F", { stdio: "ignore" });
+			execFileSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
+				stdio: "ignore",
+			});
 		else process.kill(pid, "SIGKILL");
 	} catch {}
 }
@@ -63,24 +73,22 @@ function isObject(v) {
 function cheapestAvailableModel(response) {
 	const data = isObject(response) ? response.data : null;
 	if (!isObject(data) || !Array.isArray(data.models)) return undefined;
-	const models = data.models.filter(function (m) {
-		return (
+	const models = data.models.filter(
+		(m) =>
 			isObject(m) &&
 			typeof m.id === "string" &&
 			typeof m.provider === "string" &&
 			isObject(m.cost) &&
 			typeof m.cost.input === "number" &&
 			typeof m.cost.output === "number" &&
-			typeof m.reasoning === "boolean"
-		);
-	});
-	models.sort(function (a, b) {
-		return (
+			typeof m.reasoning === "boolean",
+	);
+	models.sort(
+		(a, b) =>
 			a.cost.output - b.cost.output ||
 			a.cost.input - b.cost.input ||
-			Number(a.reasoning) - Number(b.reasoning)
-		);
-	});
+			Number(a.reasoning) - Number(b.reasoning),
+	);
 	return models[0];
 }
 // Last assistant text from a completed disposable session.
@@ -95,7 +103,11 @@ function assistantText(response) {
 		if (!Array.isArray(message.content)) continue;
 		const parts = [];
 		for (const part of message.content) {
-			if (isObject(part) && part.type === "text" && typeof part.text === "string")
+			if (
+				isObject(part) &&
+				part.type === "text" &&
+				typeof part.text === "string"
+			)
 				parts.push(part.text);
 		}
 		const text = parts.join("");
@@ -104,45 +116,108 @@ function assistantText(response) {
 	return undefined;
 }
 
+function assistantErrorMessage(response) {
+	const data = isObject(response) ? response.data : null;
+	if (!isObject(data) || !Array.isArray(data.messages)) return undefined;
+	for (let i = data.messages.length - 1; i >= 0; i--) {
+		const message = data.messages[i];
+		if (
+			isObject(message) &&
+			message.role === "assistant" &&
+			typeof message.errorMessage === "string" &&
+			message.errorMessage.trim()
+		)
+			return message.errorMessage.trim();
+	}
+	return undefined;
+}
+
+function codedError(code, message) {
+	const error = new Error(message);
+	error.code = code;
+	return error;
+}
+
+function buildIsolatedArgs(systemPrompt) {
+	return [
+		"--mode",
+		"rpc",
+		"--no-session",
+		"--no-tools",
+		"--no-extensions",
+		"--no-skills",
+		"--no-prompt-templates",
+		"--no-themes",
+		"--no-context-files",
+		"--thinking",
+		"off",
+		"--system-prompt",
+		systemPrompt,
+	];
+}
+
+function prepareIsolatedPrompt(options) {
+	const source = options && typeof options === "object" ? options : {};
+	const limits = normalizeLimits({
+		contextChars: source.maxPromptChars,
+		outputChars: source.maxOutputChars,
+		timeoutMs: source.timeoutMs,
+	});
+	const prompt = boundedText(source.prompt, limits.contextChars);
+	return {
+		cwd: source.cwd,
+		prompt: prompt.text,
+		inputTruncated: prompt.truncated,
+		systemPrompt:
+			typeof source.systemPrompt === "string" ? source.systemPrompt : "",
+		model: source.model,
+		thinkingLevel:
+			typeof source.thinkingLevel === "string"
+				? source.thinkingLevel
+				: undefined,
+		signal: source.signal,
+		limits,
+	};
+}
+
 // ---- the one-shot run ----
 function runIsolatedPrompt(options) {
-	return new Promise(function (resolve, reject) {
+	return new Promise((resolve, reject) => {
+		const prepared = prepareIsolatedPrompt(options);
+		const signal = prepared.signal;
+		if (signal && signal.aborted) {
+			reject(
+				codedError("SECONDARY_CANCELLED", "secondary run cancelled"),
+			);
+			return;
+		}
 		ensureIsolatedDir();
-		const cwd = options.cwd;
-		const prompt = options.prompt;
-		const systemPrompt = options.systemPrompt || "";
-		const model = options.model;
+		const cwd = prepared.cwd;
+		const prompt = prepared.prompt;
+		const systemPrompt = prepared.systemPrompt;
+		const model = prepared.model;
+		const thinkingLevel = prepared.thinkingLevel;
 		const piBin = process.env.PI_BIN || "pi";
-		const args = [
-			"--mode",
-			"rpc",
-			"--no-session",
-			"--no-tools",
-			"--no-extensions",
-			"--no-skills",
-			"--no-prompt-templates",
-			"--no-themes",
-			"--no-context-files",
-			"--thinking",
-			"off",
-			"--system-prompt",
-			systemPrompt,
-		];
+		const args = buildIsolatedArgs(systemPrompt);
 		// Windows: pi is a .cmd shim needing shell:true to resolve PATHEXT (same as the
 		// main pi spawn in server.js). All args are trusted/fixed strings (systemPrompt
 		// has no shell metacharacters; the user draft goes via RPC stdin, not argv).
 		const useShell = process.platform === "win32";
 		const child = useShell
-			? spawn(piBin + " " + args.join(" "), [], {
+			? spawn(`${piBin} ${args.join(" ")}`, [], {
 					cwd: cwd,
-					env: Object.assign({}, process.env, { PI_CODING_AGENT_DIR: ISOLATED_DIR }),
+					env: Object.assign({}, process.env, {
+						PI_CODING_AGENT_DIR: ISOLATED_DIR,
+					}),
 					stdio: ["pipe", "pipe", "pipe"],
 					shell: true,
 					windowsHide: true,
 				})
 			: spawn(piBin, args, {
 					cwd: cwd,
-					env: Object.assign({}, process.env, { PI_CODING_AGENT_DIR: ISOLATED_DIR }),
+					env: Object.assign({}, process.env, {
+						PI_CODING_AGENT_DIR: ISOLATED_DIR,
+					}),
 					stdio: ["pipe", "pipe", "pipe"],
 					shell: false,
 					windowsHide: true,
@@ -154,14 +229,22 @@ function runIsolatedPrompt(options) {
 		let settled = false;
 		let agentSettled = false;
 		const settledWaiters = [];
-		let stderr = "";
+		let abortListener = null;
+		let timeout = null;
 
 		function send(cmd) {
+			if (settled)
+				return Promise.resolve({
+					ok: false,
+					error: "isolated prompt stopped",
+				});
 			const id = nextId++;
-			return new Promise(function (res) {
+			return new Promise((res) => {
 				pending.set(id, res);
 				try {
-					child.stdin.write(encodeJsonLine(Object.assign({ id: id }, cmd)));
+					child.stdin.write(
+						encodeJsonLine(Object.assign({ id: id }, cmd)),
+					);
 				} catch (e) {
 					pending.delete(id);
 					res({ ok: false, error: e.message });
@@ -169,9 +252,13 @@ function runIsolatedPrompt(options) {
 			});
 		}
 
-		child.stdout.on("data", function (chunk) {
-			dec.push(chunk, function (obj) {
-				if (obj.type === "response" && obj.id != null && pending.has(obj.id)) {
+		child.stdout.on("data", (chunk) => {
+			dec.push(chunk, (obj) => {
+				if (
+					obj.type === "response" &&
+					obj.id != null &&
+					pending.has(obj.id)
+				) {
 					const r = pending.get(obj.id);
 					pending.delete(obj.id);
 					r(obj);
@@ -181,38 +268,64 @@ function runIsolatedPrompt(options) {
 				}
 			});
 		});
-		child.stderr.on("data", function (c) {
-			stderr += c.toString("utf8");
+		child.stdin.on("error", () => {
+			if (!settled)
+				finish(
+					codedError("SECONDARY_FAILED", "isolated pi input failed"),
+				);
 		});
-
-		const timeout = setTimeout(function () {
-			finish(new Error("isolated prompt timed out"));
-		}, TIMEOUT_MS);
+		child.stderr.resume();
 
 		function finish(err, result) {
 			if (settled) return;
 			settled = true;
-			clearTimeout(timeout);
+			if (timeout) clearTimeout(timeout);
+			if (signal && abortListener)
+				signal.removeEventListener("abort", abortListener);
+			while (settledWaiters.length) settledWaiters.shift()();
 			killPidTree(child.pid);
 			if (err) reject(err);
 			else resolve(result);
 		}
+		timeout = setTimeout(() => {
+			finish(
+				codedError("SECONDARY_TIMEOUT", "isolated prompt timed out"),
+			);
+		}, prepared.limits.timeoutMs);
+		if (signal) {
+			abortListener = () =>
+				finish(
+					codedError(
+						"SECONDARY_CANCELLED",
+						"secondary run cancelled",
+					),
+				);
+			signal.addEventListener("abort", abortListener, { once: true });
+		}
 
-		child.once("error", function (e) {
-			finish(e);
+		child.once("error", () => {
+			finish(
+				codedError("SECONDARY_FAILED", "isolated pi failed to start"),
+			);
 		});
-		child.once("exit", function (code) {
-			if (!settled) finish(new Error("pi exited before completing (code " + code + "): " + stderr.trim()));
+		child.once("exit", () => {
+			if (!settled)
+				finish(
+					codedError(
+						"SECONDARY_FAILED",
+						"pi exited before completing",
+					),
+				);
 		});
 
 		function waitForSettled() {
-			return new Promise(function (res) {
+			return new Promise((res) => {
 				if (agentSettled) res();
 				else settledWaiters.push(res);
 			});
 		}
 
-		(async function () {
+		(async () => {
 			try {
 				// 1. model: explicit, or auto-select the cheapest available
 				if (model) {
@@ -225,20 +338,42 @@ function runIsolatedPrompt(options) {
 					const avail = await send({ type: "get_available_models" });
 					const cheapest = cheapestAvailableModel(avail);
 					if (!cheapest)
-						throw new Error("No model is available to run the prompt");
+						throw codedError(
+							"SECONDARY_NO_MODEL",
+							"No model is available to run the prompt",
+						);
 					await send({
 						type: "set_model",
 						provider: cheapest.provider,
 						modelId: cheapest.id,
 					});
 				}
+				if (thinkingLevel)
+					await send({
+						type: "set_thinking_level",
+						level: thinkingLevel,
+					});
 				// 2. prompt + wait for the turn to settle (--no-tools → single turn)
-				await Promise.all([send({ type: "prompt", message: prompt }), waitForSettled()]);
+				await Promise.all([
+					send({ type: "prompt", message: prompt }),
+					waitForSettled(),
+				]);
 				// 3. extract the assistant text
 				const msgs = await send({ type: "get_messages" });
 				const text = assistantText(msgs);
-				if (!text) throw new Error("The model returned no text");
-				finish(null, { text: text });
+				if (!text) {
+					const modelError = assistantErrorMessage(msgs);
+					throw codedError(
+						modelError ? "SECONDARY_MODEL" : "SECONDARY_NO_TEXT",
+						modelError || "The model returned no text",
+					);
+				}
+				const output = boundedText(text, prepared.limits.outputChars);
+				finish(null, {
+					text: output.text,
+					inputTruncated: prepared.inputTruncated,
+					outputTruncated: output.truncated,
+				});
 			} catch (e) {
 				finish(e);
 			}
@@ -254,28 +389,32 @@ const IMPROVE_SYSTEM_PROMPT =
 const IMPROVE_DIRECTIONS = {
 	clarify:
 		"Clarify the request. Make the expected outcome, scope, and constraints explicit only when they are already implied by the draft.",
-	ideate:
-		"Encourage the model to suggest ideas, alternatives, or approaches relevant to the draft. Do not impose a format, count, or structure.",
+	ideate: "Encourage the model to suggest ideas, alternatives, or approaches relevant to the draft. Do not impose a format, count, or structure.",
 	precise:
 		"Make the request precise and unambiguous. Use specific, well-defined terms. Preserve all existing facts and constraints; do not add assumptions.",
 };
 function improvePrompt(cwd, draft, direction) {
 	const dir = IMPROVE_DIRECTIONS[direction];
-	const instruction = dir
-		? "Direction: " + dir + "\n\n"
-		: "";
+	const instruction = dir ? `Direction: ${dir}\n\n` : "";
 	const prompt =
 		instruction +
 		"Rewrite the following draft prompt. Output only the rewritten prompt:\n\n" +
 		draft;
-	return runIsolatedPrompt({ cwd: cwd, prompt: prompt, systemPrompt: IMPROVE_SYSTEM_PROMPT });
+	return runIsolatedPrompt({
+		cwd: cwd,
+		prompt: prompt,
+		systemPrompt: IMPROVE_SYSTEM_PROMPT,
+	});
 }
 
 module.exports = {
-	runIsolatedPrompt: runIsolatedPrompt,
 	improvePrompt: improvePrompt,
 	cheapestAvailableModel: cheapestAvailableModel,
 	assistantText: assistantText,
+	assistantErrorMessage: assistantErrorMessage,
+	buildIsolatedArgs: buildIsolatedArgs,
+	prepareIsolatedPrompt: prepareIsolatedPrompt,
+	runIsolatedPrompt: runIsolatedPrompt,
 	IMPROVE_DIRECTIONS: IMPROVE_DIRECTIONS,
 	ISOLATED_DIR: ISOLATED_DIR,
 };

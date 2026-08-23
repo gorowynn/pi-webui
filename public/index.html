@@ -33,9 +33,7 @@
 			// unsupported; failures are ignored (never block the app).
 			if ("serviceWorker" in navigator) {
 				window.addEventListener("load", function () {
-					navigator.serviceWorker
-						.register("/sw.js")
-						.catch(function () {});
+					navigator.serviceWorker.register("/sw.js").catch(function () {});
 				});
 			}
 		</script>
@@ -114,10 +112,7 @@
 						>cache <code id="sb-cache">…</code></span
 					>
 					<span class="sb-meta" data-sb-meta
-						>ide
-						<code id="sb-ide" title="IDE hosting this panel"
-							>…</code
-						></span
+						>ide <code id="sb-ide" title="IDE hosting this panel">…</code></span
 					>
 				</span>
 				<details class="sb-sec" id="sb-sec">
@@ -132,24 +127,13 @@
 				</details>
 			</div>
 			<span id="status"
-				><span id="dot"></span
-				><span id="status-text">connecting…</span></span
+				><span id="dot"></span><span id="status-text">connecting…</span></span
 			>
 			<div class="header-actions">
-				<button
-					id="refresh-btn"
-					title="reload page"
-					aria-label="reload page"
-				>
+				<button id="refresh-btn" title="reload page" aria-label="reload page">
 					↻
 				</button>
-				<button
-					id="settings-btn"
-					title="settings"
-					aria-label="settings"
-				>
-					⚙
-				</button>
+				<button id="settings-btn" title="settings" aria-label="settings">⚙</button>
 				<button
 					id="view-btn"
 					title="conversation density: balanced (click to cycle)"
@@ -218,11 +202,7 @@
 						×
 					</button>
 				</div>
-				<div
-					class="ws-search-count"
-					id="ws-search-count"
-					aria-live="polite"
-				></div>
+				<div class="ws-search-count" id="ws-search-count" aria-live="polite"></div>
 				<div class="ws-list" id="ws-sessions"></div>
 			</section>
 		</aside>
@@ -232,11 +212,7 @@
 			aria-label="close workspace sidebar"
 			tabindex="-1"
 		></button>
-		<nav
-			class="rail-strip"
-			id="ws-rail"
-			aria-label="workspaces and sessions"
-		>
+		<nav class="rail-strip" id="ws-rail" aria-label="workspaces and sessions">
 			<button
 				class="rail-tab ws-rail-btn"
 				id="ws-rail-workspaces"
@@ -262,6 +238,18 @@
 				<span class="rt-lbl">Sess</span>
 				<span class="rt-badge" id="ws-rail-count" hidden></span>
 			</button>
+			<button
+				class="rail-tab ws-rail-btn"
+				id="ws-rail-secondary"
+				type="button"
+				title="btw chat"
+				aria-label="btw chat"
+				aria-controls="secondary-pane"
+				aria-expanded="false"
+			>
+				<span class="rt-ic" aria-hidden="true">?</span>
+				<span class="rt-lbl">Btw</span>
+			</button>
 		</nav>
 
 		<aside id="toolsbar" aria-hidden="true" aria-label="workspace tools">
@@ -271,11 +259,7 @@
 				role="tablist"
 				aria-orientation="vertical"
 			></nav>
-			<div
-				class="tools-pane"
-				role="tabpanel"
-				aria-labelledby="tools-title"
-			>
+			<div class="tools-pane" role="tabpanel" aria-labelledby="tools-title">
 				<div class="tools-head">
 					<span class="tools-title" id="tools-title"></span>
 					<button
@@ -311,9 +295,7 @@
 						>model
 						<span class="set-inline"
 							><select id="model" title="model"></select
-							><button id="models-btn" title="reload models">
-								↻
-							</button></span
+							><button id="models-btn" title="reload models">↻</button></span
 						>
 					</label>
 					<label class="set-row"
@@ -345,11 +327,7 @@
 							<option value="read-only">read-only</option>
 						</select></label
 					>
-					<button
-						id="perm-page-btn"
-						class="set-row-btn"
-						type="button"
-					>
+					<button id="perm-page-btn" class="set-row-btn" type="button">
 						open permissions page
 					</button>
 				</section>
@@ -357,10 +335,7 @@
 					<h4>developer</h4>
 					<label class="set-row"
 						>subagent view
-						<select
-							id="sa-density"
-							title="subagent live-view density"
-						>
+						<select id="sa-density" title="subagent live-view density">
 							<option value="full">full</option>
 							<option value="compact">compact</option>
 						</select>
@@ -369,12 +344,10 @@
 				<section class="set-sec">
 					<h4>server</h4>
 					<p class="set-hint">
-						stop the webui server + its pi process. relaunch
-						(pi-webui or /webui) to start again.
+						stop the webui server + its pi process. relaunch (pi-webui or /webui) to
+						start again.
 					</p>
-					<button id="stop-btn" class="set-stop" type="button">
-						stop webui
-					</button>
+					<button id="stop-btn" class="set-stop" type="button">stop webui</button>
 				</section>
 			</div>
 		</section>
@@ -396,12 +369,9 @@
 					<h3>posture</h3>
 					<div class="perm-mode-row">
 						<select id="perm-mode-page" title="permission posture">
-							<option value="default">
-								default — ask per policy
-							</option>
+							<option value="default">default — ask per policy</option>
 							<option value="auto-approve">
-								auto-approve — skip ordinary asks (sensitive
-								stays)
+								auto-approve — skip ordinary asks (sensitive stays)
 							</option>
 							<option value="read-only">
 								read-only — deny all mutations silently
@@ -410,27 +380,17 @@
 								yolo — allow everything this session (confirm)
 							</option>
 						</select>
-						<span
-							id="perm-mode-state"
-							class="perm-mode-state"
-						></span>
+						<span id="perm-mode-state" class="perm-mode-state"></span>
 					</div>
 					<div id="perm-confirm" class="perm-confirm" hidden>
 						<p>
-							⚠ yolo engages for THIS SESSION only: every action
-							auto-allows, no prompts, until the session ends.
-							Engage?
+							⚠ yolo engages for THIS SESSION only: every action auto-allows, no
+							prompts, until the session ends. Engage?
 						</p>
-						<button
-							id="perm-confirm-yes"
-							type="button"
-							class="danger"
-						>
+						<button id="perm-confirm-yes" type="button" class="danger">
 							engage yolo
 						</button>
-						<button id="perm-confirm-no" type="button">
-							cancel
-						</button>
+						<button id="perm-confirm-no" type="button">cancel</button>
 					</div>
 				</section>
 				<section class="perm-sec">
@@ -442,13 +402,8 @@
 							placeholder="tool"
 							value="bash"
 						/>
-						<input
-							id="perm-explain-sel"
-							placeholder="command / path / args JSON"
-						/>
-						<button id="perm-explain-go" type="button">
-							explain
-						</button>
+						<input id="perm-explain-sel" placeholder="command / path / args JSON" />
+						<button id="perm-explain-go" type="button">explain</button>
 					</div>
 					<div id="perm-explain-out" class="perm-explain-out"></div>
 				</section>
@@ -457,8 +412,7 @@
 					<p class="set-hint">
 						add or remove rules in your global config
 						(<code>~/.pi/agent/safeguard.json</code>). pattern:
-						<code>re:…</code> for regex, a glob for paths; empty =
-						tool default.
+						<code>re:…</code> for regex, a glob for paths; empty = tool default.
 					</p>
 					<div class="perm-rule-row">
 						<input
@@ -475,9 +429,7 @@
 							<option value="ask">ask</option>
 							<option value="deny">deny</option>
 						</select>
-						<button id="perm-rule-add" type="button">
-							add rule
-						</button>
+						<button id="perm-rule-add" type="button">add rule</button>
 					</div>
 					<datalist id="perm-tools"></datalist>
 					<input
@@ -504,12 +456,7 @@
 			</div>
 		</section>
 
-		<section
-			id="fleet"
-			aria-label="background subagents"
-			tabindex="-1"
-			hidden
-		>
+		<section id="fleet" aria-label="background subagents" tabindex="-1" hidden>
 			<div class="perm-head">
 				<h2>subagent fleet</h2>
 				<div class="fl-steer" id="fl-steer">
@@ -535,10 +482,7 @@
 			<div class="perm-body">
 				<section class="perm-sec">
 					<div class="fl-filters">
-						<select
-							id="fleet-status"
-							aria-label="filter runs by status"
-						>
+						<select id="fleet-status" aria-label="filter runs by status">
 							<option value="all">all statuses</option>
 							<option value="active">active</option>
 							<option value="failed">failed</option>
@@ -562,9 +506,7 @@
 				<div id="tfeed" role="feed" aria-label="conversation"></div>
 				<div id="empty-state" hidden>
 					<p>no messages yet — send one to begin</p>
-					<button type="button" id="empty-start">
-						write a message
-					</button>
+					<button type="button" id="empty-start">write a message</button>
 				</div>
 			</main>
 			<button
@@ -588,11 +530,7 @@
 				<span class="ctx-label" id="ctx-label">context —</span>
 			</div>
 			<div class="composer">
-				<div
-					id="palette"
-					role="listbox"
-					aria-label="slash commands"
-				></div>
+				<div id="palette" role="listbox" aria-label="slash commands"></div>
 				<div id="widget"></div>
 				<div id="imgstrip" aria-label="attached images"></div>
 				<textarea
@@ -614,13 +552,7 @@
 					>
 						default
 					</button>
-					<input
-						id="image-picker"
-						type="file"
-						accept="image/*"
-						multiple
-						hidden
-					/>
+					<input id="image-picker" type="file" accept="image/*" multiple hidden />
 					<button
 						id="attach-images"
 						class="attach-images"
@@ -634,23 +566,14 @@
 					<button id="send" class="primary">Send</button>
 					<button id="stop" disabled>Stop</button>
 					<details class="bar-ovf" id="bar-ovf" open>
-						<summary
-							aria-label="more composer actions"
-							title="more actions"
-						>
+						<summary aria-label="more composer actions" title="more actions">
 							⋯
 						</summary>
 						<span class="bar-ovf-items">
-							<button
-								id="compact"
-								title="compact context (summarize to free space)"
-							>
+							<button id="compact" title="compact context (summarize to free space)">
 								⇲ Compact
 							</button>
-							<select
-								id="mode"
-								title="how to deliver while streaming"
-							>
+							<select id="mode" title="how to deliver while streaming">
 								<option value="auto">auto</option>
 								<option value="steer">steer</option>
 								<option value="followUp">follow-up</option>
@@ -664,12 +587,7 @@
 								<option value="ideate">Ideate</option>
 								<option value="precise">Precise</option>
 							</select>
-							<button
-								id="sessions"
-								title="resume an older session"
-							>
-								⏱ Sessions
-							</button>
+							<button id="sessions" title="resume an older session">⏱ Sessions</button>
 							<button id="new" title="new session">＋ New</button>
 							<span class="hint">Enter = send</span>
 						</span>
@@ -677,6 +595,93 @@
 				</div>
 			</div>
 		</footer>
+
+		<aside
+			id="secondary-pane"
+			class="secondary-pane"
+			role="dialog"
+			aria-modal="false"
+			aria-labelledby="secondary-title"
+			hidden
+		>
+			<div class="secondary-card">
+				<div class="secondary-head">
+					<div>
+						<strong id="secondary-title">Btw chat</strong>
+						<span class="secondary-kicker"
+							>left-rail chat · not added to the transcript</span
+						>
+					</div>
+					<div class="secondary-head-actions">
+						<button
+							id="secondary-clear"
+							class="secondary-clear"
+							type="button"
+							aria-label="Clear Btw chat"
+							title="Clear Btw chat"
+						>
+							Clear
+						</button>
+						<button
+							id="secondary-close"
+							type="button"
+							aria-label="Close side question"
+						>
+							&times;
+						</button>
+					</div>
+				</div>
+				<div class="secondary-settings" aria-label="Btw chat settings">
+					<label>
+						model
+						<select id="secondary-model" title="Btw model">
+							<option value="">loading models…</option>
+						</select>
+					</label>
+					<label>
+						thinking
+						<select id="secondary-thinking" title="Btw thinking level">
+							<option value="off">off</option>
+							<option value="minimal">minimal</option>
+							<option value="low">low</option>
+							<option value="medium">medium</option>
+							<option value="high">high</option>
+							<option value="xhigh">xhigh</option>
+							<option value="max">max</option>
+						</select>
+					</label>
+				</div>
+				<div
+					id="secondary-status"
+					class="secondary-status"
+					role="status"
+					aria-live="polite"
+				>
+					ready
+				</div>
+				<div
+					id="secondary-thread"
+					class="secondary-thread"
+					aria-live="polite"
+				></div>
+				<form id="secondary-form" class="secondary-form">
+					<label for="secondary-input">Ask without changing the main chat</label>
+					<textarea
+						id="secondary-input"
+						rows="3"
+						maxlength="16000"
+						placeholder="Ask a quick question…"
+					></textarea>
+					<div class="secondary-actions">
+						<button id="secondary-cancel" type="button" disabled>Cancel</button>
+						<button id="secondary-copy" type="button" disabled>
+							Copy to composer
+						</button>
+						<button id="secondary-send" class="primary" type="submit">Ask</button>
+					</div>
+				</form>
+			</div>
+		</aside>
 
 		<div id="modal" role="dialog" aria-modal="false" aria-label="pi dialog">
 			<div id="modal-wrap">
@@ -709,6 +714,7 @@
 		<script src="subagents-ux.js"></script>
 		<script src="sidebar-ux.js"></script>
 		<script src="a11y-contrast.js"></script>
+		<script src="secondary-ux.js"></script>
 		<script src="rail.js"></script>
 		<script src="app.js"></script>
 	</body>

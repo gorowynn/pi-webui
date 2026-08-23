@@ -25,6 +25,30 @@ const actLabel = $("act-label");
 // A5): LCS row builder + gutter/mode helpers. Render layer stays here (the
 // single escaper rule, GOTCHAS #12).
 const dv = window.diffView;
+const secondaryUx = window.secondaryUx;
+const secondaryPane = $("secondary-pane");
+const secondaryStatus = $("secondary-status");
+const secondaryThreadEl = $("secondary-thread");
+const secondaryForm = $("secondary-form");
+const secondaryInput = $("secondary-input");
+const secondarySend = $("secondary-send");
+const secondaryCancel = $("secondary-cancel");
+const secondaryCopy = $("secondary-copy");
+const secondaryClear = $("secondary-clear");
+const secondaryClose = $("secondary-close");
+const secondaryRailBtn = $("ws-rail-secondary");
+const secondaryModelSel = $("secondary-model");
+const secondaryThinkSel = $("secondary-thinking");
+const SECONDARY_MODEL_KEY = "pi:btw-model";
+const SECONDARY_THINKING_KEY = "pi:btw-thinking";
+let secondaryModelId = localStorage.getItem(SECONDARY_MODEL_KEY) || "";
+let secondaryThinkingLevel = localStorage.getItem(SECONDARY_THINKING_KEY) || "";
+let secondaryState = {
+	threadId: null,
+	thread: [],
+	run: null,
+	resultRunId: null,
+};
 // Usage telemetry stays browser-local and degrades to the existing inspector
 // when the optional pure module or storage is unavailable.
 const usageTelemetry = window.usageTelemetry;
@@ -165,9 +189,7 @@ function sendApprovalDecision(id, value, decision) {
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(body),
 	})
-		.then((r) =>
-			r.json().catch(() => ({ ok: false, error: "http " + r.status })),
-		)
+		.then((r) => r.json().catch(() => ({ ok: false, error: "http " + r.status })))
 		.then((j) => {
 			settled = true;
 			if (j && j.ok) return; // resolved — the broadcast closes the UI
@@ -253,6 +275,245 @@ async function rpcAwait(obj) {
 		return { ok: false, error: e.message };
 	}
 }
+
+function renderSecondaryThread() {
+	if (!secondaryThreadEl) return;
+	secondaryThreadEl.replaceChildren();
+	const thread = secondaryState.thread || [];
+	if (!thread.length) {
+		const empty = document.createElement("p");
+		empty.className = "secondary-note";
+		empty.textContent = "The side thread is kept separate from the main chat.";
+		secondaryThreadEl.appendChild(empty);
+		return;
+	}
+	for (const turn of thread) {
+		const item = document.createElement("div");
+		item.className = "secondary-turn";
+		item.dataset.role = turn.role === "assistant" ? "assistant" : "user";
+		const role = document.createElement("div");
+		role.className = "secondary-role";
+		role.textContent =
+			turn.role === "assistant" ? "side answer" : "your question";
+		const body = document.createElement("div");
+		body.className = "secondary-body";
+		if (turn.role === "assistant") setSafeHtml(body, md(turn.text));
+		else body.textContent = turn.text;
+		item.append(role, body);
+		secondaryThreadEl.appendChild(item);
+	}
+	secondaryThreadEl.scrollTop = secondaryThreadEl.scrollHeight;
+}
+
+function renderSecondary() {
+	if (!secondaryUx || !secondaryStatus) return;
+	const run = secondaryState.run
+		? secondaryUx.normalizeRun(secondaryState.run)
+		: null;
+	const meta = run
+		? secondaryUx.stateMeta(run.status)
+		: secondaryUx.stateMeta("completed");
+	secondaryStatus.dataset.state = run ? run.status : "completed";
+	if (!run)
+		secondaryStatus.textContent =
+			"ready — ask a question without changing the main chat";
+	else if (run.error)
+		secondaryStatus.textContent = `${meta.label}: ${run.error.message || "secondary run failed"}`;
+	else if (run.result && run.result.outputTruncated)
+		secondaryStatus.textContent = `${meta.label} · answer truncated`;
+	else if (run.inputTruncated)
+		secondaryStatus.textContent = `${meta.label} · context truncated`;
+	else secondaryStatus.textContent = meta.label;
+	const active = !!run && meta.active;
+	if (secondaryCancel) secondaryCancel.disabled = !active;
+	if (secondarySend) secondarySend.disabled = active;
+	if (secondaryInput) secondaryInput.disabled = active;
+	if (secondaryModelSel) secondaryModelSel.disabled = active;
+	if (secondaryThinkSel) secondaryThinkSel.disabled = active;
+	if (secondaryCopy)
+		secondaryCopy.disabled = !(run && run.result && run.result.text);
+	renderSecondaryThread();
+}
+
+function selectedSecondaryModel() {
+	if (!secondaryModelSel || !secondaryModelSel.value) return undefined;
+	try {
+		const value = JSON.parse(secondaryModelSel.value);
+		return value && value.provider && value.modelId ? value : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function syncSecondaryRail() {
+	if (!secondaryRailBtn) return;
+	const open = !!secondaryPane && !secondaryPane.hidden;
+	secondaryRailBtn.setAttribute("aria-expanded", open ? "true" : "false");
+	secondaryRailBtn.classList.toggle("sel", open);
+}
+
+function openSecondary() {
+	if (!secondaryPane) return;
+	if (document.body.classList.contains("ws-on")) collapseWsbar();
+	secondaryPane.hidden = false;
+	syncSecondaryRail();
+	renderSecondary();
+	if (secondaryInput) secondaryInput.focus();
+}
+function closeSecondary() {
+	if (!secondaryPane) return;
+	secondaryPane.hidden = true;
+	syncSecondaryRail();
+}
+function clearSecondaryState() {
+	secondaryState = { threadId: null, thread: [], run: null, resultRunId: null };
+	if (secondaryInput) secondaryInput.value = "";
+}
+function resetSecondary() {
+	clearSecondaryState();
+	closeSecondary();
+	renderSecondary();
+}
+function applySecondaryRun(run, threadId) {
+	if (!secondaryUx || !run || typeof run !== "object") return;
+	const normalized = secondaryUx.normalizeRun(run);
+	const current = secondaryState.run;
+	if (!secondaryUx.shouldApplyRun(current, normalized)) return;
+	secondaryState.run = normalized;
+	if (threadId) secondaryState.threadId = threadId;
+	if (
+		normalized.status === "completed" &&
+		normalized.result &&
+		normalized.result.text &&
+		secondaryState.resultRunId !== normalized.id
+	) {
+		secondaryState.thread = secondaryUx.addTurn(
+			secondaryState.thread,
+			"assistant",
+			normalized.result.text,
+		);
+		secondaryState.resultRunId = normalized.id;
+	}
+	renderSecondary();
+}
+async function submitSecondary() {
+	if (
+		!secondaryUx ||
+		!secondaryInput ||
+		!secondaryUx.canSubmit(secondaryState.run)
+	)
+		return;
+	const question = secondaryInput.value.trim();
+	if (!question) return;
+	const previousThread = secondaryState.thread.slice();
+	const context = secondaryUx.contextSnapshot(lastMessages);
+	const model = selectedSecondaryModel();
+	const thinkingLevel = secondaryThinkSel ? secondaryThinkSel.value : undefined;
+	secondaryState.thread = secondaryUx.addTurn(previousThread, "user", question);
+	secondaryState.run = { id: "pending", status: "queued" };
+	secondaryState.resultRunId = null;
+	renderSecondary();
+	try {
+		const response = await fetch("/api/secondary", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				kind: "side-question",
+				question,
+				context: context.text,
+				thread: previousThread,
+				threadId: secondaryState.threadId,
+				model,
+				thinkingLevel,
+			}),
+		});
+		const data = await response.json().catch(() => ({}));
+		if (!response.ok || !data.ok)
+			throw new Error(data.error || `request failed (${response.status})`);
+		applySecondaryRun(data.run, data.threadId);
+	} catch (error) {
+		secondaryState.run = {
+			id: "local-error",
+			status: "failed",
+			error: { message: error.message || "side question failed" },
+		};
+		renderSecondary();
+	}
+}
+async function cancelSecondaryFromUi() {
+	const run = secondaryState.run;
+	if (!run || !secondaryUx || !secondaryUx.canCancel(run)) return;
+	try {
+		const response = await fetch("/api/secondary/cancel", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ id: run.id }),
+		});
+		const data = await response.json().catch(() => ({}));
+		if (!response.ok || !data.ok) throw new Error(data.error || "cancel failed");
+		applySecondaryRun(data.run, secondaryState.threadId);
+	} catch (error) {
+		toast(error.message || "cancel failed", "err");
+	}
+}
+async function clearSecondaryOnServer() {
+	const response = await fetch("/api/secondary/clear", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+	});
+	const data = await response.json().catch(() => ({}));
+	if (!response.ok || !data.ok)
+		throw new Error(data.error || `clear failed (${response.status})`);
+}
+async function clearSecondaryFromUi() {
+	if (secondaryClear) secondaryClear.disabled = true;
+	try {
+		await clearSecondaryOnServer();
+		clearSecondaryState();
+		renderSecondary();
+		if (secondaryInput) secondaryInput.focus();
+	} catch (error) {
+		toast(error.message || "clear failed", "err");
+	} finally {
+		if (secondaryClear) secondaryClear.disabled = false;
+	}
+}
+function copySecondaryToComposer() {
+	const run = secondaryState.run;
+	if (!run || !run.result || !run.result.text) return;
+	inputEl.value = run.result.text;
+	autosize();
+	inputEl.focus();
+	toast("Copied to composer — not sent", "ok");
+}
+if (secondaryForm)
+	secondaryForm.addEventListener("submit", (event) => {
+		event.preventDefault();
+		submitSecondary();
+	});
+if (secondaryCancel)
+	secondaryCancel.addEventListener("click", cancelSecondaryFromUi);
+if (secondaryClear)
+	secondaryClear.addEventListener("click", clearSecondaryFromUi);
+if (secondaryCopy)
+	secondaryCopy.addEventListener("click", copySecondaryToComposer);
+if (secondaryClose) secondaryClose.addEventListener("click", closeSecondary);
+if (secondaryRailBtn)
+	secondaryRailBtn.addEventListener("click", () => {
+		if (secondaryPane && !secondaryPane.hidden) closeSecondary();
+		else openSecondary();
+	});
+syncSecondaryRail();
+if (secondaryInput)
+	secondaryInput.addEventListener("keydown", (event) => {
+		if (event.key === "Escape") {
+			event.preventDefault();
+			closeSecondary();
+		} else if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+			event.preventDefault();
+			if (secondaryForm) secondaryForm.requestSubmit();
+		}
+	});
 // ponytail: pi sends ANSI-colored status strings (e.g. "LSP Inactive"); the
 // browser can't render them, so strip the escapes at the status boundary.
 const stripAnsi = (s) =>
@@ -264,8 +525,7 @@ const stripAnsi = (s) =>
 
 function nearBottom() {
 	return (
-		transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <
-		120
+		transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 120
 	);
 }
 function scrollDown() {
@@ -541,7 +801,7 @@ function hlEl(el) {
 	// set it here (that silently unhighlighted every block).
 	try {
 		hljs.highlightElement(el);
-	} catch (e) {}
+	} catch {}
 }
 // ponytail: the AUTHORITATIVE render path for assistant text + thinking blocks,
 // shared by message_end (finalizeBubble) and reload (renderMessage). Text ALSO
@@ -617,7 +877,7 @@ function renderUsageStrip(bubble, message, turnNo) {
 }
 function finalizeBubble(content, message) {
 	if (!cur) return;
-	const src = content != null ? content : cur.content;
+	const src = content == null ? cur.content : content;
 	// nothing renderable (tool-only / truly-empty turn) — drop the whole message
 	// so no stray "assistant" label is left. cur.bubble is .bubble; .msg wraps it.
 	if (!nonEmptyContent(src).length) {
@@ -792,9 +1052,7 @@ function refreshToolGroup(group) {
 	);
 	group.head.setAttribute(
 		"aria-label",
-		["tool activity", tools, group.meta.textContent]
-			.filter(Boolean)
-			.join(" · "),
+		["tool activity", tools, group.meta.textContent].filter(Boolean).join(" · "),
 	);
 	if (group.errors) group.fold.open = true;
 	else if (!group.running && transcript.dataset.view !== "detailed")
@@ -946,11 +1204,7 @@ function childItems(messages, limit) {
 }
 function statusIcon(r) {
 	if (r.exitCode === -1) return "⏳";
-	if (
-		r.exitCode !== 0 ||
-		r.stopReason === "error" ||
-		r.stopReason === "aborted"
-	)
+	if (r.exitCode !== 0 || r.stopReason === "error" || r.stopReason === "aborted")
 		return "✗";
 	return "✓";
 }
@@ -1031,7 +1285,7 @@ function highlightLines(text, lang) {
 				? hljs.highlight(text, { language: lang })
 				: hljs.highlightAuto(text);
 		return splitHtmlLines(res.value);
-	} catch (_e) {
+	} catch {
 		return null;
 	}
 }
@@ -1149,11 +1403,7 @@ function sideHtml(lines) {
 		.map((l) => {
 			const num = l.num == null ? "\u00a0" : String(l.num);
 			const txt =
-				l.html != null
-					? l.html
-					: l.s == null || l.s === ""
-						? "\u00a0"
-						: esc(l.s);
+				l.html == null ? (l.s == null || l.s === "" ? "\u00a0" : esc(l.s)) : l.html;
 			return `<span class="sx-line ${l.cls}"><span class="sx-gnum">${num}</span><span class="sx-ltxt">${txt}</span></span>`;
 		})
 		.join("");
@@ -1364,9 +1614,7 @@ function mountSideBySide(host, path, oldText, newText, isWrite, opt) {
 	renderGutter();
 	const repaint = () => {
 		const c = compute(baseOld, ta.value);
-		host
-			.querySelector(".sxs")
-			.style.setProperty("--sx-gutter", c.gutter + "ch");
+		host.querySelector(".sxs").style.setProperty("--sx-gutter", c.gutter + "ch");
 		setSafeHtml(rightBody, c.rightHtml);
 		setSafeHtml(leftBody, c.leftHtml);
 		if (lineStart > 1) patchGutters(lineStart);
@@ -1958,9 +2206,7 @@ function opencodeGoLimits(data) {
 			const w = data[key];
 			if (!w || typeof w.usagePercent !== "number") return null;
 			const resetMs =
-				typeof w.resetInSec === "number"
-					? Date.now() + w.resetInSec * 1000
-					: NaN;
+				typeof w.resetInSec === "number" ? Date.now() + w.resetInSec * 1000 : NaN;
 			return {
 				label,
 				pct: w.usagePercent,
@@ -2038,23 +2284,6 @@ function fmtTokens(n) {
 	if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
 	return String(n);
 }
-function fmtDur(ms) {
-	if (ms < 0) ms = 0;
-	const s = Math.floor(ms / 1e3),
-		m = Math.floor(s / 60),
-		h = Math.floor(m / 60),
-		d = Math.floor(h / 24);
-	if (d > 0) return `${d}d ${h % 24}h`;
-	if (h > 0) return `${h}h ${m % 60}m`;
-	if (m > 0) return `${m}m`;
-	return `${s}s`;
-}
-// tokencost is higher 14:00–18:00 UTC+8 (= 06:00–10:00 UTC). Surfaced as a
-// badge on the usage bar; recomputed on each 60s poll so it's minute-accurate.
-function inPeakHours() {
-	const h = new Date().getUTCHours();
-	return h >= 6 && h < 10;
-}
 // Compact cards keep all three windows visible in the narrow header (Codex has
 // two, OpenCode Go has three). Each quota bar owns the reset text directly
 // beneath it, so their values can't mix.
@@ -2124,8 +2353,7 @@ function renderSessionUsage(provider) {
 	);
 }
 async function renderUsage(provider) {
-	if (usageViewKind(provider) === "session")
-		return renderSessionUsage(provider);
+	if (usageViewKind(provider) === "session") return renderSessionUsage(provider);
 	const u = await fetchQuotaUsage(provider);
 	if (provider !== currentProvider) return null;
 	if (!u.ok && usageViewKind(provider) === "zai-quota") {
@@ -2173,10 +2401,7 @@ async function quotasRender(el, g) {
 		inner = `<p class="um-err">⚠ ${esc(e.message)}</p>`;
 	}
 	if (railGen.stale(g)) return;
-	setSafeHtml(
-		el,
-		`<h3>${esc(usageProviderLabel(provider))} usage</h3>` + inner,
-	);
+	setSafeHtml(el, `<h3>${esc(usageProviderLabel(provider))} usage</h3>` + inner);
 	wireUsageForms(el);
 }
 function wireUsageForms(container) {
@@ -2260,7 +2485,7 @@ const TODO_KEY = "pi:todos";
 function persistTodos() {
 	try {
 		localStorage.setItem(TODO_KEY, JSON.stringify(todos));
-	} catch (e) {
+	} catch {
 		/* private mode / quota — non-fatal, live state still renders */
 	}
 }
@@ -2270,7 +2495,7 @@ function normStatus(s) {
 function todoItem(raw) {
 	if (!raw || typeof raw.subject !== "string") return null;
 	return {
-		id: raw.id != null ? raw.id : raw.subject,
+		id: raw.id == null ? raw.subject : raw.id,
 		subject: raw.subject,
 		status: normStatus(raw.status),
 	};
@@ -2313,7 +2538,7 @@ function todoRowHtml(t, i) {
 	const cls =
 		t.status === "finished" ? "done" : t.status === "started" ? "live" : "pend";
 	const ck = t.status === "finished" ? "✓" : t.status === "started" ? "●" : "○";
-	return `<span class="ck ${cls}">${ck}</span><span class="id">#${t.id != null ? esc(String(t.id)) : i + 1}</span><span class="sbj">${esc(t.subject)}</span>`;
+	return `<span class="ck ${cls}">${ck}</span><span class="id">#${t.id == null ? i + 1 : esc(String(t.id))}</span><span class="sbj">${esc(t.subject)}</span>`;
 }
 // W1 chunk 7: rail panel render — same tool-owned mirror, same rows
 function todosRender(el) {
@@ -2735,8 +2960,7 @@ function renderRail(renderPanel = true) {
 function openRailWidget(id) {
 	const w = WIDGETS.find((x) => x.id === id);
 	if (!w || !widgetVisible(w)) return;
-	if (railNarrow() && document.body.classList.contains("ws-on"))
-		collapseWsbar();
+	if (railNarrow() && document.body.classList.contains("ws-on")) collapseWsbar();
 	const active = document.activeElement;
 	railReturnFocus =
 		active &&
@@ -2875,9 +3099,7 @@ async function renderPlanDoc(container, rel) {
 	if (!j || !j.ok) {
 		setSafeHtml(
 			container,
-			'<p class="um-err">\u26a0 ' +
-				esc((j && j.error) || "read failed") +
-				"</p>",
+			'<p class="um-err">\u26a0 ' + esc((j && j.error) || "read failed") + "</p>",
 		);
 		return;
 	}
@@ -2965,8 +3187,7 @@ function askQuestion(args) {
 		);
 		// previews switch single-select to a side-by-side layout and suppress
 		// the "Type something." custom row (no room in the split).
-		const hasPreview =
-			!multi && opts.some((o) => o.preview && o.preview.length);
+		const hasPreview = !multi && opts.some((o) => o.preview && o.preview.length);
 
 		setSafeHtml(card, "");
 		const form = document.createElement("div");
@@ -3003,9 +3224,7 @@ function askQuestion(args) {
 			setSafeHtml(
 				b,
 				`<span class="qlbl">${esc(lbl)}</span>` +
-					(o.description
-						? `<span class="qdesc">${esc(o.description)}</span>`
-						: ""),
+					(o.description ? `<span class="qdesc">${esc(o.description)}</span>` : ""),
 			);
 			return b;
 		};
@@ -3348,8 +3567,7 @@ function renderEditDiffPreviews(container) {
 	const p = pendingApproval;
 	const name = p && p.toolName ? p.toolName : curToolName;
 	const inp = pendingToolArgs();
-	const isEdit =
-		name === "edit" && Array.isArray(inp.edits) && inp.edits.length;
+	const isEdit = name === "edit" && Array.isArray(inp.edits) && inp.edits.length;
 	const isWrite = name === "write";
 	if (!isEdit && !isWrite) return null;
 	// Flatten into per-hunk review items so an edit with N hunks yields N
@@ -3493,7 +3711,7 @@ async function diffInIde(req) {
 				toast("approval already answered elsewhere", "warn");
 			}
 		}
-	} catch (_e) {
+	} catch {
 		toast("IDE diff unavailable — showing in webui", "warn");
 		openSelectModal(req);
 	}
@@ -3512,7 +3730,7 @@ async function buildDiffPayload() {
 		const r = await fetch("/api/file?path=" + encodeURIComponent(path));
 		const j = await r.json();
 		if (j && j.ok && j.content != null) leftText = j.content;
-	} catch (_e) {
+	} catch {
 		/* new / unreadable file → empty left */
 	}
 	let rightText = leftText;
@@ -3720,11 +3938,7 @@ async function openSelectModal(req) {
 				Array.isArray(payload.edits) &&
 				payload.edits.length
 			) {
-				const nr = narrowEditRegions(
-					payload.leftText,
-					payload.edits,
-					getDiffCtx(),
-				);
+				const nr = narrowEditRegions(payload.leftText, payload.edits, getDiffCtx());
 				if (nr) {
 					oldT = nr.old;
 					newT = nr.new;
@@ -3958,8 +4172,7 @@ function uiRequest(req) {
 		const cancel = document.createElement("button");
 		cancel.textContent = "Cancel";
 		cancel.dataset.dismiss = ""; // ponytail: Esc = cancel
-		cancel.onclick = () =>
-			sendApprovalDecision(id, { cancelled: true }, "deny");
+		cancel.onclick = () => sendApprovalDecision(id, { cancelled: true }, "deny");
 		row.append(ok, cancel);
 		card.append(inp, row);
 		focusModalControl();
@@ -3988,8 +4201,7 @@ function uiRequest(req) {
 		const cancel = document.createElement("button");
 		cancel.textContent = "Cancel";
 		cancel.dataset.dismiss = ""; // ponytail: Esc = cancel
-		cancel.onclick = () =>
-			sendApprovalDecision(id, { cancelled: true }, "deny");
+		cancel.onclick = () => sendApprovalDecision(id, { cancelled: true }, "deny");
 		row.append(ok, cancel);
 		card.append(ta, row);
 		focusModalControl();
@@ -4158,9 +4370,7 @@ renderStatusDot(); // amber "connecting" dot before the SSE stream opens
 // ponytail: compaction state -- disables the Compact button and drives the
 // activity bar while the context is being summarized, whether the trigger
 // was the button, a /compact, or auto-compaction at the threshold.
-let compacting = false;
 function setCompacting(on) {
-	compacting = on;
 	compactBtn.disabled = on;
 }
 
@@ -4261,10 +4471,7 @@ function handle(payload) {
 		case "message_update": {
 			const e = payload.assistantMessageEvent;
 			if (!e) break;
-			if (
-				usageEvents &&
-				(e.type === "text_delta" || e.type === "thinking_delta")
-			)
+			if (usageEvents && (e.type === "text_delta" || e.type === "thinking_delta"))
 				usageEvents.markFirstToken(
 					payload.turnId || payload.requestId || payload.id,
 					Date.now(),
@@ -4378,11 +4585,7 @@ function handle(payload) {
 			// progress, per-result status). The generic text path below still fills
 			// in the final "(running…)" / partial text as a fallback.
 			if (payload.toolName === "subagent" && payload.partialResult.details)
-				renderSubagentView(
-					w.out,
-					payload.partialResult.details,
-					subagentDensity,
-				);
+				renderSubagentView(w.out, payload.partialResult.details, subagentDensity);
 			const t = toolProtocol.toolContentText(payload.partialResult.content);
 			if (payload.toolName !== "subagent") w.out.textContent = t;
 			break;
@@ -4402,9 +4605,7 @@ function handle(payload) {
 				w.el.classList.add(payload.isError ? "err" : "done");
 				if (w.startedAt && w.dur)
 					w.dur.textContent = fmtToolDur(Date.now() - w.startedAt);
-				t = toolProtocol.toolContentText(
-					payload.result && payload.result.content,
-				);
+				t = toolProtocol.toolContentText(payload.result && payload.result.content);
 				if (
 					(payload.toolName === "edit" || payload.toolName === "write") &&
 					w.args &&
@@ -4428,9 +4629,7 @@ function handle(payload) {
 						const fileP = ePath
 							? fetch("/api/file?path=" + encodeURIComponent(ePath))
 									.then((r) => r.json())
-									.then((j) =>
-										j && j.ok && j.content != null ? j.content : null,
-									)
+									.then((j) => (j && j.ok && j.content != null ? j.content : null))
 									.catch(() => null)
 							: Promise.resolve(null);
 						ea.edits.forEach((e, idx) => {
@@ -4459,16 +4658,9 @@ function handle(payload) {
 								}
 								if (dh && start)
 									dh.textContent = `edit ${idx + 1}/${ea.edits.length} \u00b7 L${start}`;
-								mountSideBySide(
-									host,
-									ePath,
-									e.oldText || "",
-									e.newText || "",
-									false,
-									{
-										startLine: start,
-									},
-								);
+								mountSideBySide(host, ePath, e.oldText || "", e.newText || "", false, {
+									startLine: start,
+								});
 							});
 						});
 					} else if (payload.toolName === "write") {
@@ -4585,10 +4777,7 @@ function handle(payload) {
 		case "response":
 			// rpc command ack; surface failures
 			if (payload.success === false)
-				toast(
-					`${payload.command || "cmd"} failed: ${payload.error || ""}`,
-					"err",
-				);
+				toast(`${payload.command || "cmd"} failed: ${payload.error || ""}`, "err");
 			break;
 
 		default:
@@ -4673,14 +4862,35 @@ function refreshSbThink() {
 ["off", "lite", "full", "ultra"].forEach((m) =>
 	ponySel.add(new Option("pony: " + m, m)),
 );
+function syncSecondaryThinking() {
+	if (!secondaryThinkSel) return;
+	const wanted = secondaryThinkingLevel || thinkSel.value || "off";
+	const valid = Array.from(secondaryThinkSel.options).some(
+		(option) => option.value === wanted,
+	);
+	if (valid) secondaryThinkSel.value = wanted;
+	else {
+		secondaryThinkingLevel = "";
+		localStorage.removeItem(SECONDARY_THINKING_KEY);
+		secondaryThinkSel.value = "off";
+	}
+}
 function setThinkSel(level) {
 	if (level) thinkSel.value = level;
 	refreshSbThink();
+	syncSecondaryThinking();
 }
 thinkSel.onchange = () => {
 	api({ type: "set_thinking_level", level: thinkSel.value });
 	refreshSbThink();
+	syncSecondaryThinking();
 };
+if (secondaryThinkSel)
+	secondaryThinkSel.onchange = () => {
+		secondaryThinkingLevel = secondaryThinkSel.value;
+		localStorage.setItem(SECONDARY_THINKING_KEY, secondaryThinkingLevel);
+	};
+syncSecondaryThinking();
 ponySel.onchange = () =>
 	api({ type: "prompt", message: "/ponytail " + ponySel.value });
 async function refreshPonytailMode(sessionFile) {
@@ -4724,8 +4934,7 @@ function refreshHealth() {
 					sb.git.textContent = parts.length
 						? `${branch} ${parts.join(" ")}`
 						: `${branch} · clean`;
-					sb.git.title =
-						"open Changes review · + staged  ~ unstaged  ? untracked";
+					sb.git.title = "open Changes review · + staged  ~ unstaged  ? untracked";
 					sb.git.setAttribute(
 						"aria-label",
 						"open Changes review: " + sb.git.textContent,
@@ -4801,12 +5010,12 @@ function updateCtxMeter(cu) {
 		? Math.max(0, Math.min(100, numericPercent))
 		: null;
 	document.body.classList.toggle("ctx-on", p != null);
-	document.body.classList.toggle(
-		"ctx-mid",
-		p != null && p >= 50 && p < CTX_HOT,
-	);
+	document.body.classList.toggle("ctx-mid", p != null && p >= 50 && p < CTX_HOT);
 	document.body.classList.toggle("ctx-hot", p != null && p >= CTX_HOT);
-	if (p != null) {
+	if (p == null) {
+		document.documentElement.style.setProperty("--ctx-pct", "0%");
+		if (ctxLabel) ctxLabel.textContent = "context —";
+	} else {
 		document.documentElement.style.setProperty("--ctx-pct", p + "%");
 		// the meter's label is now the single context readout (user decision
 		// 2026-08-07 — the statusbar sb-ctx display was removed)
@@ -4814,9 +5023,6 @@ function updateCtxMeter(cu) {
 			ctxLabel.textContent = `${p.toFixed(0)}% (${fmt(cu.tokens)}/${fmt(
 				cu.contextWindow,
 			)})`;
-	} else {
-		document.documentElement.style.setProperty("--ctx-pct", "0%");
-		if (ctxLabel) ctxLabel.textContent = "context —";
 	}
 }
 function applyState(data) {
@@ -4891,11 +5097,11 @@ function applyStats(data) {
 	const inp = t.input || 0;
 	const total = inp + (t.cacheRead || 0);
 	const hit = total ? Math.round(((t.cacheRead || 0) / total) * 100) : null;
-	sb.cache.textContent = `${fmt(t.cacheRead)}↓ ${fmt(t.cacheWrite)}↑${hit != null ? ` ${hit}%` : ""}`;
+	sb.cache.textContent = `${fmt(t.cacheRead)}↓ ${fmt(t.cacheWrite)}↑${hit == null ? "" : ` ${hit}%`}`;
 	sb.cache.title =
 		"cache: read↓ (from cache) / write↑ (newly created); % = reads ÷ (reads + fresh input)";
 	if (sb.cost)
-		sb.cost.textContent = data.cost != null ? data.cost.toFixed(3) : "…";
+		sb.cost.textContent = data.cost == null ? "…" : data.cost.toFixed(3);
 	queueSbOverflow();
 	refreshOpenAnalysis();
 	recordUsageSample(false);
@@ -4944,6 +5150,12 @@ async function fetchSnapshot() {
 		applyCommands(snap.commands);
 		applyModels(snap.models);
 		applyStats(snap.stats);
+		if (secondaryUx && Array.isArray(snap.secondaryRuns)) {
+			const activeSecondary = snap.secondaryRuns.find((run) =>
+				secondaryUx.canCancel(run),
+			);
+			if (activeSecondary) applySecondaryRun(activeSecondary);
+		}
 		// replay the current-turn buffer on top of the rebuilt committed history so
 		// in-flight tool cards / streaming text survive a reconnect. handle() is
 		// safe to re-run here: applyMessages just cleared toolBlocks + nulled cur,
@@ -5061,7 +5273,7 @@ es.onopen = () => {
 	try {
 		const saved = JSON.parse(localStorage.getItem(TODO_KEY) || "[]");
 		if (Array.isArray(saved) && saved.length) setTodos(saved);
-	} catch (e) {
+	} catch {
 		/* corrupt JSON — ignore, start empty */
 	}
 	fetchSnapshot(); // one GET /api/snapshot instead of 4 fire-and-forget RPCs (plan 0.2)
@@ -5146,6 +5358,8 @@ es.onmessage = (ev) => {
 				// session replaced (resume / new) — clear review context before the
 				// fresh history/state arrives, so old file links cannot linger.
 				resetGitReviewState();
+				void clearSecondaryOnServer().catch(() => {});
+				resetSecondary();
 				fetchSnapshot();
 			}
 		} else if (p.type === "extension_ui_request") {
@@ -5163,7 +5377,12 @@ es.onmessage = (ev) => {
 			toast(env.payload.split("\n")[0].slice(0, 90), "warn");
 	} else if (env.source === "pi_exit") {
 		setConnState("reconnecting"); // persist the disconnect — a toast alone is easy to miss
+		resetSecondary();
 		toast("pi subprocess exited — reconnecting…", "err");
+	} else if (env.source === "server" && env.type === "secondary_run") {
+		applySecondaryRun(env.run, env.threadId);
+	} else if (env.source === "server" && env.type === "secondary_cleared") {
+		resetSecondary();
 	} else if (env.source === "server" && env.type === "approval_resolved") {
 		// U6 C8 (FR-22/24): the server acknowledged OUR decision — close the
 		// approval UI. A mismatched requestId is someone else's broadcast and
@@ -5197,6 +5416,7 @@ es.onmessage = (ev) => {
 		curSessionFile = null;
 		resetUsageSession();
 		setStreaming(false);
+		resetSecondary();
 		// U6 C8: the old project's approvals/args must not leak into the new one
 		clearPendingApproval();
 		toolArgs.clear();
@@ -5255,6 +5475,34 @@ function applyCurrentModel() {
 	}
 	refreshSbModel();
 }
+function populateSecondaryModels() {
+	if (!secondaryModelSel) return;
+	setSafeHtml(secondaryModelSel, "");
+	if (!availableModels.length) {
+		const option = document.createElement("option");
+		option.value = "";
+		option.textContent = "no models";
+		secondaryModelSel.appendChild(option);
+		return;
+	}
+	const preferred = secondaryModelId || currentModelId;
+	const chosen =
+		availableModels.find((m) => m.provider + "/" + m.id === preferred) ||
+		availableModels[0];
+	for (const m of availableModels) {
+		const option = document.createElement("option");
+		option.value = JSON.stringify({ provider: m.provider, modelId: m.id });
+		option.textContent = (m.name || m.id) + " · " + m.provider;
+		secondaryModelSel.appendChild(option);
+	}
+	if (chosen) {
+		secondaryModelId = chosen.provider + "/" + chosen.id;
+		secondaryModelSel.value = JSON.stringify({
+			provider: chosen.provider,
+			modelId: chosen.id,
+		});
+	}
+}
 function populateModels(models) {
 	availableModels = Array.isArray(models) ? models : [];
 	setSafeHtml(modelSel, "");
@@ -5262,6 +5510,7 @@ function populateModels(models) {
 		const o = document.createElement("option");
 		o.textContent = "no models";
 		modelSel.appendChild(o);
+		populateSecondaryModels();
 		syncImageAttachmentUi();
 		return;
 	}
@@ -5272,6 +5521,7 @@ function populateModels(models) {
 		modelSel.appendChild(o);
 	});
 	applyCurrentModel();
+	populateSecondaryModels();
 	syncImageAttachmentUi();
 }
 modelSel.onchange = () => {
@@ -5290,6 +5540,15 @@ modelSel.onchange = () => {
 };
 $("models-btn").onclick = () =>
 	api({ type: "get_available_models", id: "init-models" });
+if (secondaryModelSel)
+	secondaryModelSel.onchange = () => {
+		try {
+			const value = JSON.parse(secondaryModelSel.value);
+			if (!value || !value.provider || !value.modelId) return;
+			secondaryModelId = value.provider + "/" + value.modelId;
+			localStorage.setItem(SECONDARY_MODEL_KEY, secondaryModelId);
+		} catch {}
+	};
 
 // ---- settings page ----
 // ponytail: a real in-shell PAGE (design.md §4), same pattern as #permissions:
@@ -5645,10 +5904,7 @@ async function onFleetListClick(e) {
 	}
 	if (e.target.classList.contains("fl-log-btn")) {
 		const pre = row.querySelector("pre.fl-log");
-		if (
-			!pre.hidden &&
-			pre.dataset.kind === (e.target.dataset.kind || "output")
-		) {
+		if (!pre.hidden && pre.dataset.kind === (e.target.dataset.kind || "output")) {
 			pre.hidden = true;
 			fleetLogs.delete(id);
 			return;
@@ -5664,7 +5920,7 @@ async function onFleetListClick(e) {
 				encodeURIComponent(id) +
 				"&kind=" +
 				kind +
-				(step != null ? "&step=" + encodeURIComponent(step) : "");
+				(step == null ? "" : "&step=" + encodeURIComponent(step));
 			const r = await fetch(q);
 			const j = await r.json();
 			const text = j.ok
@@ -5796,9 +6052,7 @@ function renderPermRules() {
 			`<div class="perm-rule"><code>${esc(r.pattern)}</code>` +
 			(exp ? `<span class="perm-rule-exp">${esc(exp)}</span>` : "") +
 			`<span class="perm-action ${esc(r.action)}">${esc(r.action)}</span>` +
-			r.layers
-				.map((l) => `<span class="perm-layer">${esc(l)}</span>`)
-				.join("") +
+			r.layers.map((l) => `<span class="perm-layer">${esc(l)}</span>`).join("") +
 			(r.layers.includes("user")
 				? `<button type="button" class="perm-rule-rm" data-rm="${esc(toolName)}" data-pat="${esc(r.pattern)}" title="remove rule">×</button>`
 				: "") +
@@ -5964,10 +6218,7 @@ async function fetchPermAudit() {
 		const j = await r.json();
 		const entries = (j && j.entries) || [];
 		if (!entries.length) {
-			setSafeHtml(
-				permPageEls.audit,
-				"<p class='perm-empty'>no decisions yet</p>",
-			);
+			setSafeHtml(permPageEls.audit, "<p class='perm-empty'>no decisions yet</p>");
 			return;
 		}
 		let h = "";
@@ -6232,11 +6483,7 @@ async function attachImages(files) {
 		(f) => f.type && f.type.indexOf("image/") === 0,
 	);
 	let added = 0;
-	for (
-		let i = 0;
-		i < list.length && pendingImages.length < CI.MAX_IMAGES;
-		i++
-	) {
+	for (let i = 0; i < list.length && pendingImages.length < CI.MAX_IMAGES; i++) {
 		const prepared = await CI.prepareImage(list[i]);
 		if (prepared) {
 			pendingImages.push(prepared);
@@ -6359,9 +6606,7 @@ function fmtSessionDate(iso) {
 	const hm = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 	if (sameDay) return "today " + hm;
 	if (isYest) return "yesterday " + hm;
-	return (
-		d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + hm
-	);
+	return d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + hm;
 }
 // Humanize a byte count for the session-list size indicator.
 function fmtBytes(n) {
@@ -6442,10 +6687,7 @@ async function showSessions() {
 		return;
 	}
 	if (!rows.length) {
-		setSafeHtml(
-			card,
-			`<h3>Sessions</h3><p class="um-hint">no sessions yet</p>`,
-		);
+		setSafeHtml(card, `<h3>Sessions</h3><p class="um-hint">no sessions yet</p>`);
 		return;
 	}
 	setSafeHtml(card, `<h3>Sessions</h3><div class="sessions"></div>`);
@@ -6592,9 +6834,7 @@ function setWorkspaceCollapsed(collapsed) {
 			"aria-label",
 			collapsed ? "show all workspaces" : "hide inactive workspaces",
 		);
-		toggle.title = collapsed
-			? "show all workspaces"
-			: "hide inactive workspaces";
+		toggle.title = collapsed ? "show all workspaces" : "hide inactive workspaces";
 	}
 }
 // Removed workspaces: server-side archive (~/.pi/agent/pi-webui-removed,
@@ -6802,10 +7042,7 @@ async function refreshSessionsSidebar() {
 	try {
 		data = await (await fetch("/api/sessions")).json();
 	} catch {
-		setSafeHtml(
-			host,
-			'<div class="ws-empty">session metadata unavailable</div>',
-		);
+		setSafeHtml(host, '<div class="ws-empty">session metadata unavailable</div>');
 		return;
 	}
 	wsSessionRows = (data.ok && data.sessions) || [];
@@ -6844,6 +7081,7 @@ function collapseWsbar() {
 	if (wsRailFocus && document.contains(wsRailFocus)) wsRailFocus.focus(); // return focus to the launcher (spec FR-2.4)
 }
 function expandWsbar(v) {
+	if (secondaryPane && !secondaryPane.hidden) closeSecondary();
 	if (railNarrow() && railSt.open) closeRail();
 	if (v) setWsView(v);
 	document.body.classList.add("ws-on");
@@ -6892,8 +7130,7 @@ function expandWsbar(v) {
 		};
 	}
 	const wsToggle = $("ws-toggle");
-	if (wsToggle)
-		wsToggle.onclick = () => setWorkspaceCollapsed(wsState.expanded);
+	if (wsToggle) wsToggle.onclick = () => setWorkspaceCollapsed(wsState.expanded);
 	const search = $("ws-search");
 	const searchClear = $("ws-search-clear");
 	if (search) {
@@ -7300,9 +7537,9 @@ function analysisBody() {
 	if (anSelected != null && !shown.some((t) => t.messageIndex === anSelected))
 		anSelected = null;
 	const selTurn =
-		anSelected != null
-			? shown.find((t) => t.messageIndex === anSelected)
-			: undefined;
+		anSelected == null
+			? undefined
+			: shown.find((t) => t.messageIndex === anSelected);
 	const maxV = shown.reduce((m, t) => Math.max(m, metric.read(t)), 0);
 	const bars = shown
 		.map((t) => {
@@ -7314,7 +7551,7 @@ function analysisBody() {
 				t.number +
 				" · " +
 				metric.fmt(v) +
-				(context != null ? " · " + Math.round(context) + "% context" : "");
+				(context == null ? "" : " · " + Math.round(context) + "% context");
 			return (
 				'<button type="button" class="an-bar' +
 				(v === maxV && maxV > 0 ? " peak" : "") +
@@ -7346,9 +7583,7 @@ function analysisBody() {
 		: [];
 	const contextLine = contextPoints.length
 		? '<svg class="an-context-line" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="context usage by turn"><title>Context usage by turn</title><polyline points="' +
-			contextPoints
-				.map((p) => p.x.toFixed(2) + "," + p.y.toFixed(2))
-				.join(" ") +
+			contextPoints.map((p) => p.x.toFixed(2) + "," + p.y.toFixed(2)).join(" ") +
 			'" />' +
 			contextPoints
 				.map(
@@ -7465,7 +7700,7 @@ function analysisBody() {
 	parts.push(
 		stat(
 			"context",
-			a.contextPercent != null ? Math.round(a.contextPercent) + "%" : "—",
+			a.contextPercent == null ? "—" : Math.round(a.contextPercent) + "%",
 			"context",
 		),
 	);
@@ -7642,9 +7877,9 @@ function analysisBody() {
 			failed
 				.slice(0, 12)
 				.map((c) =>
-					c.turnMessageIndex != null
-						? jump(c.turnMessageIndex, c.name, "turn near call")
-						: staticItem(c.name, ""),
+					c.turnMessageIndex == null
+						? staticItem(c.name, "")
+						: jump(c.turnMessageIndex, c.name, "turn near call"),
 				)
 				.join(""),
 		);
@@ -7760,10 +7995,7 @@ function resetGitReviewState() {
 	gitReviewTab = "changes";
 	gitBadgeSnap = null;
 	if (gEl() && gEl().isConnected && railWidget && railWidget.id === "git")
-		setSafeHtml(
-			gEl(),
-			'<div class="git"><p class="um-hint">loading…</p></div>',
-		);
+		setSafeHtml(gEl(), '<div class="git"><p class="um-hint">loading…</p></div>');
 }
 function openToolReview(path) {
 	gitPendingPath = path;
@@ -7826,9 +8058,7 @@ function renderGitList(s, notice) {
 	parts.push('<div class="git-head">');
 	parts.push('<span class="git-branch">⎇ ' + esc(branch) + "</span>");
 	if (review.ahead > 0)
-		parts.push(
-			'<span class="git-ahead">▲ ' + review.ahead + " unpushed</span>",
-		);
+		parts.push('<span class="git-ahead">▲ ' + review.ahead + " unpushed</span>");
 	parts.push('<span class="git-count">' + summary.changed + " changed</span>");
 	parts.push("</div>");
 	parts.push(
@@ -7837,9 +8067,7 @@ function renderGitList(s, notice) {
 			'">',
 	);
 	parts.push(
-		'<span class="git-summary-item">staged <b>' +
-			summary.staged +
-			"</b></span>",
+		'<span class="git-summary-item">staged <b>' + summary.staged + "</b></span>",
 	);
 	parts.push(
 		'<span class="git-summary-item">unstaged <b>' +
@@ -8241,6 +8469,12 @@ registerCommand(
 	"subagent fleet",
 	"background subagent runs — status, logs, stop (steer on the full page)",
 	() => openRailWidget("fleet"),
+);
+registerCommand(
+	"side-question",
+	"side question",
+	"ask without adding to the transcript",
+	openSecondary,
 );
 registerCommand("new-session", "new session", "start a fresh session", () => {
 	resetGitReviewState();

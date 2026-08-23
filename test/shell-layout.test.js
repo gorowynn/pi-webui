@@ -27,6 +27,26 @@ assert.match(
 );
 assert.doesNotMatch(css, /\.rail-tab\.sel::before/);
 assert.match(css, /\.rt-lbl\s*\{[\s\S]*clip:\s*rect\(0 0 0 0\)/);
+assert.match(html, /id="ws-rail-secondary"[\s\S]*title="btw chat"/);
+assert.match(app, /function syncSecondaryRail\(\)/);
+assert.match(app, /secondaryUx\.shouldApplyRun\(current, normalized\)/);
+assert.match(html, /id="secondary-clear"/);
+assert.match(app, /function clearSecondaryFromUi\(\)/);
+assert.match(app, /\/api\/secondary\/clear/);
+assert.match(html, /id="secondary-model"/);
+assert.match(html, /id="secondary-thinking"/);
+assert.match(app, /SECONDARY_MODEL_KEY = "pi:btw-model"/);
+assert.match(app, /SECONDARY_THINKING_KEY = "pi:btw-thinking"/);
+assert.match(app, /thinkingLevel,/);
+assert.match(
+	css,
+	/\.secondary-pane\s*\{[\s\S]*left:\s*calc\(var\(--rail-strip\)/,
+);
+assert.match(
+	css,
+	/\.secondary-pane\s*\{[\s\S]*width:\s*min\(440px, calc\(100vw - var\(--rail-strip\)/,
+);
+assert.match(css, /\.secondary-head-actions/);
 assert.match(css, /header \.statusbar\s*\{[\s\S]*justify-content:\s*center/);
 assert.match(css, /\.statusbar \.sb-inline\s*\{[\s\S]*flex:\s*0 1 auto/);
 assert.match(app, /function syncHeaderStatusOverflow\(\)/);
@@ -70,4 +90,4 @@ assert.match(
 	/body\.w-narrow\.rail-on\.rail-open \.rail-tab\s*\{[\s\S]*calc\(var\(--rail-strip\) - 16px\)/,
 );
 
-console.log("41 passed");
+console.log("53 passed");
