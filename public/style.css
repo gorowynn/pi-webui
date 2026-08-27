@@ -3021,6 +3021,26 @@ body.page-open .activity {
 	cursor: pointer;
 	max-width: 180px;
 }
+#settings input[type="password"] {
+	box-sizing: border-box;
+	width: min(180px, 55%);
+	min-width: 0;
+	background: var(--surface-raised);
+	color: var(--ink);
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	padding: 4px 6px;
+	font-size: 12px;
+}
+.set-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin: 2px 0 8px;
+}
+.set-actions button {
+	max-width: none !important;
+}
 #settings input[type="checkbox"] {
 	width: 16px;
 	height: 16px;

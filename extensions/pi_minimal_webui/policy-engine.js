@@ -553,6 +553,7 @@ const DEFAULT_CONFIG = {
 	browser_screenshot: "allow",
 	browser_console: "allow",
 	browser_open: "ask",
+	web_search: "ask",
 
 	// --- mutation: always ask ---
 	edit: "ask",

@@ -79,14 +79,16 @@ interface ExtensionAPI {
 // Reading it here means the literal can't drift between extension and browser.
 // Fallback keeps the extension loadable standalone (e.g. outside the webui).
 // ponytail: pi loads a subdir extension via index.ts only (see collectAutoExtensionEntries
-// in pi's package-manager). webui.ts and safeguard.ts are sibling factories with their own
-// `export default`; nothing else calls them, so wire them here or their commands never register.
+// in pi's package-manager). webui.ts, safeguard.ts, and web.ts are sibling factories
+// with their own `export default`; nothing else calls them, so wire them here or
+// their commands/tools never register.
 import ponytail from "./ponytail.js";
 import webui from "./webui.js";
 import safeguard from "./safeguard.js";
 import todo from "./todo.js";
 import discipline from "./discipline.js";
 import browser from "./browser.js";
+import web from "./web.js";
 
 // typeof guard keeps this safe at runtime; no @types/node types needed.
 const envMarker =
@@ -290,6 +292,7 @@ export default function (pi: ExtensionAPI) {
 	todo(pi);
 	discipline(pi);
 	browser(pi);
+	web(pi);
 	pi.registerTool({
 		name: "ask_user_question",
 		label: "Ask User Question",

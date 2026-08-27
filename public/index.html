@@ -332,6 +332,42 @@
 					</button>
 				</section>
 				<section class="set-sec">
+					<h4>web research</h4>
+					<p class="set-hint">
+						optional Brave Search API key. It stays on the server and is never shown back
+						to the browser or transcript.
+					</p>
+					<label class="set-row"
+						>provider
+						<select id="web-search-provider" title="web search provider">
+							<option value="brave">Brave Search</option>
+						</select></label
+					>
+					<label class="set-row"
+						>API key
+						<input
+							id="web-search-key"
+							type="password"
+							autocomplete="new-password"
+							spellcheck="false"
+							placeholder="paste key"
+							title="Brave Search API key"
+						/>
+					</label>
+					<div class="set-actions">
+						<button id="web-search-save" type="button">save key</button>
+						<button id="web-search-clear" type="button">clear</button>
+					</div>
+					<p
+						id="web-search-key-state"
+						class="set-hint"
+						role="status"
+						aria-live="polite"
+					>
+						not configured
+					</p>
+				</section>
+				<section class="set-sec">
 					<h4>developer</h4>
 					<label class="set-row"
 						>subagent view

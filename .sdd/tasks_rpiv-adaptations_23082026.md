@@ -1,6 +1,6 @@
 # Implementation Plan & TiCoder Test Suite: rpiv adaptations
 
-**Status:** Phase 4 — W02 complete; paused before W03 pending the next approval.
+**Status:** Phase 4 — W04 complete; paused before W05 pending the next approval.
 
 Each chunk is one independently verifiable change. Execute chunks in order, one at a time, and record the test result plus a plan/spec compliance note beneath the checklist item during Phase 4.
 
@@ -8,7 +8,7 @@ Each chunk is one independently verifiable change. Execute chunks in order, one 
 
 - `C01 → C02 → C03 → C04`
 - `C03 → C05 → C06 → C07`
-- `W01 → W02`, `W01 → W03`, `W01 → W04`, then `W02/W03/W04 → W05`
+- `W01 → W02`, `W01 → W03 → W03b`, `W01 → W04`, then `W02/W03b/W04 → W05`
 - `F01 → F02 → F03`
 - `A01 → A02`
 - `T01 → T02`
@@ -127,7 +127,7 @@ Each chunk is one independently verifiable change. Execute chunks in order, one 
   - **Phase 4 result:** PASS — `node test/web-fetch.test.js` (6 passed), `node --check web-fetch.js`, `node test/package.test.js`, `npm pack --dry-run`, and all 61 `test/*.test.js` files passed.
   - **Compliance:** `web-fetch.js` manually follows only bounded HTTP(S) redirects, resolves and validates every hostname's connection targets through W01, caps response bytes/text/redirects/time, rejects compressed/binary/unsupported/invalid-encoding bodies, preserves requested/final canonical URLs, and emits only validated opaque continuation references for bounded safe text retention. It is included in the published package.
 
-- [ ] **W03 — Add minimal configurable web search**
+- [x] **W03 — Add minimal configurable web search**
   - **Delivers:** FR-24, FR-29, FR-30, FR-31; plan goal for useful research without provider sprawl.
   - **Change:** Add a small provider adapter/configuration seam, explicit provider selection, server-only key resolution, bounded result normalization, and no silent fallback.
   - **TiCoder tests:** `test/web-search.test.js`
@@ -136,8 +136,22 @@ Each chunk is one independently verifiable change. Execute chunks in order, one 
     - explicit unavailable/uncredentialed providers fail rather than fallback (# FR-30);
     - result and query limits are enforced and provider count remains intentionally bounded (# FR-31).
   - **Depends on:** W01.
+  - **Phase 4 result:** PASS — `node test/web-search.test.js` (6 passed), `node --check web-search.js`, `node --check test/web-search.test.js`, `node test/package.test.js`, and `npm pack --dry-run` with `web-search.js` present.
+  - **Compliance:** `web-search.js` provides one explicitly selected Brave adapter, server-side environment/key resolution, no-fallback unavailable/credential errors, canonical safe source URLs, untrusted-data labeling, bounded query/result/field normalization, and secret redaction; the adapter is included in the published package.
 
-- [ ] **W04 — Add the GitHub URL target adapter**
+- [x] **W03b — Wire web search settings and the agent tool**
+  - **Delivers:** FR-24, FR-30, FR-35, FR-58, FR-60; plan goals for server-owned credentials and useful research without provider sprawl.
+  - **Change:** Add a fixed-path server settings API and accessible Settings controls for the provider/API key, then register `web_search` in the extension with the existing safeguard default and W03's settings-backed result contract.
+  - **TiCoder tests:** `test/web-search-wiring.test.js`
+    - validates and atomically persists settings without returning or browser-persisting the key (# FR-30, FR-60);
+    - exposes labelled password input, save/clear/status controls, and no secret in the GET payload (# FR-30, FR-58);
+    - registers only the bounded `web_search` tool, reads the server-owned config per call, labels remote data untrusted, and keeps provider selection explicit (# FR-24, FR-35);
+    - preserves the existing safeguard gate and extension registration surface (# FR-60).
+  - **Depends on:** W03.
+  - **Phase 4 result:** PASS — `node test/web-search-wiring.test.js` (5 passed), focused W03/policy/permissions/shell tests (all 5 files passed), and `node --check` for `server.js`, `web-search.js`, `public/app.js`, and the wiring test.
+  - **Compliance:** `server.js` persists the key only at the fixed user-agent path and exposes configured/provider metadata without the secret; Settings keeps the input transient; `web.ts` registers only `web_search`, reloads the server-owned config per call, labels remote data untrusted, and inherits the explicit `web_search: "ask"` safeguard rule.
+
+- [x] **W04 — Add the GitHub URL target adapter**
   - **Delivers:** FR-32, FR-33, FR-34; plan goal for direct repository research.
   - **Change:** Parse supported GitHub repository/tree/blob/raw forms into validated owner/repository/ref/path targets and resolve bounded listings/files through safe server-side requests.
   - **TiCoder tests:** `test/github-interceptor.test.js`
@@ -146,10 +160,12 @@ Each chunk is one independently verifiable change. Execute chunks in order, one 
     - handles missing paths, oversized files, rate limits, private auth failure, and API errors with bounded diagnostics (# FR-34);
     - never executes a browser-provided command or writes to the workspace (# FR-33).
   - **Depends on:** W01.
+  - **Phase 4 result:** PASS — `node test/github-interceptor.test.js` (10 passed), focused W01–W03 regression tests, `node test/package.test.js`, JavaScript syntax checks, `npm pack --dry-run`, and a live public GitHub tree smoke test.
+  - **Compliance:** `github-interceptor.js` validates GitHub repository/tree/blob/raw targets, rejects traversal and ambiguous refs, calls only the bounded GitHub Contents API through `web-fetch.js`, keeps optional `GH_TOKEN`/`GITHUB_TOKEN` server-side, maps bounded auth/rate/path/API failures, labels returned content untrusted, and performs no shell or workspace writes.
 
 - [ ] **W05 — Register web tools and permission/audit integration**
   - **Delivers:** FR-24, FR-30, FR-35, FR-60, FR-61; plan goal for safe agent-facing research.
-  - **Change:** Register `web_search`/`web_fetch` with the extension surface, connect normalized results, expose the GitHub adapter through fetch, and add policy/audit metadata without changing browser-CDP tools.
+  - **Change:** Extend the W03b `web_search` wiring with `web_fetch` and the GitHub adapter, then complete shared network-risk permission/audit metadata without changing browser-CDP tools.
   - **TiCoder tests:** `test/web-tools.test.js`, `test/policy-engine.test.js`, and `test/trust-boundary.test.js`
     - tool schemas distinguish search and fetch and preserve bounded result envelopes (# FR-24);
     - network-risk metadata is visible to safeguard/audit without exposing keys (# FR-30, FR-35);

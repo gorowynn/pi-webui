@@ -119,6 +119,10 @@ not a marketing page.
   the `<html data-theme>` attribute, persisted in `localStorage["pi:theme"]`;
   an inline `<head>` script sets it before first paint (no FOUC) and migrates a
   stale `obsidian` value → `dark`. `app.js` keeps the `<select>` in sync.
+- **Web research credentials:** the Settings page uses a labelled password field
+  with explicit save/clear actions. The key is transient in the browser and is
+  persisted only by the server; the status reports configuration without
+  echoing the credential.
 
 ## 2. Colors
 

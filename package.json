@@ -11,6 +11,8 @@
     "advisor-contract.js",
     "web-url-policy.js",
     "web-fetch.js",
+    "web-search.js",
+    "github-interceptor.js",
     "git.js",
     "isolated-prompt.js",
     "jsonl.js",

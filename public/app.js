@@ -5865,6 +5865,64 @@ if (secondaryModelSel)
 // relocated selects keep their IDs, so their onchange handlers (model/think/pony)
 // work unchanged from the old drawer position.
 const settingsEl = $("settings");
+const webSearchSettings = {
+	provider: $("web-search-provider"),
+	key: $("web-search-key"),
+	save: $("web-search-save"),
+	clear: $("web-search-clear"),
+	state: $("web-search-key-state"),
+};
+function webSearchSettingsState(text) {
+	webSearchSettings.state.textContent = text;
+}
+async function refreshWebSearchSettings() {
+	webSearchSettingsState("checking…");
+	try {
+		const response = await fetch("/api/web-search/config");
+		const data = await response.json();
+		if (!response.ok || !data.ok) throw new Error("settings unavailable");
+		if (typeof data.provider === "string" && data.provider)
+			webSearchSettings.provider.value = data.provider;
+		webSearchSettings.key.value = "";
+		webSearchSettingsState(
+			data.configured ? "configured · key stays on server" : "not configured",
+		);
+	} catch {
+		webSearchSettingsState("unavailable");
+	}
+}
+async function saveWebSearchSettings(clear = false) {
+	const key = clear ? "" : webSearchSettings.key.value.trim();
+	if (!clear && !key) {
+		webSearchSettingsState("enter a key or use clear");
+		webSearchSettings.key.focus();
+		return;
+	}
+	webSearchSettings.save.disabled = true;
+	webSearchSettings.clear.disabled = true;
+	webSearchSettingsState(clear ? "clearing…" : "saving…");
+	try {
+		const response = await fetch("/api/web-search/config", {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				provider: webSearchSettings.provider.value,
+				apiKey: key,
+			}),
+		});
+		const data = await response.json();
+		if (!response.ok || !data.ok) throw new Error("settings rejected");
+		webSearchSettings.key.value = "";
+		webSearchSettingsState(
+			data.configured ? "configured · key stays on server" : "not configured",
+		);
+	} catch {
+		webSearchSettingsState("could not save settings");
+	} finally {
+		webSearchSettings.save.disabled = false;
+		webSearchSettings.clear.disabled = false;
+	}
+}
 function openSettings() {
 	closePermPage();
 	closeFleetPage();
@@ -5873,16 +5931,20 @@ function openSettings() {
 	settingsEl.setAttribute("aria-hidden", "false");
 	document.body.classList.add("page-open");
 	settingsEl.focus();
+	refreshWebSearchSettings();
 }
 function closeSettings() {
 	settingsEl.hidden = true;
 	settingsEl.classList.remove("open");
 	settingsEl.setAttribute("aria-hidden", "true");
+	webSearchSettings.key.value = "";
 	document.body.classList.remove("page-open");
 }
 $("refresh-btn").onclick = () => location.reload();
 $("settings-btn").onclick = openSettings;
 $("settings-close").onclick = closeSettings;
+webSearchSettings.save.onclick = () => saveWebSearchSettings();
+webSearchSettings.clear.onclick = () => saveWebSearchSettings(true);
 settingsEl.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") closeSettings();
 });

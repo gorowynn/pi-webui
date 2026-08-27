@@ -6,6 +6,18 @@
 
 ## History
 
+### 2026-08-27 — feat(research): add bounded GitHub URL target adapter
+
+- Added `github-interceptor.js` for validated repository/tree/blob/raw URL parsing and bounded GitHub Contents API listings/files through the existing safe fetch path.
+- Added server-side token resolution, bounded auth/rate/path/API diagnostics, UTF-8/binary/size checks, untrusted-content labels, and no shell/workspace-write path.
+- Added `test/github-interceptor.test.js`; the adapter is included in the npm package.
+
+### 2026-08-27 — feat(research): add bounded configurable web search
+
+- Added `web-search.js` with explicit provider selection, server-side Brave key resolution, bounded query/result normalization, canonical safe source URLs, untrusted-data labeling, and fail-closed provider/credential errors.
+- Added `test/web-search.test.js`; the adapter is included in the npm package.
+- Added fixed-path Settings persistence and the `web_search` extension tool. W04 adds the standalone GitHub adapter; W05 extends the tool surface to `web_fetch` and shared network audit metadata.
+
 ### 2026-08-22 — feat(shell): centered right-rail tabs + left launcher rail for workspaces/sessions
 
 - Right workspace-tools rail: tabs sat flush against the screen edge (the

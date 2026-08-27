@@ -42,6 +42,7 @@ const {
 	cancelRun,
 	publicRun,
 } = require("./secondary-runs.js");
+const webSearch = require("./web-search.js");
 const {
 	normalizeAdvisorRequest,
 	normalizeAdvisorResult,
@@ -135,6 +136,7 @@ function permissionsPayload() {
 }
 const AUTH_FILE = path.join(os.homedir(), ".pi", "agent", "auth.json");
 const AGENT_DIR = path.dirname(AUTH_FILE); // ~/.pi/agent — pi's agent dir
+const WEB_SEARCH_CONFIG_PATH = webSearch.searchConfigPath(os.homedir());
 // removed-workspace archive: a SIBLING of sessions/ (discovery scans every
 // subdir of sessions/, so anything inside it would be re-discovered). Kept 7
 // days (purge on read + at startup), restorable, then deleted for real.
@@ -142,6 +144,20 @@ const ARCHIVE_DIR = path.join(AGENT_DIR, "pi-webui-removed");
 const USER_SAFEGUARD_PATH = path.join(AGENT_DIR, "safeguard.json"); // user policy layer (shared with safeguard.ts)
 const WORKSPACE_SAFEGUARD_PATH = () =>
 	path.join(PI_CWD, ".pi", "safeguard.json"); // tighten-only workspace layer
+function webSearchConfigPayload() {
+	const config = webSearch.readConfiguredSearchConfig(
+		process.env,
+		WEB_SEARCH_CONFIG_PATH,
+	);
+	const provider = webSearch.SEARCH_PROVIDER_NAMES.includes(config.provider)
+		? config.provider
+		: "";
+	return {
+		provider,
+		providers: webSearch.SEARCH_PROVIDER_NAMES,
+		configured: Boolean(provider && config.apiKey),
+	};
+}
 const HTML_PATH = path.join(__dirname, "public", "index.html");
 // ponytail: static assets (all browser-facing, under public/) split out of
 // index.html. Whitelist (not a full static dir) keeps the surface to known
@@ -1591,6 +1607,58 @@ const server = http.createServer(async (req, res) => {
 			respondForwardError(res, e);
 		}
 		return;
+	}
+
+	if (req.method === "GET" && url.pathname === "/api/web-search/config") {
+		// The browser sees provider availability only; the credential stays in the
+		// server-owned ~/.pi/agent/web-search.json file and never crosses this route.
+		try {
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({ ok: true, ...webSearchConfigPayload() }),
+			);
+		} catch {
+			res.writeHead(500, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({ ok: false, error: "web search settings unavailable" }),
+			);
+		}
+	}
+
+	if (req.method === "PUT" && url.pathname === "/api/web-search/config") {
+		try {
+			const raw = await readBody(req);
+			if (Buffer.byteLength(raw, "utf8") > 4096)
+				throw new Error("settings body too large");
+			const body = JSON.parse(raw || "{}");
+			if (
+				!body ||
+				typeof body !== "object" ||
+				Array.isArray(body) ||
+				typeof body.provider !== "string" ||
+				typeof body.apiKey !== "string"
+			)
+				throw new Error("invalid web search settings");
+			const checked = webSearch.validateSearchConfig({
+				provider: body.provider,
+				apiKey: body.apiKey,
+			});
+			if (!checked.ok) {
+				res.writeHead(400, { "Content-Type": "application/json" });
+				return res.end(JSON.stringify({ ok: false, errors: checked.errors }));
+			}
+			const saved = webSearch.writeStoredSearchConfig(
+				checked.config,
+				WEB_SEARCH_CONFIG_PATH,
+			);
+			res.writeHead(200, { "Content-Type": "application/json" });
+			return res.end(JSON.stringify({ ok: true, ...saved }));
+		} catch {
+			res.writeHead(400, { "Content-Type": "application/json" });
+			return res.end(
+				JSON.stringify({ ok: false, error: "invalid web search settings" }),
+			);
+		}
 	}
 
 	if (req.method === "GET" && url.pathname === "/api/permissions") {
