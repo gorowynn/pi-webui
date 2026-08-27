@@ -1,6 +1,6 @@
 # Implementation Plan & TiCoder Test Suite: rpiv adaptations
 
-**Status:** Phase 4 — Batch 1 complete; paused for approval before the next larger batch.
+**Status:** Phase 4 — W02 complete; paused before W03 pending the next approval.
 
 Each chunk is one independently verifiable change. Execute chunks in order, one at a time, and record the test result plus a plan/spec compliance note beneath the checklist item during Phase 4.
 
@@ -65,7 +65,7 @@ Each chunk is one independently verifiable change. Execute chunks in order, one 
 
 ## Advisor/reviewer
 
-- [ ] **C05 — Define advisor request and result normalization**
+- [x] **C05 — Define advisor request and result normalization**
   - **Delivers:** FR-16 through FR-19, FR-22, FR-23; plan goal for structured reviewer output.
   - **Change:** Define source-context selection, reviewer model provenance, verdict normalization (`proceed`, `revise`, `stop`, `unavailable`), bounded summary/risks/actions, truncation metadata, and retryable failure states.
   - **TiCoder tests:** `test/advisor-contract.test.js`
@@ -74,8 +74,10 @@ Each chunk is one independently verifiable change. Execute chunks in order, one 
     - model, completion time, and truncation provenance are retained (# FR-23);
     - empty, unavailable, aborted, and timed-out results are retryable (# FR-22).
   - **Depends on:** C01.
+  - **Phase 4 result:** PASS — `node test/advisor-contract.test.js` (10 passed), `node --check advisor-contract.js`, `node test/package.test.js`, and all 57 `test/*.test.js` files passed.
+  - **Compliance:** `advisor-contract.js` normalizes all three source kinds, selected/default model provenance, bounded structured verdicts, completion/context/output truncation metadata, and retryable unavailable failures; `package.json` ships the contract.
 
-- [ ] **C06 — Add isolated advisor execution**
+- [x] **C06 — Add isolated advisor execution**
   - **Delivers:** FR-18, FR-20, FR-21, FR-22; plan goal for stronger-model review without mutation.
   - **Change:** Connect advisor requests to the secondary-run runner and server lifecycle. Ensure the reviewer cannot edit, execute, change policy/todos, or send a primary message; expose only a copy/materialize result operation.
   - **TiCoder tests:** `test/advisor-api.test.js`
@@ -84,8 +86,10 @@ Each chunk is one independently verifiable change. Execute chunks in order, one 
     - copy/materialize is explicit and does not auto-send (# FR-21);
     - model/credential/timeout/cancel failures preserve retryable state (# FR-22).
   - **Depends on:** C02, C03, C05.
+  - **Phase 4 result:** PASS — `node test/advisor-api.test.js`, `node --check` on advisor/isolated/secondary/server files, and all 58 `test/*.test.js` files passed.
+  - **Compliance:** advisor runs use the existing no-tools/no-extensions isolated child, publish bounded structured results with copyable `text`, and never forward primary RPC or tool commands; failure/cancel paths remain retryable. Browser review controls remain deferred to C07.
 
-- [ ] **C07 — Add advisor controls and result presentation**
+- [x] **C07 — Add advisor controls and result presentation**
   - **Delivers:** FR-16, FR-21, FR-23, FR-58, FR-59, FR-61; plan goal for review assistance without duplicate systems.
   - **Change:** Add review actions to eligible draft/turn surfaces, reviewer model selection/provenance, verdict cards, risks/actions, retry/cancel, and copy-to-composer behavior. Keep current approval, diff, todo, and fleet surfaces unchanged.
   - **TiCoder tests:** `test/advisor-ux.test.js`
@@ -95,10 +99,12 @@ Each chunk is one independently verifiable change. Execute chunks in order, one 
     - keyboard/focus/narrow-width projections remain valid (# FR-58, FR-59);
     - existing permission/todo/fleet render contracts still pass (# FR-61).
   - **Depends on:** C04, C06.
+  - **Phase 4 result:** PASS — `node test/advisor-ux.test.js`, `node --check public/app.js`, static server smoke (`/`, `/advisor-ux.js`, `/app.js`, `/style.css` all 200 with correct script order), and all 59 `test/*.test.js` files passed.
+  - **Compliance:** `advisor-ux.js`, the advisor pane, composer/assistant-turn review actions, provenance/verdict/risk/action cards, retry/cancel, and explicit copy-to-composer satisfy FR-16/21/23/58/59 while preserving existing secondary, permission, todo, fleet, and diff surfaces. Live Chromium smoke was deferred because no browser binary is installed.
 
 ## Web and GitHub research
 
-- [ ] **W01 — Add the network target safety policy**
+- [x] **W01 — Add the network target safety policy**
   - **Delivers:** FR-25, FR-26, FR-35; plan goal for security-reviewed web access.
   - **Change:** Create a pure validator for URL schemes, credentials, hostname/IP classes, DNS answers, redirects, and final targets. Keep the policy separate from browser heuristics and reusable by search/fetch/GitHub paths.
   - **TiCoder tests:** `test/web-url-policy.test.js`
@@ -106,8 +112,10 @@ Each chunk is one independently verifiable change. Execute chunks in order, one 
     - validates IPv4, IPv6, hostname resolution, redirect chains, and final targets (# FR-26);
     - treats remote page text as untrusted data and exposes policy reasons without secrets (# FR-35).
   - **Depends on:** none.
+  - **Phase 4 result:** PASS — `node test/web-url-policy.test.js` (6 passed), `node --check web-url-policy.js`, `node test/package.test.js`, `npm pack --dry-run`, and all 60 `test/*.test.js` files passed.
+  - **Compliance:** `web-url-policy.js` accepts only HTTP(S), rejects credentials/local/private/link-local/multicast/metadata targets, validates supplied DNS connection addresses and every redirect hop with bounded limits, and labels remote text as untrusted data without echoing unsafe input in policy errors. The module is included in the published package.
 
-- [ ] **W02 — Add bounded web-fetch and content extraction**
+- [x] **W02 — Add bounded web-fetch and content extraction**
   - **Delivers:** FR-27, FR-28, FR-29; plan goal for predictable, bounded page retrieval.
   - **Change:** Implement HTTP(S) fetch limits, redirect handling through W01, content-type handling, text extraction, truncation metadata, and safe server-owned continuation artifacts.
   - **TiCoder tests:** `test/web-fetch.test.js`
@@ -116,6 +124,8 @@ Each chunk is one independently verifiable change. Execute chunks in order, one 
     - returns truncation metadata and opaque continuation references without browser filesystem paths (# FR-28);
     - preserves requested/final canonical URLs and bounded retrieval metadata (# FR-29).
   - **Depends on:** W01.
+  - **Phase 4 result:** PASS — `node test/web-fetch.test.js` (6 passed), `node --check web-fetch.js`, `node test/package.test.js`, `npm pack --dry-run`, and all 61 `test/*.test.js` files passed.
+  - **Compliance:** `web-fetch.js` manually follows only bounded HTTP(S) redirects, resolves and validates every hostname's connection targets through W01, caps response bytes/text/redirects/time, rejects compressed/binary/unsupported/invalid-encoding bodies, preserves requested/final canonical URLs, and emits only validated opaque continuation references for bounded safe text retention. It is included in the published package.
 
 - [ ] **W03 — Add minimal configurable web search**
   - **Delivers:** FR-24, FR-29, FR-30, FR-31; plan goal for useful research without provider sprawl.

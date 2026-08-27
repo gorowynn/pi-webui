@@ -587,6 +587,9 @@
 								<option value="ideate">Ideate</option>
 								<option value="precise">Precise</option>
 							</select>
+							<button id="advisor-open" title="review the draft with an isolated advisor" disabled>
+								Review draft
+							</button>
 							<button id="sessions" title="resume an older session">⏱ Sessions</button>
 							<button id="new" title="new session">＋ New</button>
 							<span class="hint">Enter = send</span>
@@ -683,6 +686,66 @@
 			</div>
 		</aside>
 
+		<aside
+			id="advisor-pane"
+			class="advisor-pane"
+			role="dialog"
+			aria-modal="false"
+			aria-labelledby="advisor-title"
+			hidden
+		>
+			<div class="advisor-card">
+				<div class="advisor-head">
+					<div>
+						<strong id="advisor-title">Advisor review</strong>
+						<span class="advisor-kicker">isolated · no tools · never sent automatically</span>
+					</div>
+					<button id="advisor-close" type="button" aria-label="Close advisor review">&times;</button>
+				</div>
+				<div class="advisor-settings" aria-label="Advisor review settings">
+					<label>
+						source
+						<select id="advisor-source" title="Advisor source">
+							<option value="draft">Current draft</option>
+							<option value="assistant-turn">Last assistant turn</option>
+							<option value="request-context">Current request context</option>
+						</select>
+					</label>
+					<label>
+						model
+						<select id="advisor-model" title="Advisor model">
+							<option value="">configured default</option>
+						</select>
+					</label>
+				</div>
+				<div id="advisor-source-preview" class="advisor-source-preview" role="note"></div>
+				<div id="advisor-status" class="advisor-status" role="status" aria-live="polite">
+					ready to review
+				</div>
+				<section id="advisor-result" class="advisor-result" aria-labelledby="advisor-verdict" hidden>
+					<div class="advisor-result-head">
+						<strong id="advisor-verdict">review unavailable</strong>
+						<span id="advisor-provenance" class="advisor-provenance"></span>
+					</div>
+					<div id="advisor-summary" class="advisor-summary"></div>
+					<div id="advisor-risks-wrap" class="advisor-list-wrap" hidden>
+						<strong>Risks</strong>
+						<ul id="advisor-risks"></ul>
+					</div>
+					<div id="advisor-actions-wrap" class="advisor-list-wrap" hidden>
+						<strong>Actions</strong>
+						<ul id="advisor-actions"></ul>
+					</div>
+				</section>
+				<div class="advisor-actions">
+					<button id="advisor-cancel" type="button" disabled>Cancel</button>
+					<button id="advisor-retry" type="button" disabled>Retry</button>
+					<button id="advisor-copy" type="button" disabled>Copy recommendation</button>
+					<button id="advisor-run" class="primary" type="button">Review</button>
+				</div>
+			</div>
+		</aside>
+
 		<div id="modal" role="dialog" aria-modal="false" aria-label="pi dialog">
 			<div id="modal-wrap">
 				<div class="card" id="modal-card"></div>
@@ -715,6 +778,7 @@
 		<script src="sidebar-ux.js"></script>
 		<script src="a11y-contrast.js"></script>
 		<script src="secondary-ux.js"></script>
+		<script src="advisor-ux.js"></script>
 		<script src="rail.js"></script>
 		<script src="app.js"></script>
 	</body>

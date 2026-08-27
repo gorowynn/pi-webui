@@ -26,7 +26,9 @@ const actLabel = $("act-label");
 // single escaper rule, GOTCHAS #12).
 const dv = window.diffView;
 const secondaryUx = window.secondaryUx;
+const advisorUx = window.advisorUx;
 const secondaryPane = $("secondary-pane");
+const advisorPane = $("advisor-pane");
 const secondaryStatus = $("secondary-status");
 const secondaryThreadEl = $("secondary-thread");
 const secondaryForm = $("secondary-form");
@@ -39,16 +41,37 @@ const secondaryClose = $("secondary-close");
 const secondaryRailBtn = $("ws-rail-secondary");
 const secondaryModelSel = $("secondary-model");
 const secondaryThinkSel = $("secondary-thinking");
+const advisorOpenBtn = $("advisor-open");
+const advisorCloseBtn = $("advisor-close");
+const advisorSourceSel = $("advisor-source");
+const advisorModelSel = $("advisor-model");
+const advisorSourcePreview = $("advisor-source-preview");
+const advisorStatus = $("advisor-status");
+const advisorResult = $("advisor-result");
+const advisorVerdict = $("advisor-verdict");
+const advisorProvenance = $("advisor-provenance");
+const advisorSummary = $("advisor-summary");
+const advisorRisksWrap = $("advisor-risks-wrap");
+const advisorRisks = $("advisor-risks");
+const advisorActionsWrap = $("advisor-actions-wrap");
+const advisorActions = $("advisor-actions");
+const advisorCancelBtn = $("advisor-cancel");
+const advisorRetryBtn = $("advisor-retry");
+const advisorCopyBtn = $("advisor-copy");
+const advisorRunBtn = $("advisor-run");
+const ADVISOR_MODEL_KEY = "pi:advisor-model";
 const SECONDARY_MODEL_KEY = "pi:btw-model";
 const SECONDARY_THINKING_KEY = "pi:btw-thinking";
 let secondaryModelId = localStorage.getItem(SECONDARY_MODEL_KEY) || "";
 let secondaryThinkingLevel = localStorage.getItem(SECONDARY_THINKING_KEY) || "";
+let advisorModelId = localStorage.getItem(ADVISOR_MODEL_KEY) || "";
 let secondaryState = {
 	threadId: null,
 	thread: [],
 	run: null,
 	resultRunId: null,
 };
+let advisorState = { run: null, source: null };
 // Usage telemetry stays browser-local and degrades to the existing inspector
 // when the optional pure module or storage is unavailable.
 const usageTelemetry = window.usageTelemetry;
@@ -354,6 +377,7 @@ function syncSecondaryRail() {
 
 function openSecondary() {
 	if (!secondaryPane) return;
+	if (advisorPane && !advisorPane.hidden) closeAdvisor();
 	if (document.body.classList.contains("ws-on")) collapseWsbar();
 	secondaryPane.hidden = false;
 	syncSecondaryRail();
@@ -470,6 +494,7 @@ async function clearSecondaryFromUi() {
 	try {
 		await clearSecondaryOnServer();
 		clearSecondaryState();
+		resetAdvisor();
 		renderSecondary();
 		if (secondaryInput) secondaryInput.focus();
 	} catch (error) {
@@ -486,6 +511,247 @@ function copySecondaryToComposer() {
 	inputEl.focus();
 	toast("Copied to composer — not sent", "ok");
 }
+
+function selectedAdvisorModel() {
+	if (!advisorModelSel || !advisorModelSel.value) return undefined;
+	try {
+		const value = JSON.parse(advisorModelSel.value);
+		return value && value.provider && value.modelId ? value : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function advisorSourceFor(kind) {
+	if (!advisorUx) return null;
+	if (kind === "draft") return advisorUx.normalizeSource("draft", inputEl.value);
+	return advisorUx.sourceFromMessages(lastMessages, kind);
+}
+
+function currentAdvisorSource() {
+	const kind = advisorSourceSel && advisorSourceSel.value;
+	if (kind === "draft") return advisorSourceFor("draft");
+	if (advisorState.source && advisorState.source.kind === kind)
+		return advisorState.source;
+	return advisorSourceFor(kind);
+}
+
+function advisorRequestId() {
+	const id =
+		window.crypto && typeof window.crypto.randomUUID === "function"
+			? window.crypto.randomUUID()
+			: `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	return `advisor-${id}`;
+}
+
+function renderAdvisorList(wrap, list, values) {
+	if (!wrap || !list) return;
+	list.replaceChildren();
+	const items = Array.isArray(values) ? values : [];
+	wrap.hidden = !items.length;
+	for (const value of items) {
+		const item = document.createElement("li");
+		item.textContent = value;
+		list.appendChild(item);
+	}
+}
+
+function renderAdvisor() {
+	if (!advisorUx || !advisorStatus) return;
+	const run = advisorState.run
+		? advisorUx.normalizeRun(advisorState.run)
+		: null;
+	const source = currentAdvisorSource();
+	const active = !!run && advisorUx.canCancel(run);
+	const result = run && run.result ? advisorUx.normalizeResult(run.result) : null;
+	if (advisorSourcePreview) {
+		advisorSourcePreview.textContent = source
+			? `${source.label}: ${source.text.slice(0, 600)}${source.truncated || source.text.length > 600 ? "…" : ""}`
+			: "No valid source context is available for review.";
+	}
+	advisorStatus.dataset.state = run ? run.status : "ready";
+	advisorStatus.textContent = advisorUx.statusText(run);
+	if (advisorSourceSel) advisorSourceSel.disabled = active;
+	if (advisorModelSel) advisorModelSel.disabled = active;
+	if (advisorCancelBtn) advisorCancelBtn.disabled = !active;
+	if (advisorRetryBtn) advisorRetryBtn.disabled = !advisorUx.canRetry(run);
+	if (advisorRunBtn) {
+		advisorRunBtn.disabled = active || !advisorUx.canReview(source);
+		advisorRunBtn.textContent = active ? "Reviewing…" : "Review";
+	}
+	if (advisorCopyBtn)
+		advisorCopyBtn.disabled =
+			!result || result.verdict === "unavailable" || !advisorUx.materialize(result);
+	if (advisorResult) advisorResult.hidden = !result;
+	if (!result) return;
+	const verdict = advisorUx.verdictMeta(result.verdict);
+	if (advisorVerdict) {
+		advisorVerdict.textContent = `Review · ${verdict.label}`;
+		advisorVerdict.dataset.tone = verdict.tone;
+	}
+	if (advisorProvenance) {
+		const p = advisorUx.provenance(result);
+		const done = p.completedAt
+			? ` · ${new Date(p.completedAt).toLocaleTimeString()}`
+			: "";
+		advisorProvenance.textContent = `${p.model} · ${p.context}${done}`;
+	}
+	if (advisorSummary) setSafeHtml(advisorSummary, md(result.summary || ""));
+	renderAdvisorList(advisorRisksWrap, advisorRisks, result.risks);
+	renderAdvisorList(advisorActionsWrap, advisorActions, result.actions);
+}
+
+function openAdvisor(source) {
+	if (!advisorPane || !advisorUx) return;
+	if (secondaryPane && !secondaryPane.hidden) closeSecondary();
+	if (document.body.classList.contains("ws-on")) collapseWsbar();
+	if (!advisorState.run || !advisorUx.canCancel(advisorState.run)) {
+		advisorState.source = source || currentAdvisorSource();
+		advisorState.run = null;
+	}
+	if (advisorSourceSel && advisorState.source) advisorSourceSel.value = advisorState.source.kind;
+	advisorPane.hidden = false;
+	renderAdvisor();
+	if (advisorRunBtn && !advisorRunBtn.disabled) advisorRunBtn.focus();
+	else if (advisorSourceSel) advisorSourceSel.focus();
+}
+
+function closeAdvisor() {
+	if (advisorPane) advisorPane.hidden = true;
+}
+
+function resetAdvisor() {
+	advisorState = { run: null, source: null };
+	closeAdvisor();
+	renderAdvisor();
+}
+
+function applyAdvisorRun(run) {
+	if (!advisorUx || !run || typeof run !== "object" || run.kind !== "advisor") return;
+	const normalized = advisorUx.normalizeRun(run);
+	const current = advisorState.run;
+	if (!advisorUx.shouldApplyRun(current, normalized)) return;
+	advisorState.run = normalized;
+	if (!advisorState.source && normalized.result && normalized.result.sourceKind)
+		advisorState.source = advisorSourceFor(normalized.result.sourceKind);
+	renderAdvisor();
+}
+
+async function submitAdvisor() {
+	if (!advisorUx) return;
+	const source = currentAdvisorSource();
+	if (!advisorUx.canReview(source)) {
+		renderAdvisor();
+		return;
+	}
+	const body = advisorUx.requestPayload(source, selectedAdvisorModel(), advisorRequestId());
+	if (!body) return;
+	advisorState.source = source;
+	advisorState.run = advisorUx.normalizeRun({
+		id: "pending",
+		kind: "advisor",
+		status: "queued",
+	});
+	renderAdvisor();
+	try {
+		const response = await fetch("/api/secondary", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+		const data = await response.json().catch(() => ({}));
+		if (!response.ok || !data.ok)
+			throw new Error(data.error || `request failed (${response.status})`);
+		applyAdvisorRun(data.run);
+	} catch (error) {
+		advisorState.run = advisorUx.normalizeRun({
+			id: "local-error",
+			kind: "advisor",
+			status: "failed",
+			result: {
+				verdict: "unavailable",
+				summary: error.message || "advisor request failed",
+				retryable: true,
+				error: { code: "ADVISOR_FAILED", message: error.message || "request failed" },
+			},
+		});
+		renderAdvisor();
+	}
+}
+
+async function cancelAdvisor() {
+	const run = advisorState.run;
+	if (!run || !advisorUx || !advisorUx.canCancel(run)) return;
+	try {
+		const response = await fetch("/api/secondary/cancel", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ id: run.id }),
+		});
+		const data = await response.json().catch(() => ({}));
+		if (!response.ok || !data.ok) throw new Error(data.error || "cancel failed");
+		applyAdvisorRun(data.run);
+	} catch (error) {
+		toast(error.message || "advisor cancel failed", "err");
+	}
+}
+
+function copyAdvisorToComposer() {
+	const run = advisorState.run;
+	if (!run || !run.result || !advisorUx) return;
+	const text = advisorUx.materialize(run.result);
+	if (!text) return;
+	inputEl.value = text;
+	autosize();
+	syncAdvisorOpen();
+	inputEl.focus();
+	toast("Copied recommendation to composer — not sent", "ok");
+}
+
+function appendAdvisorAction(host, message) {
+	if (!advisorUx || !host || host.querySelector(".advisor-review-link")) return;
+	const source = advisorUx.normalizeSource(
+		"assistant-turn",
+		advisorUx.contentText(message && message.content),
+		message && (message.id || message.messageId),
+	);
+	if (!source) return;
+	const button = document.createElement("button");
+	button.type = "button";
+	button.className = "advisor-review-link";
+	button.textContent = "Review with advisor";
+	button.setAttribute("aria-label", "Review assistant turn with advisor");
+	button.addEventListener("click", () => openAdvisor(source));
+	host.appendChild(button);
+}
+
+function syncAdvisorOpen() {
+	if (!advisorOpenBtn || !advisorUx) return;
+	const source = advisorSourceFor("draft");
+	advisorOpenBtn.disabled = !advisorUx.canReview(source);
+	advisorOpenBtn.title = advisorOpenBtn.disabled
+		? "Enter a draft before requesting a review"
+		: "Review the draft with an isolated advisor";
+}
+
+if (advisorSourceSel)
+	advisorSourceSel.onchange = () => {
+		advisorState.source = advisorSourceFor(advisorSourceSel.value);
+		advisorState.run = null;
+		renderAdvisor();
+	};
+if (advisorModelSel)
+	advisorModelSel.onchange = () => {
+		const model = selectedAdvisorModel();
+		advisorModelId = model ? model.provider + "/" + model.modelId : "";
+		localStorage.setItem(ADVISOR_MODEL_KEY, advisorModelId);
+	};
+if (advisorOpenBtn) advisorOpenBtn.onclick = () => openAdvisor(advisorSourceFor("draft"));
+if (advisorCloseBtn) advisorCloseBtn.onclick = closeAdvisor;
+if (advisorRunBtn) advisorRunBtn.onclick = () => void submitAdvisor();
+if (advisorRetryBtn) advisorRetryBtn.onclick = () => void submitAdvisor();
+if (advisorCancelBtn) advisorCancelBtn.onclick = () => void cancelAdvisor();
+if (advisorCopyBtn) advisorCopyBtn.onclick = copyAdvisorToComposer;
 if (secondaryForm)
 	secondaryForm.addEventListener("submit", (event) => {
 		event.preventDefault();
@@ -902,6 +1168,7 @@ function finalizeBubble(content, message) {
 	cur.thinkBuf = "";
 	renderAssistantContent(src);
 	renderUsageStrip(cur.bubble, message, cur.turnNo);
+	appendAdvisorAction(cur.bubble, message || { content: src });
 }
 // ponytail: thinking-block lifecycle. The <details> carries its own
 // state: the .thinking class swaps the summary indicator from caret to
@@ -4249,6 +4516,7 @@ function renderMessage(msg) {
 			newAssistantBubble();
 			renderAssistantContent(msg.content);
 			renderUsageStrip(cur.bubble, msg, cur.turnNo);
+			appendAdvisorAction(cur.bubble, msg);
 		}
 		cur = null;
 	} else if (msg.role === "toolResult") {
@@ -5151,10 +5419,15 @@ async function fetchSnapshot() {
 		applyModels(snap.models);
 		applyStats(snap.stats);
 		if (secondaryUx && Array.isArray(snap.secondaryRuns)) {
-			const activeSecondary = snap.secondaryRuns.find((run) =>
-				secondaryUx.canCancel(run),
+			const activeSecondary = snap.secondaryRuns.find(
+				(run) => run.kind !== "advisor" && secondaryUx.canCancel(run),
 			);
 			if (activeSecondary) applySecondaryRun(activeSecondary);
+		}
+		if (advisorUx && Array.isArray(snap.secondaryRuns)) {
+			const advisorRuns = snap.secondaryRuns.filter((run) => run.kind === "advisor");
+			const latestAdvisor = advisorRuns[advisorRuns.length - 1];
+			if (latestAdvisor) applyAdvisorRun(latestAdvisor);
 		}
 		// replay the current-turn buffer on top of the rebuilt committed history so
 		// in-flight tool cards / streaming text survive a reconnect. handle() is
@@ -5360,6 +5633,7 @@ es.onmessage = (ev) => {
 				resetGitReviewState();
 				void clearSecondaryOnServer().catch(() => {});
 				resetSecondary();
+				resetAdvisor();
 				fetchSnapshot();
 			}
 		} else if (p.type === "extension_ui_request") {
@@ -5378,11 +5652,14 @@ es.onmessage = (ev) => {
 	} else if (env.source === "pi_exit") {
 		setConnState("reconnecting"); // persist the disconnect — a toast alone is easy to miss
 		resetSecondary();
+		resetAdvisor();
 		toast("pi subprocess exited — reconnecting…", "err");
 	} else if (env.source === "server" && env.type === "secondary_run") {
-		applySecondaryRun(env.run, env.threadId);
+		if (env.run && env.run.kind === "advisor") applyAdvisorRun(env.run);
+		else applySecondaryRun(env.run, env.threadId);
 	} else if (env.source === "server" && env.type === "secondary_cleared") {
 		resetSecondary();
+		resetAdvisor();
 	} else if (env.source === "server" && env.type === "approval_resolved") {
 		// U6 C8 (FR-22/24): the server acknowledged OUR decision — close the
 		// approval UI. A mismatched requestId is someone else's broadcast and
@@ -5417,6 +5694,7 @@ es.onmessage = (ev) => {
 		resetUsageSession();
 		setStreaming(false);
 		resetSecondary();
+		resetAdvisor();
 		// U6 C8: the old project's approvals/args must not leak into the new one
 		clearPendingApproval();
 		toolArgs.clear();
@@ -5503,6 +5781,35 @@ function populateSecondaryModels() {
 		});
 	}
 }
+
+function populateAdvisorModels() {
+	if (!advisorModelSel) return;
+	setSafeHtml(advisorModelSel, "");
+	const fallback = document.createElement("option");
+	fallback.value = "";
+	fallback.textContent = "configured default";
+	advisorModelSel.appendChild(fallback);
+	for (const m of availableModels) {
+		const option = document.createElement("option");
+		option.value = JSON.stringify({ provider: m.provider, modelId: m.id });
+		option.textContent = (m.name || m.id) + " · " + m.provider;
+		advisorModelSel.appendChild(option);
+	}
+	const preferred = advisorModelId || currentModelId;
+	if (preferred) {
+		const chosen = availableModels.find(
+			(m) => m.provider + "/" + m.id === preferred,
+		);
+		if (chosen) {
+			advisorModelId = chosen.provider + "/" + chosen.id;
+			advisorModelSel.value = JSON.stringify({
+				provider: chosen.provider,
+				modelId: chosen.id,
+			});
+		}
+	}
+}
+
 function populateModels(models) {
 	availableModels = Array.isArray(models) ? models : [];
 	setSafeHtml(modelSel, "");
@@ -5511,6 +5818,7 @@ function populateModels(models) {
 		o.textContent = "no models";
 		modelSel.appendChild(o);
 		populateSecondaryModels();
+		populateAdvisorModels();
 		syncImageAttachmentUi();
 		return;
 	}
@@ -5522,6 +5830,7 @@ function populateModels(models) {
 	});
 	applyCurrentModel();
 	populateSecondaryModels();
+	populateAdvisorModels();
 	syncImageAttachmentUi();
 }
 modelSel.onchange = () => {
@@ -6414,6 +6723,7 @@ function autosize() {
 inputEl.oninput = () => {
 	autosize();
 	updatePalette();
+	syncAdvisorOpen();
 };
 
 // ---- image input (plan 4.10) ----
@@ -8475,6 +8785,12 @@ registerCommand(
 	"side question",
 	"ask without adding to the transcript",
 	openSecondary,
+);
+registerCommand(
+	"advisor-review",
+	"review with advisor",
+	"review the current draft or last assistant turn without sending it",
+	() => openAdvisor(),
 );
 registerCommand("new-session", "new session", "start a fresh session", () => {
 	resetGitReviewState();

@@ -154,6 +154,72 @@ function safeError(error) {
 	return { code, message };
 }
 
+function publicAdvisorResult(result) {
+	if (!isObject(result)) return null;
+	const summary = boundedText(result.summary, DEFAULT_LIMITS.outputChars).text;
+	const out = {
+		text: summary,
+		requestId: typeof result.requestId === "string" ? result.requestId : null,
+		sourceKind:
+			typeof result.sourceKind === "string" ? result.sourceKind : null,
+		verdict:
+			typeof result.verdict === "string" ? result.verdict : "unavailable",
+		summary,
+		risks: Array.isArray(result.risks)
+			? result.risks
+					.filter((item) => typeof item === "string")
+					.slice(0, 8)
+					.map((item) => boundedText(item, 2000).text)
+			: [],
+		actions: Array.isArray(result.actions)
+			? result.actions
+					.filter((item) => typeof item === "string")
+					.slice(0, 8)
+					.map((item) => boundedText(item, 2000).text)
+			: [],
+		model:
+			isObject(result.model) &&
+			typeof result.model.provider === "string" &&
+			typeof result.model.modelId === "string"
+				? {
+						provider: result.model.provider,
+						modelId: result.model.modelId,
+					}
+				: null,
+		modelSource:
+			typeof result.modelSource === "string" ? result.modelSource : "default",
+		contextTruncated: result.contextTruncated === true,
+		outputTruncated: result.outputTruncated === true,
+		retryable: result.retryable === true,
+		createdAt: Number.isFinite(result.createdAt) ? result.createdAt : null,
+	};
+	if (isObject(result.usage)) {
+		const usage = {};
+		for (const key of [
+			"inputTokens",
+			"outputTokens",
+			"cacheRead",
+			"cacheWrite",
+			"totalTokens",
+			"cost",
+		]) {
+			if (Number.isFinite(result.usage[key]) && result.usage[key] >= 0)
+				usage[key] = result.usage[key];
+		}
+		if (Object.keys(usage).length) out.usage = usage;
+	}
+	if (isObject(result.error)) {
+		out.error = {
+			code:
+				typeof result.error.code === "string"
+					? result.error.code.slice(0, 64)
+					: "ADVISOR_FAILED",
+			message: boundedText(result.error.message, 256).text,
+		};
+	}
+	return out;
+}
+
 function publicRun(run) {
 	if (!isObject(run)) return null;
 	const out = {
@@ -168,15 +234,19 @@ function publicRun(run) {
 		cancelRequested: run.cancelRequested === true,
 	};
 	if (run.result != null) {
-		const result = isObject(run.result) ? run.result : { text: run.result };
-		out.result = {
-			text:
-				typeof result.text === "string"
-					? result.text.slice(0, DEFAULT_LIMITS.outputChars)
-					: "",
-			outputTruncated:
-				result.outputTruncated === true || out.outputTruncated,
-		};
+		if (run.kind === "advisor") {
+			out.result = publicAdvisorResult(run.result);
+		} else {
+			const result = isObject(run.result) ? run.result : { text: run.result };
+			out.result = {
+				text:
+					typeof result.text === "string"
+						? result.text.slice(0, DEFAULT_LIMITS.outputChars)
+						: "",
+				outputTruncated:
+					result.outputTruncated === true || out.outputTruncated,
+			};
+		}
 	}
 	if (run.error) out.error = safeError(run.error);
 	return out;

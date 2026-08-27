@@ -196,6 +196,7 @@ function runIsolatedPrompt(options) {
 		const prompt = prepared.prompt;
 		const systemPrompt = prepared.systemPrompt;
 		const model = prepared.model;
+		let selectedModel = model;
 		const thinkingLevel = prepared.thinkingLevel;
 		const piBin = process.env.PI_BIN || "pi";
 		const args = buildIsolatedArgs(systemPrompt);
@@ -342,10 +343,14 @@ function runIsolatedPrompt(options) {
 							"SECONDARY_NO_MODEL",
 							"No model is available to run the prompt",
 						);
-					await send({
-						type: "set_model",
+					selectedModel = {
 						provider: cheapest.provider,
 						modelId: cheapest.id,
+					};
+					await send({
+						type: "set_model",
+						provider: selectedModel.provider,
+						modelId: selectedModel.modelId,
 					});
 				}
 				if (thinkingLevel)
@@ -373,6 +378,8 @@ function runIsolatedPrompt(options) {
 					text: output.text,
 					inputTruncated: prepared.inputTruncated,
 					outputTruncated: output.truncated,
+					model: selectedModel,
+					modelSource: model ? "selected" : "resolved",
 				});
 			} catch (e) {
 				finish(e);
