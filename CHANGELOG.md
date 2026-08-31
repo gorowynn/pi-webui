@@ -6,6 +6,21 @@
 
 ## History
 
+### 2026-08-29 — fix(runtime): allow successful SDK session rebinding commands
+
+- Fixed `switch_session` (and the related new/fork/clone operations) being
+  reported as `stale runtime operation` after the SDK correctly rebound the
+  active session. The generation guard still rejects disposal or replacement
+  races.
+- Added command-contract coverage and a live SDK `switch_session` regression
+  smoke check.
+
+### 2026-08-29 — feat(runtime): migrate pi-webui from RPC subprocess to SDK
+
+- Added `pi-sdk-runtime.js`, which owns the official `AgentSessionRuntime`, maps the existing browser command surface, normalizes SDK events, and bridges extension dialogs through the approval broker.
+- Replaced CLI process startup, JSONL command forwarding, and `/api/rpc` with direct SDK commands and runtime disposal/recreation on workspace switches.
+- Migrated isolated prompt improvement to a no-tools in-memory SDK session and updated package metadata to require Node 22.19+ plus `@earendil-works/pi-coding-agent`.
+
 ### 2026-08-27 — feat(research): add bounded GitHub URL target adapter
 
 - Added `github-interceptor.js` for validated repository/tree/blob/raw URL parsing and bounded GitHub Contents API listings/files through the existing safe fetch path.

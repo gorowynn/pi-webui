@@ -25,12 +25,12 @@ optional visual evidence.
 
 The design preserves pi-webui's existing constraints:
 
-- Node 18+ and browser-native SSE/fetch;
+- Node 22.19+ and browser-native SSE/fetch;
 - no React, bundler, transpiler, or runtime `npm install`;
 - no required third-party browser-automation dependency;
-- one active pi child per workspace;
+- one active SDK runtime per workspace;
 - local-only operation by default;
-- existing RPC, safeguard, and tool-result contracts remain authoritative.
+- existing `/api/cmd`, SSE, safeguard, and tool-result contracts remain authoritative.
 
 Playwright may be useful as an optional companion later, but it is not part of
 the core package. The core implementation uses the Chromium DevTools Protocol
@@ -81,7 +81,8 @@ browser-internal URLs.
 LLM
  │ custom browser tool call
  ▼
-pi --mode rpc
+server.js
+ │ official Pi SDK / AgentSessionRuntime
  │ extensions/pi_minimal_webui/browser.ts
  ▼
 zero-dependency CDP client
@@ -103,9 +104,8 @@ The facade owns a lazy, session-scoped browser manager. It should:
 - honor the tool `AbortSignal`;
 - close the transport and managed process on `session_shutdown`.
 
-Browser state belongs in the extension for the first slice. No new HTTP route
-is needed: pi already emits the tool result through RPC, and `server.js`
-broadcasts it over the existing SSE path. A server-owned browser manager can be
+Browser state belongs in the extension for the first slice. No new HTTP route is needed: the SDK session emits the tool result, and
+`server.js` broadcasts it over the existing SSE path. A server-owned browser manager can be
 considered later if multiple pi sessions must share a browser.
 
 ### 4.2 CDP transport
@@ -214,7 +214,7 @@ view. Console results return a `cursor`; default delta reads advance the
 manager cursor, while `mode: "full"` recovers the retained window. An expired
 cursor sets `dropped: true` instead of silently losing evidence.
 
-These limits protect the RPC JSONL stream, SSE queue, and model context.
+These limits protect the SDK event stream, SSE queue, and model context.
 
 ### 6.1 Console delta contract
 
@@ -308,8 +308,7 @@ Required controls:
    and target field so approvals are meaningful.
 6. **No weakened browser sandbox:** do not add `--no-sandbox` or disable web
    security as a convenience flag.
-7. **Bounded output:** enforce limits before data reaches the RPC stream or
-   session history.
+7. **Bounded output:** enforce limits before data reaches the SDK event stream or session history.
 8. **Fail closed:** missing browser, invalid target, stale ref, disallowed host,
    or expired command must be a tool error, not an implicit fallback.
 

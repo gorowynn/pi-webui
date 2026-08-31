@@ -170,7 +170,7 @@
 
 ### C9 — End-to-end compatibility and browser verification
 
-- [ ] Run the complete existing test suite, add focused contract checks for the
+- [x] Run the complete existing test suite, add focused contract checks for the
       final selectors/API assumptions, and perform live browser verification at
       wide and narrow viewport sizes. Resolve console, overflow, stale-state,
       focus, and permission regressions before final verification.
@@ -312,8 +312,11 @@ C1 ──▶ C2 ──▶ C3 ──▶ C4 ──▶ C7 ──▶ C9
 
 ### C9 — completed
 
-- Ran all 48 `test/*.test.js` files after the final helper change; all exited 0.
-  `node --check public/app.js` and the CommonJS/browser helper checks also pass.
+- Ran the complete suite (`npm test`): all 65 test files exited 0. The focused
+  Git/review/layout/a11y/permission checks and `node --check public/app.js` also
+  pass; `git diff --check` is clean.
+  - **Tests:** `node test/git-review.test.js`, `node test/git-review-contract.test.js`, `node test/git.test.js`, `node test/diff-contract.test.js`, `node test/shell-layout.test.js`, `node test/sidebar-layout.test.js`, `node test/composer-layout.test.js`, `node test/rail-resize.test.js`, `node test/a11y-contract.test.js`, `node test/contrast.test.js`, `node test/trust-boundary.test.js`, `node test/transcript-layout.test.js`, and `npm test` — PASS.
+  - **Compliance:** C9 satisfies the plan's final compatibility, responsive, accessibility, safety, and regression gates; all C1–C8 dependencies are checked off. ✓
 - Live smoke on a fresh temporary server confirmed `/api/health`, the `dev ~16 ?8`
   Changes review control, Git rail tab, empty-state composer, and zero browser
   console entries. The existing server on port 4317 was preserved and still

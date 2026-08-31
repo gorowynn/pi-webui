@@ -283,12 +283,11 @@ function api(obj) {
 	p.catch(() => {});
 	return p;
 }
-// Awaitable RPC (plan 0.2 server side): POST /api/rpc resolves with pi's
-// {type:"response"} payload. Used by actions that need to confirm success before
-// proceeding (e.g. session rename, plan 4.9). 30s server-side timeout.
-async function rpcAwait(obj) {
+// Await an SDK command acknowledgement when an action needs to confirm success
+// before proceeding (for example, session rename).
+async function commandAwait(obj) {
 	try {
-		const r = await fetch("/api/rpc", {
+		const r = await fetch("/api/cmd", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(obj),
@@ -2616,7 +2615,7 @@ function renderSessionUsage(provider) {
 	return (
 		`<div class="um-meta"><span>${esc(usageProviderLabel(provider))} · pi session</span></div>` +
 		rows +
-		`<p class="um-hint">Subscription allowance is available in your provider account; pi RPC reports session tokens only.</p>`
+		`<p class="um-hint">Subscription allowance is available in your provider account; the SDK reports session tokens only.</p>`
 	);
 }
 async function renderUsage(provider) {
@@ -3382,7 +3381,7 @@ async function renderPlanDoc(container, rel) {
 })();
 
 // ---- ask_user_question: rich modal, answer flows back as the tool result ----
-// pi-webui extension shadows the npm tool (which auto-declines in RPC mode:
+// pi-webui extension shadows the npm tool (which needs terminal UI):
 // ctx.ui.custom is a no-op stub). The extension blocks on ctx.ui.input(MARKER);
 // tool_execution_start already shipped the full args (previews/multiselect) here,
 // so we render the rich modal from args and reply with a JSON-encoded result.
@@ -3823,7 +3822,7 @@ function buildPermissionBody(title, message) {
 // safeguard select (even in parallel mode, preparation is sequential), so
 // curToolName/curToolArgs always describe the prompt currently on screen.
 //
-// Note on approval granularity: the RPC permission protocol carries ONE
+// Note on approval granularity: the permission protocol carries ONE
 // allow/deny response per prompt, so the browser can't approve individual
 // hunks independently — the tabs are for *review*, the buttons below
 // decide the whole prompt.
@@ -5043,7 +5042,7 @@ function handle(payload) {
 		}
 
 		case "response":
-			// rpc command ack; surface failures
+			// SDK command ack; surface failures
 			if (payload.success === false)
 				toast(`${payload.command || "cmd"} failed: ${payload.error || ""}`, "err");
 			break;
@@ -5121,7 +5120,7 @@ function refreshSbThink() {
 	sb.think.textContent = thinkSel.value || "—";
 	queueSbOverflow();
 }
-// ponytail: header dropdowns for thinking level (set_thinking_level RPC) and
+// ponytail: header dropdowns for thinking level (set_thinking_level SDK command) and
 // ponytail mode (/ponytail extension command). Both sync from pi on load;
 // the statusbar think readout mirrors the select (refreshSbThink).
 ["off", "minimal", "low", "medium", "high", "xhigh", "max"].forEach((l) =>
@@ -5252,7 +5251,7 @@ function updateIdeBadge(info) {
 window.piWebuiIdeStatus = updateIdeBadge;
 updateIdeBadge(window.piWebuiIdeInfo || null);
 // ---- snapshot bootstrap (plan 0.2 / F§5.1) ----
-// One GET /api/snapshot replaces the 4 fire-and-forget init RPCs the client used
+// One GET /api/snapshot replaces the fire-and-forget init commands the client used
 // to send (one HTTP round-trip instead of five SSE-matched responses). The
 // apply* helpers are the exact logic the SSE init-* handlers used inline —
 // factored out so both paths share them (the SSE branches stay as back-compat
@@ -5402,7 +5401,7 @@ function recordUsageSample(force) {
 }
 // fetch the bundled bootstrap object (state+messages+commands+models+stats) in
 // one round-trip and apply it. Fire-and-forget at every call site (like the old
-// api() RPCs were) — resolves false on failure; the pi_ready/workspace_changed
+	// api() commands were) — resolves false on failure; the pi_ready/workspace_changed
 // re-sync paths re-call it.
 async function fetchSnapshot() {
 	try {
@@ -5549,14 +5548,14 @@ es.onopen = () => {
 	} catch {
 		/* corrupt JSON — ignore, start empty */
 	}
-	fetchSnapshot(); // one GET /api/snapshot instead of 4 fire-and-forget RPCs (plan 0.2)
+	fetchSnapshot(); // one GET /api/snapshot instead of several init commands
 	refreshWorkspaces(); // populate the left workspace sidebar on (re)connect
 };
 // ponytail: pause stat/health/usage polling while the tab is backgrounded — avoids
 // burning requests every 3s/6s/60s on an unseen window. Re-sync on return.
 // stats cadence is streaming-aware: 3s while an agent turn is active (the token/
 // cost bar tracks live), 15s idle (cheap drift correction instead of ~20 idle
-// RPC round-trips/min pinging pi for get_session_stats). rescheduleStats() flips
+// round-trips/min pinging pi for get_session_stats). rescheduleStats() flips
 // the cadence on each setStreaming.
 const STATS_FAST = 3000,
 	STATS_IDLE = 15000;
@@ -5653,7 +5652,7 @@ es.onmessage = (ev) => {
 		setConnState("reconnecting"); // persist the disconnect — a toast alone is easy to miss
 		resetSecondary();
 		resetAdvisor();
-		toast("pi subprocess exited — reconnecting…", "err");
+		toast("Pi SDK runtime stopped — reconnecting…", "err");
 	} else if (env.source === "server" && env.type === "secondary_run") {
 		if (env.run && env.run.kind === "advisor") applyAdvisorRun(env.run);
 		else applySecondaryRun(env.run, env.threadId);
@@ -5683,7 +5682,7 @@ es.onmessage = (ev) => {
 		if (wasDown) toast("pi reconnected", "ok");
 	} else if (env.source === "server" && env.type === "workspace_changed") {
 		// another tab (or this one) switched project: pi already respawned in the
-		// new cwd. Clear the old run's view, re-init from the respawned pi, and
+		// new cwd. Clear the old run's view, re-init from the replacement SDK runtime, and
 		// refresh the sidebar + SDD rail for the new project. Idempotent — the
 		// initiating tab receives its own broadcast too (EC-6).
 		setTodos([]);
@@ -6926,12 +6925,12 @@ async function send() {
 	addUser(text, sendImages);
 	let cmd;
 	if (text.startsWith("/")) {
-		// extension command / skill / template: send as prompt (rpc expands it)
+		// extension command / skill / template: send as prompt (SDK expands it)
 		cmd = { type: "prompt", message: text };
 	} else if (streaming) {
 		const mode = modeSel.value;
-		// ponytail: RPC wire key is "follow_up" (snake-case), not "followUp";
-		// auto defaults to steer. See pi dist modes/rpc/rpc-types.d.ts.
+		// ponytail: protocol key is "follow_up" (snake-case), not "followUp";
+		// auto defaults to steer.
 		const how =
 			mode === "auto" ? "steer" : mode === "followUp" ? "follow_up" : mode;
 		cmd =
@@ -6952,7 +6951,7 @@ async function send() {
 }
 // ---- sessions: list + resume older sessions ----
 // /api/sessions (server.js) enumerates this project's JSONL; switch_session
-// (RPC) swaps the live pi session to the chosen file, then the response handler
+// swaps the live SDK session to the chosen file, then the response handler
 // above re-fetches get_state/get_messages to repaint the transcript.
 function pathEq(a, b) {
 	// slash/case-agnostic: paths from the server and from pi may differ in form
@@ -7029,7 +7028,7 @@ async function renameCurrentSession() {
 		toast("name too long (max 120 chars)", "warn");
 		return;
 	}
-	const r = await rpcAwait({ type: "set_session_name", name });
+	const r = await commandAwait({ type: "set_session_name", name });
 	if (r && r.ok) {
 		toast("session renamed", "ok");
 		refreshSessionsSidebar();

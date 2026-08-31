@@ -2,14 +2,14 @@
 // pi-webui — standalone launcher.
 //
 // Spawns server.js DETACHED in its own process group so closing the terminal /
-// console window doesn't kill the webui — the server (and the `pi --mode rpc`
-// child it owns) keep running after this launcher exits. Then opens the browser
+// console window doesn't kill the webui — the server and its SDK runtime keep
+// running after this launcher exits. Then opens the browser
 // (unless PI_WEBUI_NO_OPEN) and reports. The detached child writes its ready
 // line + any startup error to a temp log; we poll that to detect an early death
-// (port in use, pi spawn failure) before claiming success.
+// (port in use, SDK initialization failure) before claiming success.
 //
-// Env (all optional): PORT (4317), PI_BIN (pi), PI_ARGS, PI_CWD (defaults to
-// your shell's cwd), PI_WEBUI_NO_SWITCH (1/true/yes → disable workspace
+// Env (all optional): PORT (4317), PI_CWD (defaults to your shell's cwd),
+// PI_CODING_AGENT_DIR, PI_WEBUI_NO_SWITCH (1/true/yes → disable workspace
 // switching + hide the workspace list, e.g. for IDE use), PI_WEBUI_NO_OPEN
 // (1/true/yes → skip opening the browser).
 const { spawn, spawnSync } = require("child_process");
@@ -24,13 +24,13 @@ const truthy = (v) => /^(1|true|yes)$/i.test(v || "");
 
 // ---- standalone stop: kill by port ------------------------------------
 // ponytail: kill by PORT, not a stored PID. Works when no handle exists —
-// server hung, pi restarted, or launched via another process (global bin vs
-// /webui vs `node server.js`). server.js has no signal handler and leaves its
-// `pi --mode rpc` child orphaned on death, so we force-kill the WHOLE tree under
-// the listener, not just the listener.
-// ceiling: a server.js crash that orphaned its pi child BEFORE you ran this is
-// no longer under the listener's tree and won't be reaped (intentionally —
-// matching `pi --mode rpc` blindly risks killing unrelated pi sessions).
+// server hung, SDK runtime restarted, or launched via another process (global
+// bin vs /webui vs `node server.js`). We force-kill the WHOLE tree under the
+// listener, not just the listener.
+// ceiling: a server.js crash that orphaned a descendant tool process BEFORE you
+// ran this is no longer under the listener's tree and won't be reaped
+// (intentionally — matching unrelated processes blindly risks killing unrelated
+// sessions).
 //
 //   pi-webui --stop [port]      (port defaults to PORT env / 4317)
 //   pi-webui stop [port]

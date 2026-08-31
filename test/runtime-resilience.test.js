@@ -140,8 +140,7 @@ async function main() {
 			env: {
 				...process.env,
 				PORT: String(port),
-				PI_BIN: `pi-webui-missing-${process.pid}`,
-				PI_ARGS: "",
+				PI_WEBUI_DISABLE_SDK: "1",
 				PI_CWD: ROOT,
 				PI_WEBUI_NO_OPEN: "1",
 			},
@@ -153,7 +152,6 @@ async function main() {
 			await waitForHealth(port);
 			const cases = [
 				["POST", "/api/cmd", { type: "prompt", message: "resilience" }],
-				["POST", "/api/rpc", { type: "get_state", id: "resilience" }],
 				["DELETE", "/api/permissions/grants"],
 				["DELETE", "/api/permissions/grants/1"],
 			];
@@ -179,8 +177,7 @@ async function main() {
 			env: {
 				...process.env,
 				PORT: String(port),
-				PI_BIN: `pi-webui-missing-${process.pid}-body`,
-				PI_ARGS: "",
+				PI_WEBUI_DISABLE_SDK: "1",
 				PI_CWD: ROOT,
 				PI_WEBUI_NO_OPEN: "1",
 			},
@@ -196,7 +193,7 @@ async function main() {
 						hostname: "127.0.0.1",
 						port,
 						method: "POST",
-						path: "/api/rpc",
+						path: "/api/cmd",
 						headers: { "Content-Type": "application/json" },
 					},
 					(res) => {
@@ -209,7 +206,7 @@ async function main() {
 				req.on("error", reject);
 				req.end("not json");
 			});
-			assert.equal(response.status, 200);
+			assert.equal(response.status, 500);
 			assert.equal(parseJson(response).ok, false);
 		} finally {
 			stopChild(child);
@@ -235,7 +232,7 @@ async function main() {
 	await test("keeps the forwarding boundary and commit ordering explicit", () => {
 		const source = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
 		assert.match(source, /class PiUnavailableError/);
-		assert.match(source, /res\.writeHead\(unavailable \? 503 : 500/);
+		assert.match(source, /res\.writeHead\(stale \? 409 : unavailable \? 503 : 500/);
 		assert.doesNotMatch(
 			source,
 			/respondForwardError\([\s\S]{0,500}error\.stack/,
@@ -259,6 +256,15 @@ async function main() {
 			revokeRoute.indexOf("sendToPi") <
 				revokeRoute.indexOf("grantsMirror.splice"),
 		);
+	});
+
+	await test("serializes SDK startup and rejects stale runtime work", () => {
+		const source = fs.readFileSync(path.join(ROOT, "server.js"), "utf8");
+		assert.match(source, /let startPiPromise = null;/);
+		assert.match(source, /if \(startPiPromise\) return startPiPromise;/);
+		assert.match(source, /let workspaceSwitchTail = Promise\.resolve\(\);/);
+		assert.match(source, /if \(pi !== target\) throw new PiStaleError/);
+		assert.match(source, /if \(pi !== runtime \|\| shuttingDown\)/);
 	});
 }
 

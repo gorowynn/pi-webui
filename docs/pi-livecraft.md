@@ -25,10 +25,10 @@ session-analysis data, responsive CSS repair, and large-session JSONL handling.
 
 Keep pi-webui's defining constraints and advantages:
 
-- zero build and no runtime dependency installation;
-- one Node bridge and one active Pi process per workspace;
-- native SSE + fetch and additive fire-and-forget/awaitable RPC paths;
-- automatic Pi crash recovery;
+- zero build and the SDK as the runtime dependency;
+- one Node bridge and one active SDK runtime per workspace;
+- native SSE + fetch and a stable browser command protocol;
+- bounded SDK initialization recovery;
 - editable standalone and native JetBrains diff review;
 - safeguard, subagents, agent-owned todos/discipline, and SDD;
 - compaction-aware history and current-turn reconnect replay.
@@ -39,7 +39,7 @@ Do not import React, Vite, Radix, the manager/supervisor split, or process pooli
 
 | Area | pi-webui implementation |
 | --- | --- |
-| Awaitable RPC + bootstrap snapshot | `server.js` `/api/rpc` and `/api/snapshot` |
+| SDK runtime + bootstrap snapshot | `pi-sdk-runtime.js`, `server.js` `/api/snapshot` |
 | Strict JSONL framing | `jsonl.js` |
 | Process-tree termination | centralized server/isolated runner helpers |
 | Workspace path confinement | `safePath`, `WorkspaceFileError`, realpath gates |
@@ -93,12 +93,12 @@ Fix this as part of U4/A1: maintain one canonical client message model, or fetch
 only current messages after `agent_end` without rerendering the transcript. The
 rail migration deliberately leaves that data-freshness concern separate.
 
-### 3.3 Main Pi JSONL records are capped too low and fail silently
+### 3.3 Runtime transport
 
-`jsonl.js` defaults to an 8 MiB record cap, and the main Pi stdout decoder in
-`server.js` uses that default. Pi can return an entire session history in one
-JSONL response. When that response exceeds the cap, the decoder silently skips
-it and the awaiting RPC eventually times out.
+The former JSONL subprocess transport is no longer used by the webui. The main
+bridge now reads the SDK session and entry tree directly, so large snapshot
+records do not pass through a webui-owned JSONL decoder. `jsonl.js` remains for
+legacy helper/test coverage and is not part of the primary runtime path.
 
 pi-livecraft now distinguishes ordinary records from session records and allows
 64 MiB for the latter (`server/jsonl.ts`, `server/pi-process.ts`, and

@@ -10,7 +10,7 @@ const {
 	assistantText,
 	assistantErrorMessage,
 	IMPROVE_DIRECTIONS,
-	buildIsolatedArgs,
+	buildIsolatedOptions,
 	prepareIsolatedPrompt,
 	runIsolatedPrompt,
 } = require("../isolated-prompt.js");
@@ -207,14 +207,73 @@ function ok(name, cond) {
 })();
 
 (function () {
-	const args = buildIsolatedArgs("system");
+	const options = buildIsolatedOptions("system");
 	ok(
-		"isolated args disable tools/extensions/skills",
-		["--no-tools", "--no-extensions", "--no-skills"].every((x) =>
-			args.includes(x),
-		),
+		"isolated SDK options disable tools/resources",
+		options.noTools === "all" &&
+			options.thinkingLevel === "off" &&
+			options.resourceLoaderOptions.noExtensions &&
+			options.resourceLoaderOptions.noSkills &&
+			options.resourceLoaderOptions.noContextFiles,
 	);
 })();
+
+function fakeSdk(capture) {
+	const model = {
+		provider: "fake",
+		id: "cheap",
+		name: "Cheap",
+		reasoning: false,
+		cost: { input: 0.1, output: 0.2 },
+	};
+	const manager = { cwd: "/workspace", entries: [] };
+	return {
+		SessionManager: { inMemory: () => manager },
+		SettingsManager: {
+			create(cwd, agentDir, options) {
+				capture.settings = { cwd, agentDir, options };
+				return { cwd, agentDir };
+			},
+		},
+		async createAgentSessionServices(options) {
+			capture.services = options;
+			return {
+				modelRuntime: {
+					getAvailableSnapshot: () => [model],
+					getModel: () => model,
+				},
+				resourceLoader: {},
+			};
+		},
+		async createAgentSessionFromServices({ noTools, thinkingLevel }) {
+			capture.sessionOptions = { noTools, thinkingLevel };
+			const session = {
+				modelRuntime: {
+					getAvailableSnapshot: () => [model],
+					getModel: () => model,
+				},
+				messages: [],
+				async setModel(selected) {
+					capture.model = selected;
+				},
+				setThinkingLevel(level) {
+					capture.thinkingLevel = level;
+				},
+				async prompt(prompt, options) {
+					capture.prompt = { prompt, options };
+					this.messages = [{ role: "assistant", content: "isolated answer" }];
+				},
+				async abort() {
+					capture.aborted = true;
+				},
+				dispose() {
+					capture.disposed = true;
+				},
+			};
+			return { session };
+		},
+	};
+}
 
 // ===== IMPROVE_DIRECTIONS =====
 (function () {
@@ -225,6 +284,25 @@ function ok(name, cond) {
 })();
 
 (async function () {
+	const capture = {};
+	const isolated = await runIsolatedPrompt({
+		cwd: process.cwd(),
+		prompt: "question",
+		sdk: fakeSdk(capture),
+	});
+	ok(
+		"runs a prompt through an injected SDK session",
+		isolated.text === "isolated answer" && capture.prompt.prompt === "question",
+	);
+	ok(
+		"isolated SDK session keeps tools and extensions disabled",
+		capture.sessionOptions.noTools === "all" &&
+			capture.services.resourceLoaderOptions.noExtensions &&
+			capture.services.resourceLoaderOptions.noSkills &&
+			capture.services.resourceLoaderOptions.noContextFiles,
+	);
+	ok("isolated SDK session is disposed", capture.disposed === true);
+
 	const controller = new AbortController();
 	controller.abort();
 	let error = null;

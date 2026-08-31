@@ -30,7 +30,7 @@ durable knowledge live only in a code comment or a chat transcript; move it here
 | [`browser-tools.md`](browser-tools.md) | Proposed zero-dependency Chromium CDP tools for local browser inspection and pi-webui debugging. |
 | [`usage-telemetry.md`](usage-telemetry.md) | Browser-local Usage sampling, rolling retention, per-session persistence, and sparkline downsampling. |
 | [`improvements.md`](improvements.md) | Current source- and primary-research-backed UI/UX, accessibility, adaptive-layout, permission-safety, JetBrains, and perceived-performance audit. |
-| [`security-review.md`](security-review.md) | Security and runtime-robustness review of the current working tree: rated findings, fault probes, recovery gaps, validation results, verified controls, and remediation order. |
+| [`security-review.md`](security-review.md) | Historical pre-SDK security and runtime-robustness review: rated findings, fault probes, recovery gaps, validation results, and remediation history. |
 | [`pi-livecraft.md`](pi-livecraft.md) | Current post-adoption comparison with pi-livecraft: shipped overlap, verified gaps, residual candidates, and boundaries that must not be copied. |
 | [`plans.md`](plans.md) | Staged execution plan, file/test touchpoints, dependencies, and exit gates for the roadmap's Now/Next horizons. |
 | [`roadmap.md`](roadmap.md) | Prioritized product horizons, accepted outcomes, dependencies, conditional candidates, and explicit non-goals. Source of truth for *what we build next*. |

@@ -1,4 +1,12 @@
-/* secondary-run HTTP/SSE lifecycle smoke test with a disposable fake pi */
+/*
+ * Secondary-run HTTP/SSE smoke test against a real provider-backed SDK server.
+ * Opt in explicitly: PI_WEBUI_LIVE_INTEGRATION=1 node test/secondary-api.test.js
+ */
+
+if (process.env.PI_WEBUI_LIVE_INTEGRATION !== "1") {
+	console.log("secondary-api.test.js — skipped (provider-backed SDK integration)");
+	process.exit(0);
+}
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -219,15 +227,12 @@ function stopChild(child) {
 async function main() {
 	const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-webui-secondary-"));
 	fs.mkdirSync(path.join(temp, "agent"), { recursive: true });
-	const wrapper = makeFakePi(temp);
 	const port = await freePort();
 	const child = spawn(process.execPath, [path.join(ROOT, "server.js")], {
 		cwd: ROOT,
 		env: {
 			...process.env,
 			PORT: String(port),
-			PI_BIN: wrapper,
-			PI_ARGS: "",
 			PI_CWD: ROOT,
 			PI_CODING_AGENT_DIR: path.join(temp, "agent"),
 			PI_WEBUI_NO_OPEN: "1",
@@ -290,7 +295,7 @@ async function main() {
 		assert.equal(parse(cancelled).run.status, "cancelled");
 		assert.equal((await waitForRun(port, slowId)).status, "cancelled");
 		console.log(
-			"ok - cancelling a secondary run does not affect the primary child",
+			"ok - cancelling a secondary run does not affect the primary session",
 		);
 
 		const toClear = await request(port, "POST", "/api/secondary", {

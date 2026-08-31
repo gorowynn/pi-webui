@@ -1,18 +1,18 @@
 /**
- * pi_minimal_webui — Ask User Question (RPC bridge).
+ * pi_minimal_webui — Ask User Question (SDK bridge).
  *
  * Extension name: pi_minimal_webui. The tool it registers is still called
  * `ask_user_question` (it shadows the stock npm tool by that name — that name
  * is the wire contract with the LLM and must not change).
  *
  * Problem: the stock @juicesharp/rpiv-ask-user-question tool renders its UI via
- * `ctx.ui.custom(factory)`, which is a no-op stub in `pi --mode rpc` (returns
- * undefined instantly → tool resolves as "User declined" before the browser can
- * answer). This extension shadows that tool (project-local loads before npm;
- * tool registration is first-wins) and routes the answer through `ctx.ui.input`,
- * which RPC mode DOES bridge end-to-end.
+ * `ctx.ui.custom(factory)`, which is not available in the browser runtime
+ * (returns undefined instantly → tool resolves as "User declined" before the
+ * browser can answer). This extension shadows that tool (project-local loads
+ * before npm; tool registration is first-wins) and routes the answer through
+ * `ctx.ui.input`, which the SDK adapter bridges end-to-end.
  *
- * Two-channel smuggle (both already work in RPC, no node_modules patch needed):
+ * Two-channel bridge (both work without patching node_modules):
  *   - OUT  tool→browser: tool_execution_start carries the full args verbatim
  *     (questions/options/descriptions/previews/multiSelect) — the browser renders
  *     the rich modal straight from there, zero fidelity loss.

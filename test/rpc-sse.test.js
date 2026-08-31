@@ -1,7 +1,4 @@
-// Smoke test for the awaitable-RPC additionality invariant (plan F§5.1):
-// the JSONL reader must STILL broadcast every payload to SSE — including the
-// responses to the awaitable RPCs — so the fire-and-forget path + smuggle
-// channels keep working unchanged. Run against a booted server:
+// Smoke test for the SDK command/SSE contract. Run against a booted server:
 //   PORT=4401 node server.js &  node test/rpc-sse.test.js
 const http = require("http");
 const PORT = parseInt(process.env.PORT || "4401", 10);
@@ -44,7 +41,7 @@ function post(path, obj) {
 	});
 }
 
-// open SSE, collect `response` payloads until predicate or 12s wall clock
+// open SSE, collect response payloads until predicate or 12s wall clock
 function sseCollect(predicate) {
 	return new Promise((resolve, reject) => {
 		const seen = [];
@@ -131,58 +128,15 @@ function sseCollect(predicate) {
 		ok("fire-and-forget /api/cmd response still streams on SSE");
 	else throw new Error("FAIL: fire-and-forget response NOT on SSE");
 
-	// 2. /api/snapshot's responses must ALSO be broadcast on SSE — proving
-	//    the awaitable path is additive (didn't swallow them). Ids are
-	//    server-minted random ids now (server.js: "init-*/sb-* … never
-	//    snap-*"), so assert by count on a FRESH connection: the 5 fan-out
-	//    RPCs each broadcast one response.
-	const snapP = sseCollect(
-		(arr) => arr.filter((p) => p.type === "response").length >= 5,
-	);
+	// 2. /api/snapshot is assembled directly from the SDK runtime and does not
+	//    need transport-shaped response fan-out.
 	const snapRes = await get("/api/snapshot");
 	const snapBody = JSON.parse(snapRes.body);
 	if (!snapBody.ok || !Array.isArray(snapBody.messages))
 		throw new Error(
 			"FAIL: /api/snapshot body malformed: " + snapRes.body.slice(0, 200),
 		);
-	const snapSse = await snapP;
-	const snapCount = snapSse.filter((p) => p.type === "response").length;
-	if (snapCount >= 5)
-		ok(
-			"awaitable /api/snapshot responses are also broadcast on SSE (additive)",
-		);
-	else
-		throw new Error(
-			"FAIL: snapshot responses not broadcast (additivity broken)",
-		);
-
-	// 3. /api/rpc returns the payload directly AND it was broadcast (both).
-	const rpc = await post("/api/rpc", { type: "get_state", id: "rpc-direct" });
-	const rpcObj = JSON.parse(rpc.body);
-	if (
-		rpcObj.ok &&
-		rpcObj.id === "rpc-direct" &&
-		rpcObj.data &&
-		rpcObj.data.model
-	)
-		ok("/api/rpc resolves with the {data} payload directly");
-	else
-		throw new Error(
-			"FAIL: /api/rpc payload malformed: " + rpc.body.slice(0, 200),
-		);
-
-	// 4. a direct /api/rpc call's response is ALSO broadcast on SSE (additivity
-	//    holds for the awaitable path, not just snapshot). The strict per-call
-	//    ordering invariant (tool_execution_start smuggle before its sibling
-	//    response) is a STRUCTURAL guarantee — resolveRpc runs on the line after
-	//    broadcast in the same reader callback, so it can't reorder events — not
-	//    something network timing can prove.
-	const ordSse = sseCollect((arr) => arr.some((p) => p.id === "ord-1"));
-	await post("/api/rpc", { type: "get_state", id: "ord-1" });
-	const ordSseSeen = await ordSse;
-	if (ordSseSeen.some((p) => p.id === "ord-1"))
-		ok("direct /api/rpc response is also broadcast on SSE (additive)");
-	else throw new Error("FAIL: direct /api/rpc response not broadcast");
+	ok("/api/snapshot returns the SDK-backed state bundle");
 
 	console.log(`\n${pass} passed`);
 	process.exit(0);

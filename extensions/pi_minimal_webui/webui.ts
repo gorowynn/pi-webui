@@ -1,19 +1,16 @@
 /**
  * pi-webui — `/webui` launcher command.
  *
- * Spawns the bundled server.js (a minimal-dep HTTP bridge that itself spawns its
- * own `pi --mode rpc`) in the background, opens the browser, and leaves the
- * TUI fully usable. The webui is a SEPARATE pi session in the same cwd — not
- * the TUI session you ran /webui from (RPC mode is fixed at process start, so
- * the bridge must own its own pi).
+ * Spawns the bundled server.js in the background, opens the browser, and leaves
+ * the TUI fully usable. When the extension is hosted by server.js itself, the
+ * SDK runtime is already the webui session and the launcher becomes a noop.
  *
  * Lifecycle:
  *   - `/webui [port]`   start (default port 4317); noop + notify if already up
  *   - `/webui-stop`     stop the running server
  *   - session_shutdown  tears the whole tree down so no orphans survive
  *
- * The whole process tree (server.js + its pi child) is killed together:
- * POSIX kills the detached process group; Windows uses `taskkill /T`.
+ * The detached server process tree is killed together when launched from a TUI.
  */
 import {
 	spawn,
@@ -113,8 +110,12 @@ function readTail(p: string, n: number): string {
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("webui", {
-		description: "Start the pi-webui browser UI (http://127.0.0.1:<port>)",
+		 description: "Start the pi-webui browser UI (http://127.0.0.1:<port>)",
 		handler: async (args, ctx) => {
+			if (process.env.PI_WEBUI_SDK_RUNTIME === "1") {
+				ctx.ui.notify("pi-webui is already running", "info");
+				return;
+			}
 			if (webui) {
 				ctx.ui.notify(
 					"pi-webui is already running — use /webui-stop first",
@@ -195,6 +196,11 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("webui-stop", {
 		description: "Stop the running pi-webui server",
 		handler: async (_args, ctx) => {
+			if (process.env.PI_WEBUI_SDK_RUNTIME === "1") {
+				ctx.ui.notify("stopping pi-webui", "info");
+				ctx.shutdown();
+				return;
+			}
 			if (!webui) {
 				ctx.ui.notify("pi-webui is not running", "info");
 				return;

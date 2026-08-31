@@ -14,8 +14,8 @@ keyword to the index in `AGENTS.md`.
 
 1. **`follow_up` is snake_case on the wire** (`"follow_up"`, not `"followUp"`;
    `streamingBehavior` is the separate camelCase field). app.js maps
-   `followUp`→`follow_up` in `send()`. Source of truth:
-   `dist/modes/rpc/rpc-types.d.ts`.
+   `followUp`→`follow_up` in `send()`. Source of truth: the SDK command
+   adapter and `test/sdk-command-contract.test.js`.
 2. **Never `readline` for framing** — it splits on Unicode line separators that
    are valid inside JSON strings. The bridge splits on `\n` only.
 3. **`ASK_MARKER` has one source of truth: `server.js`** → exports
@@ -43,11 +43,11 @@ keyword to the index in `AGENTS.md`.
    `lastThinkPaint`, `renderRaf`, `lastActivity`, `lastFocus`,
    `availableModels`, `subagentDensity`, 3 interval handles, …). Fine at this
    size; it's the one to watch before adding more (see AGENTS.md open work).
-9. **One live pi session at a time** (shared process across tabs); the
-   **⏱ Sessions** button (`GET /api/sessions` + `switch_session` RPC) swaps it
-   to a past session file and repaints via `get_messages`/`get_state`.
-   Multi-tab/concurrent sessions = later. On crash the bridge restarts after
-   1s (exponential backoff).
+9. **One live SDK session at a time** (shared runtime across tabs); the
+   **⏱ Sessions** button (`GET /api/sessions` + SDK `switch_session` command)
+   swaps it to a past session file and repaints from the SDK-backed snapshot.
+   Multi-tab/concurrent sessions = later. On runtime failure the server retries
+   initialization after 1s (exponential backoff).
 10. **Security baseline (don't regress):** CSRF + DNS-rebinding gate on POSTs,
     SSE backpressure (drops stalled clients), markdown-it `html:false` (raw
     HTML escaped) + `validateLink` (blocks `javascript:`/`data:`/`vbscript:`
@@ -151,8 +151,8 @@ keyword to the index in `AGENTS.md`.
     exits. Use `gitExecutableForPlatform()` (`git.exe` on Windows) with argument
     arrays and no shell. That only protects bridge-owned calls: at server boot,
     `sanitizeWindowsPathExt()` must also remove `.JS` from the inherited
-    `PATHEXT` so spawned pi, extensions, language servers, and tools cannot make
-    the same collision.
+    `PATHEXT` so SDK-launched extensions, language servers, and tools cannot make the same
+    collision.
 19. **app.js top-level statements run during script evaluation — a TDZ
     `ReferenceError` aborts the WHOLE script, silently killing everything after
     the throw point** (no `initWsbar` → `body.ws-on` never set → the left
@@ -200,8 +200,9 @@ keyword to the index in `AGENTS.md`.
     parser — `$(…)`-built and `$VAR`-prefixed paths are invisible.
     Headless (`nonInteractive=allow`) can't prompt — the nonInteractive knob
     governs there.
-22. **pi-subagents async fleet is a FILE bridge, not an RPC one.** The plugin's
-    TUI widget/fleet views (`ctx.ui.setWidget`, `/sfleet`) never cross RPC —
+22. **pi-subagents async fleet is a FILE bridge, not a session transport.** The
+    plugin's TUI widget/fleet views (`ctx.ui.setWidget`, `/sfleet`) never cross
+    the WebUI SDK/SSE boundary —
     so the webui reads the plugin's on-disk artifacts instead: temp roots
     `<tmp>/pi-subagents-*/async-subagent-runs/<id>/status.json` via `subagents.js`.
     Step logs: `output-<i>.log` when the run mode writes one, ELSE the child

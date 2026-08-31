@@ -30,9 +30,9 @@ has four outcomes:
 
 Keep these constraints:
 
-- Node 18+, browser SSE/fetch, Pi RPC subprocess;
+- Node 22.19+, browser SSE/fetch, official Pi SDK runtime;
 - no React/Vite/bundler or runtime `npm install`;
-- one active Pi child per workspace;
+- one active SDK runtime per workspace;
 - server-authoritative cwd/path validation;
 - editable standalone and native JetBrains diff review;
 - current safeguard, subagent, todo-discipline, SDD, reconnect, and compaction
@@ -73,7 +73,7 @@ from the current work context.
 | R1 | Authenticated LAN/remote mode | Later | 3 | L | U1, security spec |
 | K1 | Request checkpoints and selective restore | Later | 4 | L | G1, S1, recovery spec |
 | D1 | Capability-gated directory picker | Later | 3 | M | workspace security spec |
-| Q1 | Compaction-safe pins and context pruning | Later | 4 | L | Pi/RPC feasibility |
+| Q1 | Compaction-safe pins and context pruning | Later | 4 | L | SDK session feasibility |
 
 Value uses 1–5; effort is relative and includes tests/documentation.
 
@@ -364,9 +364,9 @@ Scope:
 - action menu with clear disabled reasons;
 - current/unread state only where the client has authoritative evidence;
 - keyboard navigation through session rows;
-- branch/fork from a request after RPC capability detection or a separately
+- branch/fork from a request after SDK capability detection or a separately
   specified atomic server-side fork;
-- preserve one active Pi child: branch opens by switching, not parallel tabs.
+- preserve one active SDK runtime: branch opens by switching, not parallel tabs.
 
 Delete remains a separate destructive proposal, not part of the first pass.
 
@@ -464,7 +464,7 @@ validation, and a one-time capability that extends the allowlist. Disabled under
 
 Investigate pinned notes, compaction preview/preserve, and replacing oversized
 historical tool output with an explicit summary. Requires proof that Pi's
-session/RPC model can preserve displayed and model-visible history without
+SDK session model can preserve displayed and model-visible history without
 silently diverging.
 
 ## 7. Not planned

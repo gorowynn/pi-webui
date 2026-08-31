@@ -1,11 +1,11 @@
 // Trust-boundary static contracts (SDD trust-boundary, U7):
-// SEC-03 — the pi child never trusts project-local files (--approve is gone
-//          from the built-in args; the bundled extension loads explicitly).
+// SEC-03 — the SDK runtime never trusts project-local extensions/settings; the
+//          package-owned bridge extension is loaded explicitly.
 // SEC-07 — the webui IDE path renders the gate's offered options and degrades
 //          gracefully when the broker rejects a decision. (Broker behavior is
 //          unit-tested in broker.test.js; these lock the client wiring.)
-// Source-audit style (same rationale as package.test.js): the spawn args and
-// the IDE fallback are structural, cheap to assert, and drift-detecting.
+// Source-audit style (same rationale as package.test.js): these resource-loader
+// options and the IDE fallback are structural, cheap to assert, and drift-safe.
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -14,6 +14,7 @@ const path = require("node:path");
 const root = path.join(__dirname, "..");
 const read = (f) => fs.readFileSync(path.join(root, f), "utf8");
 const server = read("server.js");
+const sdkRuntime = read("pi-sdk-runtime.js");
 const app = read("public/app.js");
 const isolated = read("isolated-prompt.js");
 
@@ -29,46 +30,34 @@ const ok = (cond, msg) => {
 	// the bundled extension path is derived from the package root (__dirname),
 	// never from PI_CWD / process.cwd() — a workspace switch can't redirect it
 	ok(
-		/BUNDLED_EXT\s*=\s*path\.join\(\s*__dirname/.test(server) &&
+		/bundledExtension\s*=\s*path\.join\(\s*__dirname/.test(server) &&
 			!/(PI_CWD|process\.cwd\(\))[^;\n]*BUNDLED_EXT|BUNDLED_EXT[^;\n]*(PI_CWD|process\.cwd\(\))/.test(
 				server,
 			),
-		"BUNDLED_EXT derives from __dirname (package root), not PI_CWD # SEC-03",
+		"bundled extension derives from __dirname (package root), not PI_CWD # SEC-03",
 	);
-	// the exists-branch spawns --no-approve plus the explicit -e load; the
-	// missing-extension fallback stays --no-approve WITHOUT -e (fail toward
-	// no-project-trust, never silently back to --approve)
-	const extIf = server.match(
-		/if \(fs\.existsSync\(BUNDLED_EXT\)\) \{([\s\S]*?)\} else \{([\s\S]*?)\}/,
-	);
-	assert.ok(extIf, "BUNDLED_EXT existsSync branch found in server.js");
+	// Settings are explicitly untrusted and only the package-owned extension is
+	// passed as an additional extension path.
 	ok(
-		extIf[1].includes('"--no-approve"') && extIf[1].includes('"-e"'),
-		'exists-branch spawns --no-approve with an explicit "-e" bundled-extension load # SEC-03',
+		/const additionalExtensionPaths = existingExtensionPaths\(bundledExtension\)/.test(sdkRuntime) &&
+		/noExtensions:\s*true/.test(sdkRuntime),
+		"SDK loader receives only the bundled extension path # SEC-03",
 	);
 	ok(
-		extIf[2].includes('"--no-approve"') && !extIf[2].includes('"-e"'),
-		"missing-extension fallback stays --no-approve without -e # SEC-03",
-	);
-	// no unconditional --approve token (only a documented PI_ARGS override may
-	// reintroduce trust); PI_ARGS stays the LAST spread so the override wins
-	ok(
-		!server.includes('"--approve"') && !server.includes("'--approve'"),
-		'no unconditional "--approve" in server.js args # SEC-03',
+		/SettingsManager\.create\([\s\S]*?projectTrusted:\s*false/.test(sdkRuntime),
+		"SDK settings keep project trust disabled # SEC-03",
 	);
 	ok(
-		server.indexOf("...PI_ARGS") > server.indexOf('"--no-approve"'),
-		"PI_ARGS is appended after the built-in trust flags (explicit --approve override still wins) # SEC-03",
+		!server.includes("PI_BIN") && !server.includes("PI_ARGS"),
+		"server no longer depends on CLI binary/argument overrides # SEC-03",
 	);
-	// the degraded-mode warning exists (missing bundled extension is loud)
 	ok(
-		/existsSync\(BUNDLED_EXT\)/.test(server) && /console\.error/.test(server),
+		/existsSync\(bundledExtension\)/.test(server) && /console\.error/.test(server),
 		"missing bundled extension logs a loud warning # SEC-03",
 	);
-	// isolated runner keeps full extension discovery off (regression lock)
 	ok(
-		isolated.includes('"--no-extensions"'),
-		"isolated-prompt keeps --no-extensions # SEC-03",
+		isolated.includes("noExtensions: true") && isolated.includes("noTools: \"all\""),
+		"isolated-prompt keeps SDK extension/tool isolation # SEC-03",
 	);
 }
 

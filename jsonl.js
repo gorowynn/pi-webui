@@ -2,8 +2,8 @@
 // Strict JSON Lines codec — factors the inline buf+StringDecoder loop that used
 // to live inside server.js's pi-stdout reader (plan F§4.5). Two pieces:
 //
-//   encodeJsonLine(obj) -> JSON.stringify(obj) + "\n"   (what we write to stdin)
-//   new JsonLineDecoder()  .push(bufferChunk, cb)        (stdout -> parsed objs)
+//   encodeJsonLine(obj) -> JSON.stringify(obj) + "\n"
+//   new JsonLineDecoder()  .push(bufferChunk, cb)        (chunk -> parsed objs)
 //
 // The decoder splits on "\n" only, strips a trailing "\r", and buffers
 // incomplete UTF-8 across chunks via StringDecoder (so a multibyte char split
@@ -17,7 +17,7 @@
 
 const { StringDecoder } = require("string_decoder");
 
-// 8 MiB per line. Pi RPC responses are small (a few KB to maybe a low-MB
+// 8 MiB per line. Legacy/integration records are normally small (a few KB to maybe a low-MB
 // get_messages on a huge session); this is a runaway guard, not a tight limit.
 const DEFAULT_MAX_RECORD = 8 * 1024 * 1024;
 

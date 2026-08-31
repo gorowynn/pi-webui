@@ -1,5 +1,5 @@
 /**
- * Local Chromium/Edge inspection tools for pi RPC.
+ * Local Chromium/Edge inspection tools for the Pi SDK runtime.
  *
  * Page content is untrusted data. The four tools deliberately expose only a
  * fixed semantic snapshot, a bounded screenshot, and recent console evidence;

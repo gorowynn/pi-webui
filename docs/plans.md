@@ -82,18 +82,18 @@ regression fixtures. They are initially a manual comparison aid.
 
 ### A1. Large-record and live-state reliability — U4
 
-**Primary files:** `jsonl.js`, `server.js`, `public/app.js`,
-`public/session-analysis.js`, `test/jsonl.test.js`, `test/rpc-sse.test.js`, and
+**Primary files:** `pi-sdk-runtime.js`, `server.js`, `public/app.js`,
+`public/session-analysis.js`, `test/sdk-events.test.js`, `test/rpc-sse.test.js`, and
 possibly one new pure session-state test module.
 
 Steps:
 
-1. Extend `JsonLineDecoder` with an explicit oversize disposition that can be
-   observed by its owner; do not throw uncaught from stdout data handling.
-2. Instantiate the main Pi decoder with a 64 MiB cap. Keep isolated prompt and
-   child-process limits independently bounded.
-3. Reject matching pending RPC requests immediately and broadcast a useful
-   error when a record is dropped.
+1. Normalize SDK session events with an explicit oversize disposition that can
+   be observed by the server; do not throw uncaught from event handling.
+2. Keep primary SDK event and isolated prompt output limits independently
+   bounded.
+3. Reject matching pending SDK requests immediately and broadcast a useful
+   error when an event is dropped.
 4. Add boundary tests: exactly-at-cap, over-cap, split UTF-8, recovery on the
    following valid line, and pending-request rejection.
 5. Make analysis read current messages:
@@ -106,7 +106,7 @@ Steps:
    state/toasts appropriate to severity.
 8. Verify reconnect/live-buffer ordering is unchanged.
 
-**Exit evidence:** cap/recovery unit tests, RPC rejection test, and a live turn
+**Exit evidence:** cap/recovery unit tests, SDK rejection test, and a live turn
 that appears immediately in Analysis without reload.
 
 ### A2. Draft-safe composer and Improve review — U3
@@ -332,7 +332,7 @@ Steps:
     reading a `VirtualFile`, request-ID-keyed promise resolution, fail-closed
     reload/disposal, policy metadata in the native header, and detection of
     unsaved/conflicting documents. D3 later generalizes the rest of the bridge.
-14. Test TUI, standalone RPC, browser, and JetBrains behavior; simple/parallel
+14. Test SDK runtime, browser, and JetBrains behavior; simple/parallel
     calls; one/two tabs; reload/reconnect; no-tab timeout; abort; Pi crash;
     workspace switch; policy edit conflicts; legacy migration; and revoke.
 
@@ -579,7 +579,7 @@ Do not batch these into the main UI program:
 - **R1 remote auth:** requires a security/threat-model SDD, not a UI-only patch.
 - **K1 checkpoints:** requires restore/conflict/storage semantics after G1.
 - **D1 directory picker:** requires a one-time capability and allowlist spec.
-- **Q1 context pruning/pins:** requires verified Pi session/RPC feasibility.
+- **Q1 context pruning/pins:** requires verified Pi SDK session feasibility.
 
 Each gets its own plan/spec if promoted.
 
@@ -590,12 +590,12 @@ build step; keep validation zero-dependency.
 
 | Surface | Automated checks | Manual smoke |
 | --- | --- | --- |
-| JSONL/RPC | `test/jsonl.test.js`, `test/rpc-sse.test.js`, live-buffer/session-entry tests | kill/restart Pi mid-turn; oversize response |
+| SDK/SSE | `test/pi-sdk-runtime.test.js`, `test/rpc-sse.test.js`, live-buffer/session-entry tests | runtime replacement mid-turn; oversize response |
 | Composer | pure draft/serialization tests, `node --check public/app.js` | failure restore, session switch, image-only, stale Improve |
 | Responsive | static contract/token tests | 1440/1024/720/480, both themes, PWA |
 | Accessibility | contrast and markup-contract tests | keyboard-only, NVDA + Edge, touch emulation |
 | Diff editing | `test/diff-view.test.js`, workspace-file hash/conflict tests | add/delete/modify, selection/IME, 100/125/150% zoom, modal/transcript/IDE |
-| Permissions | policy/protocol/broker/config endpoint tests | compound commands, sensitive paths, TUI/RPC/IDE, reload, failure, timeout, two tabs, edit/revoke |
+| Permissions | policy/protocol/broker/config endpoint tests | compound commands, sensitive paths, SDK/IDE, reload, failure, timeout, two tabs, edit/revoke |
 | Rail/widgets | pure state tests where extracted | desktop, drawer, reconnect, stale request |
 | Git/changes | `test/git.test.js` plus endpoint tests | edit/apply/discard/reset/revert/push, Windows |
 | Sessions | `test/recent-sessions.test.js`, session-entry tests | rename/pin/archive/switch/compaction |

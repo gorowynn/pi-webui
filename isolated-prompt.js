@@ -1,26 +1,23 @@
 /*
- * isolated-prompt.js — run a one-shot prompt in a disposable pi process (plan 4.7).
+ * isolated-prompt.js — run a one-shot prompt in a disposable SDK session.
  * Ported from pi-livecraft's run-isolated-prompt.ts + prompt-improvement.ts (MIT).
  *
- * runIsolatedPrompt({cwd, prompt, systemPrompt, model}) spawns a SEPARATE
- * `pi --mode rpc --no-session --no-tools --no-extensions --no-skills … --thinking
- * off --system-prompt …` in a dedicated profile dir (~/.pi/pi-webui-isolated) that
- * copies auth.json/models.json from the user's main config — so an isolated
- * --system-prompt and --no-tools can never write to the user's main settings,
- * while still authenticating (§6.4: the security boundary, kept exactly). The
- * process is terminated immediately after the response is extracted.
+ * runIsolatedPrompt({cwd, prompt, systemPrompt, model}) creates a SEPARATE
+ * in-memory AgentSession with a dedicated profile dir (~/.pi/pi-webui-isolated)
+ * that copies auth.json/models.json from the user's main config — so an
+ * isolated system prompt and no-tools policy can never write to the user's
+ * main settings, while still authenticating (§6.4: the security boundary).
  *
  * Used by the "Improve prompt" composer action (plan 4.8): rewrites the current
  * draft via the cheapest available model (output cost → input cost → reasoning).
  *
- * CommonJS, depends only on jsonl.js (the strict codec). No browser side.
+ * CommonJS, no browser side.
  */
 
-const { spawn, execFileSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { JsonLineDecoder, encodeJsonLine } = require("./jsonl.js");
+const { loadPiSdk } = require("./pi-sdk-runtime.js");
 const { boundedText, normalizeLimits } = require("./secondary-runs.js");
 
 const ISOLATED_DIR = path.join(os.homedir(), ".pi", "pi-webui-isolated");
@@ -54,24 +51,13 @@ function ensureIsolatedDir() {
 	}
 }
 
-function killPidTree(pid) {
-	if (!pid) return;
-	try {
-		if (process.platform === "win32")
-			execFileSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
-				stdio: "ignore",
-			});
-		else process.kill(pid, "SIGKILL");
-	} catch {}
-}
-
 // ---- model / text helpers (pure, exported for tests) ----
 function isObject(v) {
 	return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 // Cheapest usable model: output cost → input cost → reasoning (matches pi-auto-title).
 function cheapestAvailableModel(response) {
-	const data = isObject(response) ? response.data : null;
+	const data = isObject(response?.data) ? response.data : response;
 	if (!isObject(data) || !Array.isArray(data.models)) return undefined;
 	const models = data.models.filter(
 		(m) =>
@@ -93,7 +79,7 @@ function cheapestAvailableModel(response) {
 }
 // Last assistant text from a completed disposable session.
 function assistantText(response) {
-	const data = isObject(response) ? response.data : null;
+	const data = isObject(response?.data) ? response.data : response;
 	if (!isObject(data) || !Array.isArray(data.messages)) return undefined;
 	for (let i = data.messages.length - 1; i >= 0; i--) {
 		const message = data.messages[i];
@@ -117,7 +103,7 @@ function assistantText(response) {
 }
 
 function assistantErrorMessage(response) {
-	const data = isObject(response) ? response.data : null;
+	const data = isObject(response?.data) ? response.data : response;
 	if (!isObject(data) || !Array.isArray(data.messages)) return undefined;
 	for (let i = data.messages.length - 1; i >= 0; i--) {
 		const message = data.messages[i];
@@ -138,22 +124,19 @@ function codedError(code, message) {
 	return error;
 }
 
-function buildIsolatedArgs(systemPrompt) {
-	return [
-		"--mode",
-		"rpc",
-		"--no-session",
-		"--no-tools",
-		"--no-extensions",
-		"--no-skills",
-		"--no-prompt-templates",
-		"--no-themes",
-		"--no-context-files",
-		"--thinking",
-		"off",
-		"--system-prompt",
-		systemPrompt,
-	];
+function buildIsolatedOptions(systemPrompt) {
+	return {
+		noTools: "all",
+		thinkingLevel: "off",
+		resourceLoaderOptions: {
+			noExtensions: true,
+			noSkills: true,
+			noPromptTemplates: true,
+			noThemes: true,
+			noContextFiles: true,
+			systemPrompt,
+		},
+	};
 }
 
 function prepareIsolatedPrompt(options) {
@@ -171,6 +154,7 @@ function prepareIsolatedPrompt(options) {
 		systemPrompt:
 			typeof source.systemPrompt === "string" ? source.systemPrompt : "",
 		model: source.model,
+		sdk: source.sdk,
 		thinkingLevel:
 			typeof source.thinkingLevel === "string"
 				? source.thinkingLevel
@@ -180,212 +164,141 @@ function prepareIsolatedPrompt(options) {
 	};
 }
 
-// ---- the one-shot run ----
+
 function runIsolatedPrompt(options) {
-	return new Promise((resolve, reject) => {
+	return (async () => {
 		const prepared = prepareIsolatedPrompt(options);
 		const signal = prepared.signal;
-		if (signal && signal.aborted) {
-			reject(
-				codedError("SECONDARY_CANCELLED", "secondary run cancelled"),
-			);
-			return;
-		}
+		if (signal?.aborted)
+			throw codedError("SECONDARY_CANCELLED", "secondary run cancelled");
 		ensureIsolatedDir();
-		const cwd = prepared.cwd;
-		const prompt = prepared.prompt;
-		const systemPrompt = prepared.systemPrompt;
-		const model = prepared.model;
-		let selectedModel = model;
-		const thinkingLevel = prepared.thinkingLevel;
-		const piBin = process.env.PI_BIN || "pi";
-		const args = buildIsolatedArgs(systemPrompt);
-		// Windows: pi is a .cmd shim needing shell:true to resolve PATHEXT (same as the
-		// main pi spawn in server.js). All args are trusted/fixed strings (systemPrompt
-		// has no shell metacharacters; the user draft goes via RPC stdin, not argv).
-		const useShell = process.platform === "win32";
-		const child = useShell
-			? spawn(`${piBin} ${args.join(" ")}`, [], {
-					cwd: cwd,
-					env: Object.assign({}, process.env, {
-						PI_CODING_AGENT_DIR: ISOLATED_DIR,
-					}),
-					stdio: ["pipe", "pipe", "pipe"],
-					shell: true,
-					windowsHide: true,
-				})
-			: spawn(piBin, args, {
-					cwd: cwd,
-					env: Object.assign({}, process.env, {
-						PI_CODING_AGENT_DIR: ISOLATED_DIR,
-					}),
-					stdio: ["pipe", "pipe", "pipe"],
-					shell: false,
-					windowsHide: true,
-				});
 
-		const dec = new JsonLineDecoder();
-		let nextId = 1;
-		const pending = new Map(); // id → resolve
-		let settled = false;
-		let agentSettled = false;
-		const settledWaiters = [];
-		let abortListener = null;
-		let timeout = null;
-
-		function send(cmd) {
-			if (settled)
-				return Promise.resolve({
-					ok: false,
-					error: "isolated prompt stopped",
-				});
-			const id = nextId++;
-			return new Promise((res) => {
-				pending.set(id, res);
-				try {
-					child.stdin.write(
-						encodeJsonLine(Object.assign({ id: id }, cmd)),
-					);
-				} catch (e) {
-					pending.delete(id);
-					res({ ok: false, error: e.message });
-				}
-			});
-		}
-
-		child.stdout.on("data", (chunk) => {
-			dec.push(chunk, (obj) => {
-				if (
-					obj.type === "response" &&
-					obj.id != null &&
-					pending.has(obj.id)
-				) {
-					const r = pending.get(obj.id);
-					pending.delete(obj.id);
-					r(obj);
-				} else if (obj.type === "agent_settled") {
-					agentSettled = true;
-					while (settledWaiters.length) settledWaiters.shift()();
-				}
-			});
+		const sdk = prepared.sdk || (await loadPiSdk());
+		const {
+			SessionManager,
+			SettingsManager,
+			createAgentSessionServices,
+			createAgentSessionFromServices,
+		} = sdk;
+		const settingsManager = SettingsManager.create(
+			prepared.cwd,
+			ISOLATED_DIR,
+			{ projectTrusted: false },
+		);
+		const optionsForSdk = buildIsolatedOptions(prepared.systemPrompt);
+		const services = await createAgentSessionServices({
+			cwd: prepared.cwd,
+			agentDir: ISOLATED_DIR,
+			settingsManager,
+			resourceLoaderOptions: optionsForSdk.resourceLoaderOptions,
 		});
-		child.stdin.on("error", () => {
-			if (!settled)
-				finish(
-					codedError("SECONDARY_FAILED", "isolated pi input failed"),
-				);
+		const { session } = await createAgentSessionFromServices({
+			services,
+			sessionManager: SessionManager.inMemory(prepared.cwd),
+			noTools: optionsForSdk.noTools,
+			thinkingLevel: prepared.thinkingLevel || optionsForSdk.thinkingLevel,
 		});
-		child.stderr.resume();
 
-		function finish(err, result) {
-			if (settled) return;
-			settled = true;
+		let timeout;
+		let abortListener;
+		let finished = false;
+		const stop = async (error) => {
+			if (finished) return;
+			finished = true;
 			if (timeout) clearTimeout(timeout);
 			if (signal && abortListener)
 				signal.removeEventListener("abort", abortListener);
-			while (settledWaiters.length) settledWaiters.shift()();
-			killPidTree(child.pid);
-			if (err) reject(err);
-			else resolve(result);
-		}
-		timeout = setTimeout(() => {
-			finish(
-				codedError("SECONDARY_TIMEOUT", "isolated prompt timed out"),
-			);
-		}, prepared.limits.timeoutMs);
-		if (signal) {
-			abortListener = () =>
-				finish(
-					codedError(
-						"SECONDARY_CANCELLED",
-						"secondary run cancelled",
-					),
-				);
-			signal.addEventListener("abort", abortListener, { once: true });
-		}
-
-		child.once("error", () => {
-			finish(
-				codedError("SECONDARY_FAILED", "isolated pi failed to start"),
-			);
-		});
-		child.once("exit", () => {
-			if (!settled)
-				finish(
-					codedError(
-						"SECONDARY_FAILED",
-						"pi exited before completing",
-					),
-				);
-		});
-
-		function waitForSettled() {
-			return new Promise((res) => {
-				if (agentSettled) res();
-				else settledWaiters.push(res);
-			});
-		}
-
-		(async () => {
-			try {
-				// 1. model: explicit, or auto-select the cheapest available
-				if (model) {
-					await send({
-						type: "set_model",
-						provider: model.provider,
-						modelId: model.modelId,
-					});
-				} else {
-					const avail = await send({ type: "get_available_models" });
-					const cheapest = cheapestAvailableModel(avail);
-					if (!cheapest)
-						throw codedError(
-							"SECONDARY_NO_MODEL",
-							"No model is available to run the prompt",
-						);
-					selectedModel = {
-						provider: cheapest.provider,
-						modelId: cheapest.id,
-					};
-					await send({
-						type: "set_model",
-						provider: selectedModel.provider,
-						modelId: selectedModel.modelId,
-					});
-				}
-				if (thinkingLevel)
-					await send({
-						type: "set_thinking_level",
-						level: thinkingLevel,
-					});
-				// 2. prompt + wait for the turn to settle (--no-tools → single turn)
-				await Promise.all([
-					send({ type: "prompt", message: prompt }),
-					waitForSettled(),
-				]);
-				// 3. extract the assistant text
-				const msgs = await send({ type: "get_messages" });
-				const text = assistantText(msgs);
-				if (!text) {
-					const modelError = assistantErrorMessage(msgs);
-					throw codedError(
-						modelError ? "SECONDARY_MODEL" : "SECONDARY_NO_TEXT",
-						modelError || "The model returned no text",
-					);
-				}
-				const output = boundedText(text, prepared.limits.outputChars);
-				finish(null, {
-					text: output.text,
-					inputTruncated: prepared.inputTruncated,
-					outputTruncated: output.truncated,
-					model: selectedModel,
-					modelSource: model ? "selected" : "resolved",
-				});
-			} catch (e) {
-				finish(e);
+			if (error) {
+				try {
+					await session.abort();
+				} catch {}
 			}
-		})();
-	});
+			try {
+				session.dispose();
+			} catch {}
+		};
+
+		const cancellation = new Promise((_, reject) => {
+			timeout = setTimeout(
+				() =>
+					reject(
+						codedError("SECONDARY_TIMEOUT", "isolated prompt timed out"),
+					),
+				prepared.limits.timeoutMs,
+			);
+			if (signal) {
+				abortListener = () =>
+					reject(
+						codedError(
+							"SECONDARY_CANCELLED",
+							"secondary run cancelled",
+						),
+					);
+				signal.addEventListener("abort", abortListener, { once: true });
+			}
+		});
+
+		try {
+			let selectedModel = prepared.model;
+			if (selectedModel) {
+				const model = session.modelRuntime.getModel(
+					selectedModel.provider,
+					selectedModel.modelId,
+				);
+				if (!model)
+					throw codedError(
+						"SECONDARY_NO_MODEL",
+						`Model not found: ${selectedModel.provider}/${selectedModel.modelId}`,
+					);
+				await session.setModel(model);
+			} else {
+				const cheapest = cheapestAvailableModel({
+					models: session.modelRuntime.getAvailableSnapshot(),
+				});
+				if (!cheapest)
+					throw codedError(
+						"SECONDARY_NO_MODEL",
+						"No model is available to run the prompt",
+					);
+				selectedModel = {
+					provider: cheapest.provider,
+					modelId: cheapest.id,
+				};
+				const model = session.modelRuntime.getModel(
+					selectedModel.provider,
+					selectedModel.modelId,
+				);
+				await session.setModel(model);
+			}
+			if (prepared.thinkingLevel)
+				session.setThinkingLevel(prepared.thinkingLevel);
+
+			await Promise.race([
+				session.prompt(prepared.prompt, { source: "interactive" }),
+				cancellation,
+			]);
+			const text = assistantText({ messages: session.messages });
+			if (!text) {
+				const modelError = assistantErrorMessage({ messages: session.messages });
+				throw codedError(
+					modelError ? "SECONDARY_MODEL" : "SECONDARY_NO_TEXT",
+					modelError || "The model returned no text",
+				);
+			}
+			const output = boundedText(text, prepared.limits.outputChars);
+			await stop();
+			return {
+				text: output.text,
+				inputTruncated: prepared.inputTruncated,
+				outputTruncated: output.truncated,
+				model: selectedModel,
+				modelSource: prepared.model ? "selected" : "resolved",
+			};
+		} catch (error) {
+			await stop(error);
+			throw error;
+		}
+	})();
 }
 
 // ---- improve-prompt presets (plan 4.8) ----
@@ -419,7 +332,7 @@ module.exports = {
 	cheapestAvailableModel: cheapestAvailableModel,
 	assistantText: assistantText,
 	assistantErrorMessage: assistantErrorMessage,
-	buildIsolatedArgs: buildIsolatedArgs,
+	buildIsolatedOptions: buildIsolatedOptions,
 	prepareIsolatedPrompt: prepareIsolatedPrompt,
 	runIsolatedPrompt: runIsolatedPrompt,
 	IMPROVE_DIRECTIONS: IMPROVE_DIRECTIONS,

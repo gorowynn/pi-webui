@@ -67,7 +67,7 @@ The comparison used current documentation from:
 - VS Code Copilot Chat, Agent Sessions, and approval/permission controls;
 - Cline checkpoints and Auto Approve;
 - Claude Code permission rules, command parsing, and path/scope behavior;
-- Pi extension/RPC UI protocol documentation and permission examples;
+- Pi SDK extension-UI protocol documentation and permission examples;
 - WAI-ARIA Authoring Practices for feeds, toolbars, and window splitters;
 - WCAG 2.2 guidance for contrast, target size, status messages, and unobscured
   focus;
@@ -323,11 +323,11 @@ Recommended session actions:
 - pin;
 - archive/done without deleting the JSONL;
 - copy path;
-- fork/branch where RPC support exists;
+- fork/branch where SDK support exists;
 - delete only as an explicitly destructive action.
 
 Refresh the current row on `agent_end` and session-name changes. Because
-pi-webui has one active Pi child, do not imply that inactive sessions are still
+pi-webui has one active SDK runtime, do not imply that inactive sessions are still
 running. “Unread” and “in progress” apply only where the browser actually knows
 that state.
 
@@ -648,7 +648,7 @@ Do not use this research to justify:
 - [Cline — Auto Approve](https://docs.cline.bot/features/auto-approve)
 - [Claude Code — Configure permissions](https://docs.anthropic.com/en/docs/claude-code/permissions)
 - [Pi — Extensions](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/docs/extensions.md)
-- [Pi — RPC mode](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/docs/rpc.md)
+- [Pi SDK documentation](https://github.com/earendil-works/pi-coding-agent)
 - [WAI-ARIA APG — Feed](https://www.w3.org/WAI/ARIA/apg/patterns/feed/)
 - [WAI-ARIA APG — Toolbar](https://www.w3.org/WAI/ARIA/apg/patterns/toolbar/)
 - [WAI-ARIA APG — Window splitter](https://www.w3.org/WAI/ARIA/apg/patterns/windowsplitter/)

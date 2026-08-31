@@ -20,7 +20,7 @@
 // Turn-content events handle() renders into the transcript. These are the only
 // events ever buffered: agent_start / agent_end are turn BOUNDARIES (handled
 // explicitly below — start seeds, end clears) and everything else pi emits
-// (response = RPC reply, command = switch_session/set_model/…, compaction_*,
+// (response = command acknowledgement, command = switch_session/set_model/…, compaction_*,
 // auto_retry_start, queue_update, session_info_changed) is a state/control event
 // — replaying it would re-fire side effects, so it's kept out of the buffer.
 const TURN_EVENT = new Set([
@@ -57,7 +57,7 @@ function createLiveBuffer() {
 			}
 			return s;
 		},
-		// Point-in-time shallow copy for /api/snapshot. The endpoint awaits its RPC
+		// Point-in-time shallow copy for /api/snapshot. The endpoint awaits its SDK
 		// fan-out first, then calls this + JSON.stringify synchronously, so a push()
 		// landing mid-snapshot can't mutate the returned array: buf = […] on
 		// agent_start/end rebinds to a NEW array (the copy is independent), and

@@ -1,5 +1,10 @@
 # Security and robustness review — current working tree
 
+> **Historical pre-SDK review.** Findings below describe the pre-migration
+> working tree and its former Pi RPC/subprocess transport. They remain useful as
+> regression history; current SDK-runtime contracts live in
+> `.sdd/spec_sdk-adaptation_29082026.md` and supersede those transport details.
+
 > **Role:** Evidence-backed security, error-resistance, self-healing,
 > release-readiness, and reliability review with rated findings and remediation
 > order.

@@ -1,15 +1,14 @@
 #!/usr/bin/env node
-// Minimal-dependency bridge between a browser and `pi --mode rpc`.
-// Browser <--SSE-- POST--> Node <--stdin/stdout JSONL--> pi subprocess.
-// Run: node server.js   (optionally set PORT, PI_BIN, PI_ARGS, PI_CWD)
+// Browser-facing bridge for the Pi SDK runtime.
+// Browser <--SSE-- POST--> Node <--official SDK--> AgentSession.
+// Run: node server.js   (optionally set PORT, PI_CWD)
 const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
-const { spawn, execFileSync } = require("child_process");
+const { execFileSync } = require("child_process");
 const os = require("os");
 const crypto = require("crypto");
-const { JsonLineDecoder, encodeJsonLine } = require("./jsonl.js"); // strict JSONL codec (plan F§4.5)
 const { createLiveBuffer } = require("./livebuf.js"); // current-turn buffer for reconnect replay (plan F§5.2)
 const { createSseDelivery } = require("./sse-queue.js"); // bounded per-client SSE backpressure
 const { activeSessionMessages } = require("./session-entries.js"); // compaction-aware history (plan F§5.3)
@@ -58,6 +57,7 @@ const {
 } = require("./workspaces.js");
 const { opencodeGoWindows } = require("./public/usage-provider.js"); // dashboard HTML parser (shared with the browser, like md.js)
 const { createBroker } = require("./broker.js"); // pending-approval broker (U6 C7)
+const { createPiSdkRuntime } = require("./pi-sdk-runtime.js");
 const policyEngine = require("./extensions/pi_minimal_webui/policy-engine.js"); // THE policy engine (shared with safeguard.ts)
 const bashCls = require("./extensions/pi_minimal_webui/bash-classifier.js"); // compound-command classifier (shared)
 const {
@@ -68,8 +68,6 @@ const {
 
 const PORT = parseInt(process.env.PORT || "4317", 10);
 const GIT_BIN = gitExecutableForPlatform(process.platform);
-const PI_BIN = process.env.PI_BIN || "pi";
-const PI_ARGS = (process.env.PI_ARGS || "").split(/\s+/).filter(Boolean); // e.g. "--no-session"
 let PI_CWD = process.env.PI_CWD || process.cwd(); // let: workspace switch re-points it live
 const NO_SWITCH = /^(1|true|yes)$/i.test(process.env.PI_WEBUI_NO_SWITCH || ""); // IDE mode: workspace switching is disabled (the host owns the cwd)
 // U6 C7: pending-approval broker + decision audit ring (server-owned, survives
@@ -134,8 +132,9 @@ function permissionsPayload() {
 		pending: broker.snapshot(),
 	};
 }
-const AUTH_FILE = path.join(os.homedir(), ".pi", "agent", "auth.json");
-const AGENT_DIR = path.dirname(AUTH_FILE); // ~/.pi/agent — pi's agent dir
+const AGENT_DIR =
+	process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent");
+const AUTH_FILE = path.join(AGENT_DIR, "auth.json");
 const WEB_SEARCH_CONFIG_PATH = webSearch.searchConfigPath(os.homedir());
 // removed-workspace archive: a SIBLING of sessions/ (discovery scans every
 // subdir of sessions/, so anything inside it would be re-discovered). Kept 7
@@ -290,17 +289,14 @@ function pageHtml() {
 	return htmlCache.body;
 }
 
-// ponytail: one shared agent process for all tabs. Multi-session is a later concern.
+// One shared SDK runtime for all tabs. Multi-session is a later concern.
 let pi = null;
-// ponytail: set by POST /api/stop so pi's exit handler tears the server down
-// instead of respawning (startPi's crash-backoff would otherwise bring it back).
 let shuttingDown = false;
-// ponytail: crash-loop guard. An unconditional 1s restart loops forever if
-// pi can't start (bad binary, broken install). Count consecutive fast exits and
-// back off exponentially up to 30s; reset once a process lives >5s.
+// Crash-loop guard for SDK initialization failures.
 let restartAttempts = 0;
 let startStamp = 0;
-let deliberateRestart = false; // ponytail: workspace switch — exit handler respawns in the new cwd, skipping crash backoff
+let startPiPromise = null;
+let workspaceSwitchTail = Promise.resolve();
 const clients = new Set(); // open SSE deliveries
 // current-turn event buffer (plan F§5.2): survives a pi CRASH so a reconnecting
 // tab can rebuild in-flight tool cards; cleared on workspace switch (old
@@ -650,211 +646,131 @@ function cancelSecondary(id, reason) {
 function backoffDelay() {
 	return Math.min(1000 * 2 ** restartAttempts++, 30000);
 }
+class PiStaleError extends Error {
+	constructor() {
+		super("runtime changed");
+		this.name = "PiStaleError";
+		this.code = "PI_STALE";
+	}
+}
+
+function publishPiEvent(obj) {
+	const sequence = lb.push(obj);
+	broadcast({ source: "pi", payload: obj, sequence });
+	if (obj && obj.type === "tool_execution_start") {
+		broker.setContext(obj.toolCallId, obj.toolName);
+	} else if (obj && obj.type === "extension_ui_request") {
+		if (obj.method === "setStatus" && obj.statusKey === "safeguard") {
+			try {
+				broker.setProvenance(JSON.parse(obj.statusText || "null"));
+			} catch {
+				/* malformed provenance — ignore */
+			}
+		} else if (BLOCKING_UI_METHODS.has(obj.method)) {
+			broker.register({
+				requestId: obj.id,
+				method: obj.method,
+				title: obj.title,
+				message: obj.message,
+				options: obj.options,
+			});
+		}
+	}
+}
+
 function startPi() {
+	if (shuttingDown || (pi && pi.ready)) return Promise.resolve();
+	if (startPiPromise) return startPiPromise;
 	startStamp = Date.now();
-	// SEC-03: never trust project-local files (.pi/extensions of the current
-	// workspace) — opening/switching to an attacker repo must not execute its
-	// code. Instead load ONLY the bundled bridge extension, by absolute
-	// package-root path (never derived from PI_CWD, so a workspace switch
-	// can't redirect it). PI_ARGS is appended last: an explicit --approve
-	// there remains the operator's documented opt-in to project trust.
-	const BUNDLED_EXT = path.join(
+	const bundledExtension = path.join(
 		__dirname,
 		"extensions",
 		"pi_minimal_webui",
 		"index.ts",
 	);
-	let extArgs;
-	if (fs.existsSync(BUNDLED_EXT)) {
-		extArgs = ["--no-approve", "-e", BUNDLED_EXT];
-	} else {
-		// Broken install: fail toward NO project trust (never silently back to
-		// --approve) but say it loudly — the ask bridge + safeguard are degraded
-		// (stock ask_user_question auto-declines in RPC; ctx.ui.custom is a no-op).
+	if (!fs.existsSync(bundledExtension)) {
 		console.error(
 			"⚠ pi-webui: bundled extension missing at " +
-				BUNDLED_EXT +
-				" — starting WITHOUT it (ask approvals will auto-decline). Reinstall the package.",
+				bundledExtension +
+				" — SDK runtime will start without the webui extension.",
 		);
-		extArgs = ["--no-approve"];
 	}
-	const args = ["--mode", "rpc", ...extArgs, ...PI_ARGS];
-	// Windows: npm-global bins (pi) are .cmd shims; spawn can't find them without a
-	// shell to resolve PATHEXT. Fold args into one command string (avoids the
-	// DEP0190 `shell + args` warning). Args are trusted operator flags only.
-	const useShell = process.platform === "win32";
-	pi = useShell
-		? spawn(`${PI_BIN} ${args.join(" ")}`, [], {
-				cwd: PI_CWD,
-				env: process.env,
-				shell: true,
-				windowsHide: true, // no cmd window when launched headless (e.g. by /webui)
-			})
-		: spawn(PI_BIN, args, {
-				cwd: PI_CWD,
-				env: process.env,
-				windowsHide: true,
-			});
-
-	// Strict JSONL reader (jsonl.js codec): split on \n, strip \r, buffer
-	// incomplete UTF-8 across chunks (so a multibyte char split on a stdout seam
-	// decodes instead of becoming U+FFFD — GOTCHAS #1/#2), plus a per-record cap
-	// as a runaway-line guard. Factored from the old inline buf/StringDecoder loop
-	// in plan F§4.5; behavior-preserving (broadcast still fires for every obj).
-	const dec = new JsonLineDecoder();
-	pi.stdout.on("data", (chunk) => {
-		dec.push(chunk, (obj) => {
-			// tag every pi event with a monotonic sequence (plan F§5.2) and buffer
-			// the current turn's events for reconnect replay. push() returns the
-			// sequence; the buffer only keeps turn-content events (agent_start→…,
-			// cleared on agent_end). Sequence rides on the broadcast WRAPPER (not
-			// pi's payload), so the client can ignore it until incremental replay.
-			const sequence = lb.push(obj);
-			broadcast({ source: "pi", payload: obj, sequence });
-			// U6 C7: broker context + pending registration from pi's stream.
-			// tool_execution_start precedes its safeguard select (preparation is
-			// sequential) — same ordering guarantee the browser relies on.
-			if (obj && obj.type === "tool_execution_start") {
-				broker.setContext(obj.toolCallId, obj.toolName);
-			} else if (obj && obj.type === "extension_ui_request") {
-				if (
-					obj.method === "setStatus" &&
-					obj.statusKey === "safeguard"
-				) {
-					try {
-						broker.setProvenance(
-							JSON.parse(obj.statusText || "null"),
-						);
-					} catch {
-						/* malformed provenance — ignore */
-					}
-				} else if (BLOCKING_UI_METHODS.has(obj.method)) {
-					broker.register({
-						requestId: obj.id,
-						method: obj.method,
-						title: obj.title,
-						message: obj.message,
-						options: obj.options,
-					});
-				}
-			}
-			// settle any awaitable RPC waiting on this response (plan F§5.1).
-			if (obj && obj.type === "response" && obj.id) resolveRpc(obj);
-		});
+	if (process.env.PI_WEBUI_DISABLE_SDK === "1") {
+		return handlePiStartFailure(new Error("SDK runtime disabled"));
+	}
+	let runtime;
+	runtime = createPiSdkRuntime({
+		cwd: PI_CWD,
+		agentDir: AGENT_DIR,
+		sessionDir: sessionDirFor(PI_CWD),
+		bundledExtension,
+		onEvent: (event) => {
+			if (pi === runtime) publishPiEvent(event);
+		},
+		onShutdown: stopServer,
 	});
-
-	pi.stderr.on("data", (chunk) =>
-		broadcast({ source: "stderr", payload: chunk.toString("utf8") }),
-	);
-	pi.on("error", (e) => {
-		broadcast({ source: "pi_exit", payload: { error: e.message } });
-		const delay = backoffDelay();
-		console.error(`[pi] spawn error: ${e.message}; retrying in ${delay}ms`);
-		setTimeout(startPi, delay);
+	pi = runtime;
+	process.env.PI_WEBUI_SDK_RUNTIME = "1";
+	const operation = runtime
+		.start()
+		.then(() => {
+			if (pi !== runtime || shuttingDown) return runtime.dispose();
+			if (Date.now() - startStamp > 5000) restartAttempts = 0;
+			broadcast({ source: "server", type: "pi_ready" });
+		})
+		.catch((error) => handlePiStartFailure(error, runtime));
+	startPiPromise = operation;
+	return operation.finally(() => {
+		if (startPiPromise === operation) startPiPromise = null;
 	});
-	pi.on("exit", (code, sig) => {
-		if (shuttingDown) return shutdownNow();
-		clearSecondaryRuns("primary pi stopped");
-		rejectAllRpc(); // fail fast: pending awaitable RPCs won't resolve
-		broker.clear(); // no dangling approvals after a crash/restart (FR-20)
-		broadcast({ source: "pi_exit", payload: { code, sig } });
-		if (deliberateRestart) {
-			// workspace switch (not a crash): respawn now in the (already-updated)
-			// PI_CWD, skip crash backoff, then tell every tab to resync. The new
-			// pi's stdin is writable at once, so the client's resync get_state /
-			// get_messages buffer in the pipe until pi boots.
-			deliberateRestart = false;
-			lb.clear(); // old project's in-flight turn must not leak into the new one
-			broker.clear(); // …and neither may the old project's approvals
-			startPi();
-			broadcast({
-				source: "server",
-				type: "workspace_changed",
-				workspace: PI_CWD,
-			});
-			return;
-		}
-		// survived >5s -> healthy run, reset the crash counter.
-		if (Date.now() - startStamp > 5000) restartAttempts = 0;
-		const delay = backoffDelay();
-		console.error(
-			`[pi] exited code=${code} sig=${sig}; restarting in ${delay}ms`,
-		);
-		setTimeout(startPi, delay); // survive a crashed agent
-	});
-	// ponytail: announce the (re)spawned pi so clients re-sync and flip out of the
-	// "reconnecting" state a crash pushed them into. Without this the UI stayed
-	// stuck in reconnecting forever after a pi exit — only a full SSE drop (server
-	// restart) recovered it, since the browser↔server pipe survives a child crash.
-	// Fire at spawn time: pi.stdin buffers the client's resync RPCs until pi's
-	// reader is ready, so the response is always from the booted pi.
-	broadcast({ source: "server", type: "pi_ready" });
 }
 
-// ponytail: cross-platform process-tree termination (plan F§4.7). Centralized
-// so workspace switch (graceful), stop (force), and future isolated-prompt
-// cleanup share one tested path. POSIX: SIGTERM/SIGKILL. Windows: taskkill /T /F
-// kills the whole tree (no gentle equivalent — a bare signal to the .cmd shim
-// strands the real child). Returns false if the kill threw, so a caller can fall
-// back (stop -> direct shutdown).
-function killPiTree(force) {
-	if (!pi || !pi.pid) return true;
-	try {
-		if (process.platform === "win32")
-			execFileSync("taskkill", ["/pid", String(pi.pid), "/T", "/F"], {
-				stdio: "ignore",
-				windowsHide: true,
-			});
-		else process.kill(pi.pid, force ? "SIGKILL" : "SIGTERM");
-		return true;
-	} catch (e) {
-		console.error(
-			`[kill] ${force ? "force" : "graceful"} failed: ${e.message}`,
-		);
-		return false;
-	}
+function handlePiStartFailure(error, runtime) {
+	if (runtime && pi !== runtime) return;
+	if (runtime && pi === runtime) pi = null;
+	clearSecondaryRuns("primary SDK runtime stopped");
+	broker.clear();
+	broadcast({ source: "pi_exit", payload: { error: error.message } });
+	const delay = backoffDelay();
+	console.error(`[pi-sdk] start failed: ${error.message}; retrying in ${delay}ms`);
+	if (!shuttingDown) setTimeout(startPi, delay);
 }
 
-// ponytail: switch the active project root. Only a discovered-workspace realpath
-// reaches here (the route validates via isKnownWorkspacePath first). Updates the
-// live PI_CWD, then tree-kills pi so its exit handler respawns in the new cwd and
-// broadcasts workspace_changed. taskkill /T /F (win) + SIGTERM (posix) to node
-// are reliable; if a kill ever fails to land, deliberateRestart stays set and the
-// next real exit still consumes it.
-function switchWorkspace(newCwd) {
+
+// The SDK runtime is disposable and owns all cwd-bound resources. Replacing it
+// is the workspace-switch boundary; no subprocess tree or JSONL pipe is kept.
+async function switchWorkspaceNow(newCwd) {
 	clearSecondaryRuns("workspace changed");
 	PI_CWD = newCwd;
-	deliberateRestart = true;
-	if (!pi) {
-		// no running pi (only briefly at boot) — respawn + broadcast directly.
-		deliberateRestart = false;
-		lb.clear(); // old project's in-flight turn must not leak into the new one
-		startPi();
-		broadcast({
-			source: "server",
-			type: "workspace_changed",
-			workspace: PI_CWD,
-		});
-		return;
-	}
-	killPiTree(false); // graceful: deliberate restart — exit handler respawns in PI_CWD
+	lb.clear();
+	broker.clear();
+	const previous = pi;
+	pi = null;
+	if (previous) await previous.dispose().catch(() => {});
+	await startPi();
+	broadcast({
+		source: "server",
+		type: "workspace_changed",
+		workspace: PI_CWD,
+	});
 }
 
-// ponytail: graceful self-shutdown for the in-UI Stop button (POST /api/stop).
-// Kill the pi child so it doesn't orphan; its exit handler sees shuttingDown and
-// calls shutdownNow(). Force-kill (taskkill /T /F / SIGKILL) — we're tearing down,
-// so a SIGTERM a hung pi would ignore just strands the exit. Broadcast "stopping"
-// first so other open tabs show a stopped state instead of reconnect-looping.
+function switchWorkspace(newCwd) {
+	const operation = workspaceSwitchTail.then(() =>
+		switchWorkspaceNow(newCwd),
+	);
+	workspaceSwitchTail = operation.catch(() => {});
+	return operation;
+}
+
 function stopServer() {
 	if (shuttingDown) return;
 	clearSecondaryRuns("server stopping");
 	shuttingDown = true;
 	broadcast({ source: "server", type: "stopping" });
-	if (pi && pi.pid) {
-		if (!killPiTree(true)) shutdownNow(); // force-kill failed -> tear down directly
-	} else {
-		shutdownNow();
-	}
+	const runtime = pi;
+	pi = null;
+	Promise.resolve(runtime?.dispose()).catch(() => {}).finally(shutdownNow);
 }
 // drop every SSE client + close the HTTP server, then exit. Called from the pi
 // exit handler (after pi is reaped) or directly if no pi is running.
@@ -1197,26 +1113,6 @@ class PiUnavailableError extends Error {
 		this.code = "PI_UNAVAILABLE";
 	}
 }
-const STREAM_UNAVAILABLE_CODES = new Set([
-	"EPIPE",
-	"ERR_STREAM_DESTROYED",
-	"ERR_STREAM_WRITE_AFTER_END",
-]);
-function sendToPi(obj) {
-	if (!pi || !pi.stdin || !pi.stdin.writable) throw new PiUnavailableError();
-	try {
-		pi.stdin.write(encodeJsonLine(obj));
-	} catch (error) {
-		if (
-			STREAM_UNAVAILABLE_CODES.has(error && error.code) ||
-			!pi ||
-			!pi.stdin ||
-			!pi.stdin.writable
-		)
-			throw new PiUnavailableError();
-		throw error;
-	}
-}
 function boundedErrorText(error) {
 	const message =
 		error && typeof error.message === "string"
@@ -1226,69 +1122,39 @@ function boundedErrorText(error) {
 }
 function respondForwardError(res, error) {
 	if (res.writableEnded) return;
-	const unavailable = error instanceof PiUnavailableError;
-	res.writeHead(unavailable ? 503 : 500, {
+	const unavailable =
+		error instanceof PiUnavailableError || error?.code === "PI_UNAVAILABLE";
+	const stale = error?.code === "PI_STALE";
+	res.writeHead(stale ? 409 : unavailable ? 503 : 500, {
 		"Content-Type": "application/json",
 	});
 	res.end(
 		JSON.stringify({
 			ok: false,
-			error: unavailable ? "pi not running" : boundedErrorText(error),
+			error: stale
+				? "runtime changed"
+				: unavailable
+					? "pi not running"
+					: boundedErrorText(error),
 		}),
 	);
 }
 
-// ── awaitable RPC registry (plan F§5.1 — the keystone) ──────────────────────
-// sendToPi stays fire-and-forget (POST /api/cmd + the SSE response stream the
-// client matches by id — the smuggle channels depend on it). This ADDS an
-// awaitable path: rpcRequest(obj) sends + registers a Promise keyed by obj.id;
-// when the JSONL reader parses pi's {type:"response", id}, resolveRpc settles it
-// (with a timeout). The reader STILL broadcasts every payload to SSE, so the
-// existing client flow + tool_execution_start smuggling are untouched
-// (GOTCHAS #1/#6) — the awaitable path is opt-in per call.
-const rpcPending = new Map(); // id -> {resolve, reject, timer}
-const RPC_TIMEOUT_MS = 30000; // a bootstrap RPC answers well under this
-
-function rpcRequest(obj, timeoutMs) {
-	if (!obj || typeof obj !== "object") obj = {};
-	if (!obj.id) obj.id = "rpc-" + Math.random().toString(36).slice(2, 10);
-	const id = obj.id;
-	return new Promise((resolve, reject) => {
-		const timer = setTimeout(() => {
-			if (rpcPending.delete(id)) reject(new Error("rpc timeout"));
-		}, timeoutMs || RPC_TIMEOUT_MS);
-		rpcPending.set(id, { resolve, reject, timer });
-		try {
-			sendToPi(obj);
-		} catch (e) {
-			clearTimeout(timer);
-			rpcPending.delete(id);
-			reject(e);
-		}
-	});
-}
-
-// settle a pending awaitable RPC when pi's {type:"response", id} lands. Called
-// from the JSONL reader (after broadcast). Unknown ids (fire-and-forget cmds the
-// client sent, or cmds another caller originated) are a no-op.
-function resolveRpc(obj) {
-	const p = rpcPending.get(obj.id);
-	if (!p) return;
-	rpcPending.delete(obj.id);
-	clearTimeout(p.timer);
-	if (obj.success === false) p.reject(new Error(obj.error || "rpc failed"));
-	else p.resolve(obj);
-}
-
-// fail every pending awaitable RPC fast (pi exited/crashed — no response will
-// come) instead of letting each wait out its 30s timeout.
-function rejectAllRpc() {
-	for (const p of rpcPending.values()) {
-		clearTimeout(p.timer);
-		p.reject(new PiUnavailableError());
+async function sendToPi(obj) {
+	const target = pi;
+	if (!target || !target.ready) throw new PiUnavailableError();
+	try {
+		const response = await target.command(obj);
+		if (pi !== target) throw new PiStaleError();
+		return response;
+	} catch (error) {
+		if (pi !== target) throw new PiStaleError();
+		if (error?.code === "PI_UNAVAILABLE" || !target.ready)
+			throw new PiUnavailableError();
+		throw error;
 	}
-	rpcPending.clear();
 }
+
 
 // ponytail: sandbox any browser-supplied path to PI_CWD so the webui can't
 // read/write outside the project (the manual-edit diff feature uses this).
@@ -1552,7 +1418,7 @@ const server = http.createServer(async (req, res) => {
 			// a pending record) are validated + resolved here — first response
 			// wins, stale ids rejected (410), and the decision is broadcast as
 			// approval_resolved so the browser only closes its UI after the ack
-			// (FR-19/22/24). Unknown ids fall through to the legacy forward path.
+			// (FR-19/22/24). Unknown ids are forwarded as ordinary SDK UI replies.
 			if (obj && obj.type === "extension_ui_response" && obj.id) {
 				const rec = broker.get(obj.id);
 				if (rec) {
@@ -1573,8 +1439,6 @@ const server = http.createServer(async (req, res) => {
 							}),
 						);
 					}
-					const { marker: _m, ...fwd } = obj;
-					sendToPi(fwd);
 					const r = broker.resolve(obj.id, obj.value);
 					if (!r.ok) {
 						res.writeHead(410, {
@@ -1582,6 +1446,15 @@ const server = http.createServer(async (req, res) => {
 						});
 						return res.end(
 							JSON.stringify({ ok: false, error: r.reason }),
+						);
+					}
+					const { marker: _m, ...fwd } = obj;
+					if (!pi.resolveUiRequest(obj.id, fwd)) {
+						res.writeHead(410, {
+							"Content-Type": "application/json",
+						});
+						return res.end(
+							JSON.stringify({ ok: false, error: "UI request is no longer active" }),
 						);
 					}
 					pushAudit(rec, obj.value);
@@ -1600,9 +1473,17 @@ const server = http.createServer(async (req, res) => {
 					return res.end('{"ok":true}');
 				}
 			}
-			sendToPi(obj);
+			const response = await sendToPi(obj);
+			if (response) publishPiEvent(response);
 			res.writeHead(200, { "Content-Type": "application/json" });
-			res.end('{"ok":true}');
+			res.end(
+				JSON.stringify({
+					ok: response?.success !== false,
+					id: response?.id,
+					data: response?.data,
+					error: response?.success === false ? response.error : undefined,
+				}),
+			);
 		} catch (e) {
 			respondForwardError(res, e);
 		}
@@ -1727,7 +1608,7 @@ const server = http.createServer(async (req, res) => {
 		// clear all session grants — routes through the extension's own command so
 		// the authoritative sessionAllow is what actually clears (FR-32)
 		try {
-			sendToPi({ type: "prompt", message: "/safeguard reset" });
+			await sendToPi({ type: "prompt", message: "/safeguard reset" });
 			grantsMirror.length = 0;
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end('{"ok":true}');
@@ -1746,7 +1627,7 @@ const server = http.createServer(async (req, res) => {
 		// the TUI may shift indices — the page mirrors what the broker saw)
 		const n = parseInt(grantRevoke[1], 10);
 		try {
-			sendToPi({ type: "prompt", message: `/safeguard revoke ${n}` });
+			await sendToPi({ type: "prompt", message: `/safeguard revoke ${n}` });
 			grantsMirror.splice(n - 1, 1);
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end('{"ok":true}');
@@ -1842,82 +1723,42 @@ const server = http.createServer(async (req, res) => {
 		return res.end(JSON.stringify({ ok: true, entries: auditRing }));
 	}
 
-	if (req.method === "POST" && url.pathname === "/api/rpc") {
-		// awaitable single RPC (plan F§5.1): like /api/cmd but resolves with pi's
-		// {type:"response"} payload instead of fire-and-forget. Pi-forwarding
-		// failures use the shared bounded 503/500 boundary; body parsing keeps its
-		// existing 200 + ok:false posture for compatibility.
-		let obj;
-		try {
-			obj = JSON.parse((await readBody(req)) || "{}");
-		} catch (e) {
-			res.writeHead(200, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ ok: false, error: boundedErrorText(e) }));
-			return;
-		}
-		try {
-			const resp = await rpcRequest(obj);
-			res.writeHead(200, { "Content-Type": "application/json" });
-			res.end(JSON.stringify({ ok: true, id: resp.id, data: resp.data }));
-		} catch (e) {
-			respondForwardError(res, e);
-		}
-		return;
-	}
-
 	if (req.method === "GET" && url.pathname === "/api/snapshot") {
-		// one-round-trip bootstrap (plan F§5.1): fans out the 5 RPCs the client
-		// used to send fire-and-forget (get_state/messages/commands/models/stats)
-		// in parallel via the awaitable path, returning one bundled object. Each
-		// response is ALSO broadcast on SSE (the reader broadcasts everything),
-		// where the client ignores ids it didn't issue — purely additive, doesn't
-		// disturb the existing init flow. Unwrapped (messages/commands/models are
-		// arrays, not {key:[...]} envelopes) for a clean client shape.
+		// Bootstrap reads are direct SDK snapshots. This keeps reconnects one
+		// round-trip without synthesizing transport requests.
 		try {
-			// ponytail: each call MUST let rpcRequest mint a UNIQUE id. A fixed id
-			// (the old "snap-state"/…) collided under concurrency — two overlapping
-			// snapshots would overwrite each other's entry in rpcPending, orphaning
-			// the first promise AND its timeout timer so it neither resolved nor
-			// timed out → the HTTP handler hung forever (a reconnect/retry spiral
-			// never recovers). The client ignores these ids anyway (it matches
-			// init-*/sb-* on SSE, never snap-*), so random ids are safe.
-			const ask = (type) =>
-				rpcRequest({ type })
-					.then((r) => r.data)
-					.catch(() => null);
-			const [state, ents, cmds, mdls, stats] = await Promise.all([
-				ask("get_state"),
-				ask("get_entries"), // parent-chain, not flat — survives compaction (plan F§5.3)
-				ask("get_commands"),
-				ask("get_available_models"),
-				ask("get_session_stats"),
-			]);
+			const snapshot = pi && pi.ready ? pi.snapshot() : null;
+			const state = snapshot?.state || null;
+			const ents = pi && pi.ready ? await sendToPi({ type: "get_entries" }) : null;
+			const commands = snapshot?.commands || [];
+			const models = snapshot?.models || [];
+			const stats = snapshot?.stats || {};
 			// ponytail: build the FULL body BEFORE writeHead. The old code called
 			// writeHead(200) first, then constructed the JSON inline as the arg to
 			// res.end — so any throw in activeSessionMessages()/lb.snapshot()/
 			// JSON.stringify landed in catch, which called writeHead(200) AGAIN →
 			// ERR_HTTP_HEADERS_SENT → uncaught → the whole server crashed (and the
-			// launcher's respawn loop reopened whatever the resumed turn was doing).
+			// server's retry loop reopened whatever the resumed turn was doing).
 			const body = JSON.stringify({
 				ok: true,
-				state: state || null,
+				state,
 				// walk the entry parent-chain from leafId so compaction can't truncate
 				// history: compaction entries render as a synthetic custom marker and
 				// the pre-compact messages they summarize are dropped by pi anyway.
 				// (plan F§5.3 — was flat get_messages, which hid everything before a
 				// compaction.) Falls back to [] if get_entries failed.
 				messages: activeSessionMessages(
-					(ents && ents.entries) || [],
-					ents && ents.leafId,
+					(ents?.data && ents.data.entries) || [],
+					ents?.data && ents.data.leafId,
 				),
-				commands: (cmds && cmds.commands) || [],
-				models: (mdls && mdls.models) || [],
-				stats: stats || {},
+				commands,
+				models,
+				stats,
 				// current-turn buffer (plan F§5.2): lets a reconnecting tab rebuild
 				// in-flight tool cards / streaming text instead of losing them.
 				// Empty unless a turn is mid-flight. Point-in-time copy (see
-				// livebuf.snapshot). Awaitable RPCs fan out FIRST, so this reads
-				// the buffer state after those responses (most recent).
+				// livebuf.snapshot). The direct SDK reads happen before this snapshot,
+				// so this captures the most recent buffer state.
 				liveEvents: lb.snapshot(),
 				// U6 C7 (FR-21): pending approvals survive a reload — a reconnecting
 				// tab re-renders the in-flight approval from this list.
@@ -1947,7 +1788,8 @@ const server = http.createServer(async (req, res) => {
 		return res.end(
 			JSON.stringify({
 				ok: true,
-				pi: PI_BIN + " " + ["--mode", "rpc", ...PI_ARGS].join(" "),
+				runtime: "@earendil-works/pi-coding-agent SDK",
+				piReady: Boolean(pi && pi.ready),
 				cwd: PI_CWD,
 				git: gitInfo(),
 				noSwitch: NO_SWITCH,
@@ -2302,7 +2144,7 @@ const server = http.createServer(async (req, res) => {
 					}),
 				);
 			}
-			switchWorkspace(fs.realpathSync(obj.path));
+			await switchWorkspace(fs.realpathSync(obj.path));
 			res.writeHead(200, { "Content-Type": "application/json" });
 			return res.end(JSON.stringify({ ok: true, workspace: PI_CWD }));
 		} catch (e) {
@@ -2394,7 +2236,7 @@ const server = http.createServer(async (req, res) => {
 		}
 	}
 	// Improve prompt (plan 4.8): rewrite the composer draft via a disposable isolated
-	// pi process (cheapest model, --no-tools, separate profile dir). Long-running (the
+	// isolated SDK session (cheapest model, no tools, separate profile dir). Long-running (the
 	// isolated pi runs for a few seconds); isolated-prompt.js bounds it at 120s.
 	if (req.method === "POST" && url.pathname === "/api/improve-prompt") {
 		try {
@@ -2549,10 +2391,10 @@ server.on("error", (e) => {
 });
 
 if (require.main === module) {
-	startPi();
+	void startPi();
 	server.listen(PORT, "127.0.0.1", () => {
 		console.log(
-			`pi-webui on http://127.0.0.1:${PORT}  (pi: ${PI_BIN} ${["--mode", "rpc", ...PI_ARGS].join(" ")})`,
+			`pi-webui on http://127.0.0.1:${PORT}  (runtime: Pi SDK)`,
 		);
 		// archive GC: 7-day purge at startup (GET /api/workspaces also purges on
 		// read, so a long-running server still collects).

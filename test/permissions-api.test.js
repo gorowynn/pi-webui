@@ -97,7 +97,7 @@ const ok = (name) => {
 // ---- FR-24 — marker validation --------------------------------------------------
 
 {
-	const cmd = sv.slice(sv.indexOf('"/api/cmd"'), sv.indexOf('"/api/rpc"'));
+	const cmd = sv.slice(sv.indexOf('"/api/cmd"'), sv.indexOf('"/api/snapshot"'));
 	assert.ok(
 		cmd.includes('obj.type === "extension_ui_response"'),
 		"response interception",
@@ -159,17 +159,17 @@ const ok = (name) => {
 
 {
 	assert.ok(sv.includes("broker.clear()"), "broker cleared somewhere");
-	const exit = sv.slice(
-		sv.indexOf('pi.on("exit"'),
-		sv.indexOf("// ponytail: announce"),
+	const failure = sv.slice(
+		sv.indexOf("function handlePiStartFailure"),
+		sv.indexOf("async function switchWorkspace"),
 	);
-	assert.ok(exit.includes("broker.clear()"), "cleared on pi exit");
-	const switchBlock = sv.slice(sv.indexOf("deliberateRestart = false;"));
+	assert.ok(failure.includes("broker.clear()"), "cleared on SDK runtime failure");
+	const switchBlock = sv.slice(sv.indexOf("async function switchWorkspace"));
 	assert.ok(
 		switchBlock.includes("broker.clear()"),
 		"cleared on workspace switch",
 	);
-	ok("broker cleared on pi exit AND workspace switch (# FR-20)");
+	ok("broker cleared on SDK failure AND workspace switch (# FR-20)");
 }
 
 console.log(`\npermissions-api.test.js — C7: ${passed} passed`);
