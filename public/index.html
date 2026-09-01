@@ -90,8 +90,6 @@
 			<div class="statusbar" id="statusbar">
 				<span class="sb-grp primary">
 					<span>repo <code id="sb-repo">…</code></span>
-					<span class="sep">·</span>
-					<span>model <code id="sb-model">…</code></span>
 				</span>
 				<span class="sb-inline" id="sb-inline">
 					<span class="sb-meta" data-sb-meta>
@@ -106,10 +104,13 @@
 						</button>
 					</span>
 					<span class="sb-meta" data-sb-meta
-						>think <code id="sb-think">…</code></span
+						>cache <code id="sb-cache">…</code></span
 					>
 					<span class="sb-meta" data-sb-meta
-						>cache <code id="sb-cache">…</code></span
+						>tokens <code id="sb-tok">…</code></span
+					>
+					<span class="sb-meta" data-sb-meta
+						>cost <code id="sb-cost">…</code></span
 					>
 					<span class="sb-meta" data-sb-meta
 						>ide <code id="sb-ide" title="IDE hosting this panel">…</code></span
@@ -576,10 +577,16 @@
 					aria-expanded="false"
 					aria-autocomplete="list"
 					enterkeyhint="send"
-					placeholder="Send a message…  ( / for commands/skills, Shift+Enter for newline )"
+					placeholder="Message…"
 					rows="1"
 				></textarea>
 				<div class="bar">
+					<select id="composer-model" aria-label="model" title="model"></select>
+					<select
+						id="composer-think"
+						aria-label="thinking level"
+						title="thinking level"
+					></select>
 					<button
 						id="mode-chip"
 						class="mode-chip"
@@ -587,17 +594,6 @@
 						title="permission mode — click to open permissions"
 					>
 						default
-					</button>
-					<input id="image-picker" type="file" accept="image/*" multiple hidden />
-					<button
-						id="attach-images"
-						class="attach-images"
-						type="button"
-						disabled
-						title="Selected model does not accept images"
-						aria-label="Selected model does not accept images"
-					>
-						＋ Image
 					</button>
 					<button id="send" class="primary">Send</button>
 					<button id="stop" disabled>Stop</button>
@@ -609,11 +605,6 @@
 							<button id="compact" title="compact context (summarize to free space)">
 								⇲ Compact
 							</button>
-							<select id="mode" title="how to deliver while streaming">
-								<option value="auto">auto</option>
-								<option value="steer">steer</option>
-								<option value="followUp">follow-up</option>
-							</select>
 							<select
 								id="improve"
 								title="rewrite the draft via a cheap disposable model"
@@ -626,8 +617,6 @@
 							<button id="advisor-open" title="review the draft with an isolated advisor" disabled>
 								Review draft
 							</button>
-							<button id="sessions" title="resume an older session">⏱ Sessions</button>
-							<button id="new" title="new session">＋ New</button>
 							<span class="hint">Enter = send</span>
 						</span>
 					</details>

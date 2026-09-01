@@ -13,9 +13,10 @@ const inputEl = $("input");
 const sendBtn = $("send");
 const stopBtn = $("stop");
 const compactBtn = $("compact");
-const modeSel = $("mode");
 const modelSel = $("model");
+const composerModelSel = $("composer-model");
 const thinkSel = $("think-sel");
+const composerThinkSel = $("composer-think");
 const ponySel = $("pony-sel");
 const dot = $("dot");
 const statusText = $("status-text");
@@ -5112,20 +5113,43 @@ if (sbBar && typeof ResizeObserver === "function") {
 	observer.observe(sbBar);
 } else window.addEventListener("resize", queueSbOverflow);
 queueSbOverflow();
+function syncComposerModel() {
+	if (!composerModelSel) return;
+	const value = modelSel.value;
+	composerModelSel.replaceChildren(
+		...Array.from(modelSel.children, (child) => child.cloneNode(true)),
+	);
+	composerModelSel.value = value;
+}
+function syncComposerThink() {
+	if (!composerThinkSel) return;
+	const value = thinkSel.value;
+	composerThinkSel.replaceChildren();
+	for (const option of thinkSel.options) {
+		const copy = option.cloneNode(true);
+		copy.textContent = copy.value || "off";
+		composerThinkSel.appendChild(copy);
+	}
+	composerThinkSel.value = value;
+}
 function refreshSbModel() {
-	sb.model.textContent = (modelSel.selectedOptions[0] || {}).textContent || "…";
+	if (sb.model)
+		sb.model.textContent = (modelSel.selectedOptions[0] || {}).textContent || "…";
+	syncComposerModel();
 	queueSbOverflow();
 }
 function refreshSbThink() {
-	sb.think.textContent = thinkSel.value || "—";
+	if (sb.think) sb.think.textContent = thinkSel.value || "—";
+	syncComposerThink();
 	queueSbOverflow();
 }
 // ponytail: header dropdowns for thinking level (set_thinking_level SDK command) and
 // ponytail mode (/ponytail extension command). Both sync from pi on load;
-// the statusbar think readout mirrors the select (refreshSbThink).
+// the statusbar think readout and composer selector mirror the settings select.
 ["off", "minimal", "low", "medium", "high", "xhigh", "max"].forEach((l) =>
 	thinkSel.add(new Option("think: " + l, l)),
 );
+syncComposerThink();
 ["off", "lite", "full", "ultra"].forEach((m) =>
 	ponySel.add(new Option("pony: " + m, m)),
 );
@@ -5152,6 +5176,11 @@ thinkSel.onchange = () => {
 	refreshSbThink();
 	syncSecondaryThinking();
 };
+if (composerThinkSel)
+	composerThinkSel.onchange = () => {
+		thinkSel.value = composerThinkSel.value;
+		thinkSel.onchange();
+	};
 if (secondaryThinkSel)
 	secondaryThinkSel.onchange = () => {
 		secondaryThinkingLevel = secondaryThinkSel.value;
@@ -5816,17 +5845,27 @@ function populateModels(models) {
 		const o = document.createElement("option");
 		o.textContent = "no models";
 		modelSel.appendChild(o);
+		syncComposerModel();
 		populateSecondaryModels();
 		populateAdvisorModels();
 		syncImageAttachmentUi();
 		return;
 	}
-	availableModels.forEach((m) => {
+	const groups = new Map();
+	for (const m of availableModels) {
+		const provider = String(m.provider || "other");
+		let group = groups.get(provider);
+		if (!group) {
+			group = document.createElement("optgroup");
+			group.label = provider;
+			groups.set(provider, group);
+			modelSel.appendChild(group);
+		}
 		const o = document.createElement("option");
 		o.value = JSON.stringify({ provider: m.provider, modelId: m.id });
-		o.textContent = (m.name || m.id) + " · " + m.provider;
-		modelSel.appendChild(o);
-	});
+		o.textContent = m.name || m.id;
+		group.appendChild(o);
+	}
 	applyCurrentModel();
 	populateSecondaryModels();
 	populateAdvisorModels();
@@ -5846,6 +5885,11 @@ modelSel.onchange = () => {
 		api({ type: "set_model", provider: v.provider, modelId: v.modelId });
 	} catch {}
 };
+if (composerModelSel)
+	composerModelSel.onchange = () => {
+		modelSel.value = composerModelSel.value;
+		modelSel.onchange();
+	};
 $("models-btn").onclick = () =>
 	api({ type: "get_available_models", id: "init-models" });
 if (secondaryModelSel)
@@ -6865,16 +6909,6 @@ async function attachImages(files) {
 	}
 	if (added) renderImgStrip();
 }
-const imagePicker = $("image-picker");
-const attachImagesButton = $("attach-images");
-if (imagePicker && attachImagesButton) {
-	attachImagesButton.onclick = () => imagePicker.click();
-	imagePicker.onchange = () => {
-		const files = Array.from(imagePicker.files || []);
-		imagePicker.value = "";
-		void attachImages(files);
-	};
-}
 // paste: grab image files from the clipboard
 inputEl.addEventListener("paste", (e) => {
 	const items = e.clipboardData && e.clipboardData.items;
@@ -6928,9 +6962,9 @@ async function send() {
 		// extension command / skill / template: send as prompt (SDK expands it)
 		cmd = { type: "prompt", message: text };
 	} else if (streaming) {
-		const mode = modeSel.value;
+		const mode = "auto";
 		// ponytail: protocol key is "follow_up" (snake-case), not "followUp";
-		// auto defaults to steer.
+		// auto is the default now that the delivery selector is removed.
 		const how =
 			mode === "auto" ? "steer" : mode === "followUp" ? "follow_up" : mode;
 		cmd =
@@ -7145,16 +7179,6 @@ function confirmModal(msg, onYes) {
 	};
 	list.append(no, yes);
 }
-$("new").onclick = () =>
-	confirmModal(
-		"Start a new session? Current chat stays saved on the pi side.",
-		() => {
-			setTodos([]); // clear the todo panel for the fresh session
-			resetGitReviewState();
-			api({ type: "new_session" });
-		},
-	);
-$("sessions").onclick = showSessions;
 // composer overflow ⋯ (spec FR-4): selecting an action closes the popover;
 // Escape closes it too — stopPropagation so the wsbar drawer listener can't
 // also fire. Open state is transient, never persisted.

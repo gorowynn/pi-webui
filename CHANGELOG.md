@@ -6,6 +6,22 @@
 
 ## History
 
+### 2026-08-31 — feat(shell): align wide shell with reference UI
+
+- Surfaced token/cost telemetry through the existing statusbar overflow and
+  kept the header focused on status/settings controls.
+- Wide workspace navigation now shows workspace context and session history
+  together; mid/narrow drawers retain their single-section behavior.
+- Tuned completed tool rows and the composer with restrained success styling and
+  stronger input hierarchy; no terminal split or file explorer was added.
+- Updated the chat field to a larger `Message…` surface with Send positioned
+  inside the input, while preserving the existing composer controls.
+- Added synced model and thinking-level selectors to the composer, grouped model
+  options by provider, and removed their duplicate top-bar readouts.
+- Flattened secondary button chrome, kept permission mode visible, and removed
+  the duplicate New, Sessions, auto-delivery, and image-attachment buttons.
+- Tests: `npm test` — 66/66 suites passed; focused composer checks pass.
+
 ### 2026-08-29 — fix(runtime): allow successful SDK session rebinding commands
 
 - Fixed `switch_session` (and the related new/fork/clone operations) being

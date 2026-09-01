@@ -179,9 +179,6 @@ header .statusbar code {
 #sb-repo {
 	max-width: min(32ch, 28vw);
 }
-#sb-model {
-	max-width: 22ch;
-}
 #dot {
 	width: 8px;
 	height: 8px;
@@ -661,6 +658,11 @@ pre code.hljs {
 }
 .tool.err {
 	border-color: var(--danger);
+}
+/* Completed tool rows borrow the reference's quiet success outline without
+   turning operational chrome into a loud accent stripe. */
+.tool.done {
+	border-color: color-mix(in srgb, var(--success) 55%, var(--line));
 }
 /* card head: caret + tool name + readable command … duration */
 .tool .head {
@@ -1680,10 +1682,11 @@ footer > .composer {
 .composer {
 	margin: 0;
 	position: relative;
-	padding: 8px 10px 7px;
+	padding: 10px 12px 8px;
 	border: 1px solid var(--line);
 	border-radius: var(--r);
 	background: var(--surface-raised);
+	box-shadow: var(--shadow);
 }
 .composer:focus-within,
 .composer.dragging {
@@ -1709,16 +1712,26 @@ footer > .composer {
    idiom as the #modal textarea:not(.sx-ta) rule below). */
 textarea:not(.sx-ta) {
 	width: 100%;
-	min-height: 44px;
+	min-height: 48px;
 	max-height: 200px;
 	resize: vertical;
 	background: var(--surface-inset);
 	color: var(--ink);
 	border: 1px solid var(--line);
 	border-radius: calc(var(--r) - 2px);
-	padding: 9px 10px;
+	padding: 12px 84px 12px 12px;
 	font: inherit;
+	font-size: 14px;
 	outline: none;
+}
+/* The reference keeps Send inside the input surface; the action remains the
+   same DOM control so existing keyboard and streaming behavior is unchanged. */
+.composer #send {
+	position: absolute;
+	top: 16px;
+	right: 16px;
+	min-height: 32px;
+	padding: 6px 13px;
 }
 textarea:focus {
 	border-color: var(--accent);
@@ -1757,9 +1770,6 @@ textarea:focus {
 /* ponytail: permission-mode chip — always visible in the composer bar so the
    current posture (default / auto-approve / read-only / yolo) can't be
    forgotten mid-chat. Colored by [data-mode]; click opens #permissions. */
-.bar button.attach-images {
-	flex: 0 0 auto;
-}
 .bar button.mode-chip {
 	font-size: 11px;
 	padding: 6px 10px;
@@ -1793,6 +1803,31 @@ textarea:focus {
 	color: var(--muted);
 	font-size: 11px;
 	margin-left: auto;
+}
+/* Keep the composer row quiet: model/thinking/mode are selectors, not card
+   buttons. The primary Send action is the only filled control. */
+.composer .bar button:not(.primary):not(.mode-chip),
+.composer .bar select {
+	background: transparent;
+	border-color: transparent;
+}
+.composer .bar button:not(.primary):not(.mode-chip):hover,
+.composer .bar button:not(.primary):not(.mode-chip):focus-visible,
+.composer .bar select:hover,
+.composer .bar select:focus-visible {
+	background: var(--surface-inset);
+	border-color: var(--line);
+	color: var(--ink);
+}
+.composer #composer-model {
+	flex: 0 1 auto;
+	max-width: min(240px, 30vw);
+}
+.composer #composer-think {
+	flex: 0 0 104px;
+}
+.composer #stop:disabled {
+	display: none;
 }
 /* composer overflow (spec FR-4): lower-frequency actions group behind a ⋯
    toggle on narrow; wide/mid keep them inline exactly like the old flat bar
@@ -1872,12 +1907,6 @@ body.w-narrow .bar > button,
 body.w-narrow .bar > select,
 body.w-narrow .bar-ovf > summary {
 	min-height: 32px;
-}
-/* Sessions/New dedup (spec FR-5): hidden only while the sidebar is
-   push-visible (w-wide + ws-on) — drawer and collapsed states keep them. */
-body.ws-on.w-wide #sessions,
-body.ws-on.w-wide #new {
-	display: none;
 }
 /* context-pressure meter (spec FR-10, extended per user decision 2026-08-07):
    a thin bar + label on the footer's top edge. Bar width % = --ctx-pct (set by
@@ -3162,10 +3191,19 @@ body.ws-on {
 body.no-switch #ws-workspaces-sec {
 	display: none; /* IDE mode (PI_WEBUI_NO_SWITCH): fixed project, no list */
 }
-/* One view at a time: the active rail tab (body[data-ws-view]) picks the
-   section; the ws-collapse button is gone — the rail tab itself closes. */
+/* Wide desktop keeps project context and session history visible together;
+   drawer widths retain the one-section-at-a-time rail view. */
 body[data-ws-view="workspaces"] #ws-sessions-sec,
 body[data-ws-view="sessions"] #ws-workspaces-sec {
+	display: none;
+}
+body.w-wide[data-ws-view="workspaces"] #ws-sessions-sec {
+	display: flex;
+}
+body.w-wide[data-ws-view="sessions"] #ws-workspaces-sec {
+	display: block;
+}
+body.no-switch.w-wide #ws-workspaces-sec {
 	display: none;
 }
 .ws-sec {

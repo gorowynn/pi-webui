@@ -11,15 +11,6 @@ const footer = html.match(/<footer>[\s\S]*?<\/footer>/)?.[0] || "";
 
 assert.match(footer, /id="input"[\s\S]*enterkeyhint="send"/);
 assert.match(footer, /class="bar"/);
-assert.match(
-	footer,
-	/id="attach-images"[\s\S]*type="button"[\s\S]*aria-label=/,
-);
-assert.match(
-	footer,
-	/id="image-picker"[\s\S]*type="file"[\s\S]*accept="image\/\*"/,
-);
-assert.match(footer, /id="image-picker"[\s\S]*multiple[\s\S]*hidden/);
 assert.match(footer, /id="bar-ovf"/);
 assert.match(
 	css,
@@ -34,10 +25,7 @@ assert.match(css, /\.bar\s*\{[\s\S]*border-top:\s*1px solid var\(--line\)/);
 assert.match(app, /function draggingFiles|const draggingFiles/);
 assert.match(app, /function syncImageAttachmentUi\(\)/);
 assert.match(app, /const id = currentModelId \|\| savedModelId/);
-assert.match(
-	app,
-	/attachImagesButton\.onclick = \(\) => imagePicker\.click\(\)/,
-);
+assert.doesNotMatch(app, /attachImagesButton|imagePicker/);
 assert.match(app, /classList\.add\("dragging"\)/);
 assert.match(app, /classList\.remove\("dragging"\)/);
 
@@ -45,19 +33,21 @@ assert.match(app, /classList\.remove\("dragging"\)/);
 assert.match(css, /\.bar > button\s*\{[\s\S]*flex:\s*0 0 auto/);
 assert.match(css, /body\.w-narrow \.composer \.bar-ovf-items\s*\{/);
 
-// ui-density-navigation FR-53..55: posture/Send/Stop stay direct; Compact +
-// Improve + Sessions + New live in the ONE labelled overflow; images stay
-// discoverable outside it; the ctx-hot nudge survives the move.
+// ui-density-navigation: posture/Send/Stop stay direct; Compact + Improve
+// remain in the labelled overflow; session/new/delivery/image buttons are gone.
 const ovf =
 	footer.match(/<details class="bar-ovf"[\s\S]*?<\/details>/)?.[0] || "";
-for (const id of ["mode-chip", "send", "stop", "attach-images"]) {
+for (const id of ["mode-chip", "send", "stop"]) {
 	assert.ok(
 		footer.includes(`id="${id}"`) && !ovf.includes(`id="${id}"`),
 		`${id} stays a direct composer control`,
 	);
 }
-for (const id of ["compact", "improve", "sessions", "new"]) {
+for (const id of ["compact", "improve"]) {
 	assert.ok(ovf.includes(`id="${id}"`), `${id} lives in the overflow`);
+}
+for (const id of ["sessions", "new", "mode", "attach-images"]) {
+	assert.ok(!footer.includes(`id="${id}"`), `${id} is removed from the composer`);
 }
 assert.match(
 	css,

@@ -107,11 +107,16 @@ check(
 	"T3",
 	"A-3.7",
 	"FR-2",
-	"one wsbar view at a time (body[data-ws-view] hides the other section); the ws-collapse button is gone",
+	"wide wsbar shows both sections while drawer mode stays one-section-at-a-time",
 	/body\[data-ws-view="workspaces"\] #ws-sessions-sec[\s\S]{0,120}display:\s*none/.test(
 		css,
 	) &&
-		/body\[data-ws-view="sessions"\] #ws-workspaces-sec/.test(css) &&
+		/body\.w-wide\[data-ws-view="workspaces"\] #ws-sessions-sec[\s\S]{0,120}display:\s*flex/.test(
+			css,
+		) &&
+		/body\.w-wide\[data-ws-view="sessions"\] #ws-workspaces-sec[\s\S]{0,120}display:\s*block/.test(
+			css,
+		) &&
 		!/ws-collapse/.test(html) &&
 		!/\.ws-x /.test(css),
 );
@@ -181,8 +186,11 @@ check(
 	"T5",
 	"A-5.2",
 	"FR-5",
-	"style.css hides sessions/new only in ws-on.w-wide",
-	/body\.ws-on\.w-wide[\s\S]{0,300}(?:#sessions|#new)/.test(css),
+	"composer omits duplicate sessions/new/delivery/image controls",
+	!/id="sessions"/.test(html) &&
+		!/id="new"/.test(html) &&
+		!/id="mode"/.test(html) &&
+		!/id="attach-images"/.test(html),
 );
 check(
 	"T5",

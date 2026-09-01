@@ -299,7 +299,7 @@ assert.ok(
 	"narrow rail uses a contained bottom-sheet layout",
 );
 for (const id of ["sb-tok", "sb-cost"]) {
-	assert.ok(!html.includes(`id="${id}"`), `${id} retired after rail parity`);
+	assert.ok(html.includes(`id="${id}"`), `${id} is available in header telemetry`);
 }
 
 assert.ok(app.includes('role="feed"'), "transcript feed wrapper exists");

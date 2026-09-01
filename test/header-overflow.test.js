@@ -48,9 +48,10 @@ assert.match(
 );
 assert.match(app, /new ResizeObserver\(queueSbOverflow\)/);
 
-// FR-5: inline repo/model bound with ellipsis (never horizontal page scroll).
+// FR-5: inline repo remains bounded with ellipsis; model/thinking selectors
+// live in the composer instead of duplicating controls in the top bar.
 assert.match(css, /#sb-repo\s*\{[\s\S]*?max-width:/);
-assert.match(css, /#sb-model\s*\{[\s\S]*?max-width:/);
+assert.doesNotMatch(header, /id="sb-model"|id="sb-think"/);
 assert.match(
 	css,
 	/header \.statusbar code\s*\{[\s\S]*?text-overflow:\s*ellipsis/,
